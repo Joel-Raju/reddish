@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1.0.102"
 arboard = "3.6.1"
 base64 = "0.22.1"
-chrono = "0.4.44"
+chrono = { version = "0.4.44", features = ["serde"] }
 clap = "4.6.1"
 color-eyre = "0.6.5"
 crossterm = "0.29.0"

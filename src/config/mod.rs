@@ -1,3 +1,5 @@
+pub mod connections;
+
 use color_eyre::Result;
 use serde::Deserialize;
 use std::path::PathBuf;

@@ -267,3 +267,55 @@ pub enum Ttl {
     Expires(Duration),
     KeyNotFound,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClusterNode {
+    pub id: String,
+    pub addr: String,
+    pub flags: Vec<String>,
+    pub slots: Vec<(u16, u16)>,
+    pub ping_sent: u64,
+    pub pong_recv: u64,
+    pub link_state: String,
+}
+
+pub fn parse_cluster_nodes(raw: &str) -> color_eyre::Result<Vec<ClusterNode>> {
+    let mut nodes = Vec::new();
+    for line in raw.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 8 {
+            continue;
+        }
+        let id = parts[0].to_string();
+        let addr = parts[1].to_string();
+        let flags = parts[2].split(',').map(String::from).collect();
+        let ping_sent = parts[4].parse().unwrap_or(0);
+        let pong_recv = parts[5].parse().unwrap_or(0);
+        let link_state = parts[7].to_string();
+
+        let mut slots = Vec::new();
+        for part in &parts[8..] {
+            if let Some((start, end)) = part.split_once('-') {
+                if let (Ok(s), Ok(e)) = (start.parse::<u16>(), end.parse::<u16>()) {
+                    slots.push((s, e));
+                }
+            } else if let Ok(single) = part.parse::<u16>() {
+                slots.push((single, single));
+            }
+        }
+
+        nodes.push(ClusterNode {
+            id,
+            addr,
+            flags,
+            slots,
+            ping_sent,
+            pong_recv,
+            link_state,
+        });
+    }
+    Ok(nodes)
+}

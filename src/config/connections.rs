@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use color_eyre::Result;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ConnectionProfile {
     pub name: String,
     pub host: String,
@@ -13,6 +13,47 @@ pub struct ConnectionProfile {
     pub username: Option<String>,
     pub password: Option<PasswordRef>,
     pub last_connected: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub mode: ConnectionMode,
+    #[serde(default)]
+    pub tls: Option<TlsConfig>,
+    #[serde(default)]
+    pub ssh_tunnel: Option<SshTunnelConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub enum ConnectionMode {
+    #[default]
+    Standalone,
+    Cluster,
+    Sentinel {
+        master_name: String,
+        sentinels: Vec<SentinelNode>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SentinelNode {
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TlsConfig {
+    pub enabled: bool,
+    pub verify_certs: bool,
+    pub ca_cert_path: Option<PathBuf>,
+    pub client_cert_path: Option<PathBuf>,
+    pub client_key_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SshTunnelConfig {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub key_path: PathBuf,
+    pub local_port: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

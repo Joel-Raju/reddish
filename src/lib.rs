@@ -1,4 +1,5 @@
 pub mod app;
+pub mod backoff;
 pub mod config;
 pub mod events;
 pub mod logging;

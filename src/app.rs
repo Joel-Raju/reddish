@@ -45,6 +45,8 @@ pub struct App {
     pub status_bar: StatusBar,
     pub repl: ReplWidget,
     pub command_palette: Option<CommandPalette>,
+    pub readonly: bool,
+    pub error_message: Option<String>,
 }
 
 impl App {
@@ -59,6 +61,8 @@ impl App {
             status_bar: StatusBar::default(),
             repl: ReplWidget::new(),
             command_palette: None,
+            readonly: false,
+            error_message: None,
         }
     }
 

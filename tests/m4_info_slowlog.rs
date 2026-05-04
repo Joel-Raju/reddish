@@ -13,6 +13,7 @@ fn test_profile() -> ConnectionProfile {
         username: None,
         password: None,
         last_connected: None,
+        ..Default::default()
     }
 }
 

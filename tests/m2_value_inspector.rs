@@ -66,6 +66,7 @@ async fn test_redis_get_set_string() {
         username: None,
         password: None,
         last_connected: None,
+        ..Default::default()
     };
     let client = RedisClientHandle::connect(&profile).await.unwrap();
     let mut c = match &client.client {
@@ -93,6 +94,7 @@ async fn test_redis_hgetall() {
         username: None,
         password: None,
         last_connected: None,
+        ..Default::default()
     };
     let client = RedisClientHandle::connect(&profile).await.unwrap();
     let mut c = match &client.client {
@@ -121,6 +123,7 @@ async fn test_redis_lrange() {
         username: None,
         password: None,
         last_connected: None,
+        ..Default::default()
     };
     let client = RedisClientHandle::connect(&profile).await.unwrap();
     let mut c = match &client.client {
@@ -145,6 +148,7 @@ async fn test_redis_smembers() {
         username: None,
         password: None,
         last_connected: None,
+        ..Default::default()
     };
     let client = RedisClientHandle::connect(&profile).await.unwrap();
     let mut c = match &client.client {
@@ -170,6 +174,7 @@ async fn test_redis_zrange_withscores() {
         username: None,
         password: None,
         last_connected: None,
+        ..Default::default()
     };
     let client = RedisClientHandle::connect(&profile).await.unwrap();
     let mut c = match &client.client {

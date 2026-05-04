@@ -138,6 +138,78 @@ impl RedisClientHandle {
             }
         }
     }
+
+    pub async fn get(&self, key: &str) -> Result<Vec<u8>> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let val: Vec<u8> = tokio::time::timeout(Duration::from_secs(5), redis::cmd("GET").arg(key).query_async(&mut c))
+                    .await
+                    .map_err(|_| color_eyre::eyre::eyre!("GET timeout"))??;
+                Ok(val)
+            }
+        }
+    }
+
+    pub async fn set(&self, key: &str, value: &[u8]) -> Result<()> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(Duration::from_secs(5), redis::cmd("SET").arg(key).arg(value).query_async::<()>(&mut c))
+                    .await
+                    .map_err(|_| color_eyre::eyre::eyre!("SET timeout"))??;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn hgetall(&self, key: &str) -> Result<Vec<(String, Vec<u8>)>> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let val: Vec<(String, Vec<u8>)> = tokio::time::timeout(Duration::from_secs(5), redis::cmd("HGETALL").arg(key).query_async(&mut c))
+                    .await
+                    .map_err(|_| color_eyre::eyre::eyre!("HGETALL timeout"))??;
+                Ok(val)
+            }
+        }
+    }
+
+    pub async fn lrange(&self, key: &str, start: isize, stop: isize) -> Result<Vec<Vec<u8>>> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let val: Vec<Vec<u8>> = tokio::time::timeout(Duration::from_secs(5), redis::cmd("LRANGE").arg(key).arg(start).arg(stop).query_async(&mut c))
+                    .await
+                    .map_err(|_| color_eyre::eyre::eyre!("LRANGE timeout"))??;
+                Ok(val)
+            }
+        }
+    }
+
+    pub async fn smembers(&self, key: &str) -> Result<Vec<Vec<u8>>> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let val: Vec<Vec<u8>> = tokio::time::timeout(Duration::from_secs(5), redis::cmd("SMEMBERS").arg(key).query_async(&mut c))
+                    .await
+                    .map_err(|_| color_eyre::eyre::eyre!("SMEMBERS timeout"))??;
+                Ok(val)
+            }
+        }
+    }
+
+    pub async fn zrange_withscores(&self, key: &str, start: isize, stop: isize) -> Result<Vec<(Vec<u8>, f64)>> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let val: Vec<(Vec<u8>, f64)> = tokio::time::timeout(Duration::from_secs(5), redis::cmd("ZRANGE").arg(key).arg(start).arg(stop).arg("WITHSCORES").query_async(&mut c))
+                    .await
+                    .map_err(|_| color_eyre::eyre::eyre!("ZRANGE timeout"))??;
+                Ok(val)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -350,7 +350,7 @@ Focus cycles: Key Browser → Value Inspector → (back). Indicated by colored b
 | Key browser render (10K visible nodes) | < 16ms per frame |
 | SCAN batch (200 keys) | non-blocking; progress shown |
 | Large value display (1MB string) | streamed; first bytes appear < 100ms |
-| Memory footprint | < 50MB RSS at idle on 1M key database |
+| Memory footprint | < 50MB RSS at idle with only visible-window key names materialised; LRU eviction for collapsed subtrees |
 
 ### Reliability
 
@@ -518,9 +518,9 @@ Two dedicated Tokio tasks, always running:
 
 **Tick Task** — fires `Event::Tick` at configurable interval (default 250ms for UI, 1000ms for stats). Drives sparkline updates, TTL countdown, reconnect heartbeat.
 
-**Redis operations** — each command spawned as `tokio::spawn` with a timeout wrapper. Result sent back through `mpsc` channel. The UI never `await`s Redis directly inside the render loop.
+**Redis operations** — each command spawned as `tokio::spawn` with a timeout wrapper. Every request carries a monotonic `req_id: u64`; the UI task ignores responses whose `req_id` does not match the current context. On context switch (key change, tab switch), the old request is cancelled via `JoinHandle::abort()` and its response is discarded. The UI never `await`s Redis directly inside the render loop.
 
-**PubSub** — dedicated Redis connection (subscribe-only, per Redis protocol). Subscription events streamed through a separate `broadcast::Sender<PubSubMessage>`.
+**PubSub** — dedicated Redis connection (subscribe-only, per Redis protocol). Subscription events streamed through a separate `mpsc::UnboundedSender<PubSubMessage>` (preserves ordering; single consumer).
 
 ### 7.6 Rendering Pipeline
 
@@ -536,7 +536,7 @@ Event received
 
 **Double-buffering** is handled by Ratatui internally — only changed cells are written to the terminal. Components must not hold `Frame` references across render calls.
 
-**Conditional rendering** — components track a `dirty` flag; if state hasn't changed, they return the cached widget tree. This keeps 60fps achievable even with large key lists.
+**Conditional rendering** — components track a `dirty` flag to skip redundant layout/render work inside their own `render()` method. Ratatui itself is immediate-mode; every `draw()` call rebuilds the frame from closures. The `dirty` flag avoids re-sorting, re-filtering, or re-allocating temporary `Vec`s when state is unchanged.
 
 ---
 
@@ -568,10 +568,20 @@ Each milestone is self-contained. The **Gate** section lists the tests that must
 
 **`src/app.rs` — `App` struct**
 ```rust
+pub enum AppMode {
+    Normal,
+    Repl,
+    Help { context: HelpContext },
+    Search,
+    Confirm,
+    ConnectionScreen,
+}
+
 pub struct App {
     pub should_quit: bool,
     pub config: Config,
     pub active_tab: Tab,
+    pub mode_stack: Vec<AppMode>, // modal overlays; last element is active; max depth 4
 }
 ```
 - `App::new(config: Config) -> Self`
@@ -706,8 +716,10 @@ pub struct ConnectionProfile {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PasswordRef {
+    /// Fallback for compatibility; emits a warning on load. Prefer Keychain or Env.
     Plaintext(String),
     Env(String),    // e.g. "REDIS_PASS"  →  std::env::var()
+    Keychain { service: String, account: String }, // platform keychain via `keyring` crate
 }
 
 impl PasswordRef {
@@ -732,9 +744,16 @@ impl ConnectionStore {
 
 **`src/redis/client.rs`**
 ```rust
-pub struct RedisClient {
-    conn: MultiplexedConnection,
+pub enum RedisClient {
+    Standalone(MultiplexedConnection),
+    Cluster(ClusterConnection),
+    Sentinel(MultiplexedConnection), // routed to current master
+}
+
+pub struct RedisClientHandle {
+    client: RedisClient,
     profile: ConnectionProfile,
+    req_id: AtomicU64,
 }
 
 impl RedisClient {
@@ -794,8 +813,8 @@ pub struct TreeNode {
 
 pub struct KeyEntry {
     pub full_name: String,
-    pub redis_type: RedisType,
-    pub ttl: Ttl,
+    pub redis_type: Option<RedisType>,  // lazy-fetched on first expansion / selection
+    pub ttl: Option<Ttl>,               // lazy-fetched on first expansion / selection
 }
 
 impl NamespaceTree {
@@ -821,7 +840,7 @@ pub struct TreeRow {
 - Spawns a `tokio::task` that drives `Scanner::next_batch()` in a loop
 - After each batch, sends `Vec<KeyEntry>` on the channel
 - On completion or error, closes the sender (receiver sees `None`)
-- Fetches type and TTL for each key using `client.key_type()` and `client.ttl()` (pipelined: use `redis::pipe()` for batches of 50)
+- KeyEntry redis_type and ttl are left as `None` during scan; they are fetched lazily on first namespace expansion or key selection to avoid O(N) pipeline overhead on large databases
 
 **`src/ui/key_browser/mod.rs` — `KeyBrowser` component**
 ```rust
@@ -2377,9 +2396,9 @@ cargo build --release
 
 ### Open Questions (resolve before Milestone 3)
 
-- Should MONITOR mode require a `--allow-monitor` flag to prevent accidental use on prod?
-- Clipboard: fall back gracefully when no clipboard provider is available (headless servers)?
-- How should cluster cross-slot operations be surfaced (warning vs. hard error)?
+- **MONITOR mode**: Yes, require `--allow-monitor` CLI flag; gate behind `App::allow_monitor` bool, default false. Prevents accidental prod usage.
+- **Clipboard fallback**: Use `arboard` with a `try_new()` constructor. On failure (headless / no X11/Wayland), clipboard actions show a transient status-bar warning: "Clipboard unavailable" and silently no-op.
+- **Cluster cross-slot operations**: Hard error. The REPL and bulk-operation paths check slot hashes before issuing multi-key commands; if slots differ, return a `ReplResponse::Error("CROSSSLOT Keys in request don't hash to the same slot")` without sending to Redis.
 
 ### Post-v1 Roadmap
 

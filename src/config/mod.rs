@@ -1,4 +1,5 @@
 pub mod connections;
+pub mod keybindings;
 
 use color_eyre::Result;
 use serde::Deserialize;

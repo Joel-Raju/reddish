@@ -1,5 +1,6 @@
 pub mod command_palette;
 pub mod connection_screen;
+pub mod help;
 pub mod info_dashboard;
 pub mod key_browser;
 pub mod pubsub;
@@ -7,5 +8,6 @@ pub mod repl;
 pub mod search;
 pub mod status_bar;
 pub mod tab_bar;
+pub mod theme;
 pub mod value_viewer;
 pub mod widgets;

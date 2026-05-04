@@ -3503,6 +3503,7 @@ dependencies = [
  "color-eyre",
  "crossterm 0.29.0",
  "dirs",
+ "futures",
  "indexmap",
  "keyring",
  "nucleo",

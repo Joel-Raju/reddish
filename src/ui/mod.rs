@@ -1,7 +1,9 @@
 pub mod command_palette;
 pub mod info_dashboard;
 pub mod key_browser;
+pub mod pubsub;
 pub mod repl;
+pub mod search;
 pub mod status_bar;
 pub mod tab_bar;
 pub mod value_viewer;

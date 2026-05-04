@@ -222,6 +222,18 @@ impl RedisClientHandle {
             }
         }
     }
+
+    pub async fn publish(&self, channel: &str, message: &str) -> Result<u64> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let val: u64 = tokio::time::timeout(Duration::from_secs(5), redis::cmd("PUBLISH").arg(channel).arg(message).query_async(&mut c))
+                    .await
+                    .map_err(|_| color_eyre::eyre::eyre!("PUBLISH timeout"))??;
+                Ok(val)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

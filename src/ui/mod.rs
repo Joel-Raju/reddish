@@ -1,4 +1,5 @@
 pub mod command_palette;
+pub mod info_dashboard;
 pub mod key_browser;
 pub mod repl;
 pub mod status_bar;

@@ -210,6 +210,18 @@ impl RedisClientHandle {
             }
         }
     }
+
+    pub async fn info(&self, section: &str) -> Result<String> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let val: String = tokio::time::timeout(Duration::from_secs(5), redis::cmd("INFO").arg(section).query_async(&mut c))
+                    .await
+                    .map_err(|_| color_eyre::eyre::eyre!("INFO timeout"))??;
+                Ok(val)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

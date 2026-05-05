@@ -31,6 +31,15 @@ fn test_keymap_default_parses() {
     let ev = KeyEvent::from(KeyCode::Char('j'));
     assert!(km.matches("nav_down", &ev));
     assert!(!km.matches("nav_up", &ev));
+
+    assert!(km.matches("help", &KeyEvent::from(KeyCode::Char('?'))));
+    assert!(km.matches("tab_keys", &KeyEvent::from(KeyCode::Char('1'))));
+    assert!(km.matches("tab_repl", &KeyEvent::from(KeyCode::Char('2'))));
+    assert!(km.matches("tab_info", &KeyEvent::from(KeyCode::Char('3'))));
+    assert!(km.matches("tab_pubsub", &KeyEvent::from(KeyCode::Char('4'))));
+
+    let ctrl_p = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
+    assert!(km.matches("palette", &ctrl_p));
 }
 
 #[test]
@@ -99,4 +108,34 @@ fn test_cli_readonly_flag() {
 
     let cli = TestCli::parse_from(["redis-tui", "--readonly"]);
     assert!(cli.readonly);
+}
+
+#[test]
+fn test_cli_profile_log_level_theme_flags() {
+    use clap::Parser;
+
+    #[derive(Parser, Debug)]
+    #[command(name = "redis-tui")]
+    struct TestCli {
+        #[arg(long)]
+        profile: Option<String>,
+        #[arg(long)]
+        log_level: Option<String>,
+        #[arg(long)]
+        theme: Option<String>,
+    }
+
+    let cli = TestCli::parse_from([
+        "redis-tui",
+        "--profile",
+        "prod",
+        "--log-level",
+        "debug",
+        "--theme",
+        "nord",
+    ]);
+
+    assert_eq!(cli.profile.as_deref(), Some("prod"));
+    assert_eq!(cli.log_level.as_deref(), Some("debug"));
+    assert_eq!(cli.theme.as_deref(), Some("nord"));
 }

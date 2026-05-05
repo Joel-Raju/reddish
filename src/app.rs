@@ -122,6 +122,7 @@ pub struct App {
     pub error_message: Option<String>,
     pub client: Option<RedisClientHandle>,
     pub keymap: Keymap,
+    pub startup_profile: Option<ConnectionProfile>,
     last_profile: Option<ConnectionProfile>,
     pub scan_rx: Option<mpsc::Receiver<Vec<crate::ui::key_browser::tree::KeyEntry>>>,
     pub pubsub_rx: Option<mpsc::UnboundedReceiver<PubSubMessage>>,
@@ -150,6 +151,7 @@ impl App {
             error_message: None,
             client: None,
             keymap: Keymap::default(),
+            startup_profile: None,
             last_profile: None,
             scan_rx: None,
             pubsub_rx: None,
@@ -267,6 +269,10 @@ impl App {
     }
 
     pub async fn run(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+        if let Some(profile) = self.startup_profile.take() {
+            self.connect_profile(profile).await;
+        }
+
         let tick_rate = Duration::from_millis(250);
         let mut events = EventHandler::new(tick_rate);
 

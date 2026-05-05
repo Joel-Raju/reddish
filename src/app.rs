@@ -9,22 +9,21 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::io::Stdout;
+use std::path::PathBuf;
 use tokio::sync::mpsc;
 
+use crate::backoff::backoff_sequence;
 use crate::config::Config;
+use crate::config::connections::{ConnectionMode, ConnectionProfile, ConnectionStore};
 use crate::events::{Event, EventHandler};
+use crate::redis::client::RedisClientHandle;
 use crate::ui::command_palette::{CommandPalette, PaletteAction};
+use crate::ui::connection_screen::{ConnectionScreen, ConnectionScreenAction};
+use crate::ui::key_browser::scanner_task;
 use crate::ui::key_browser::{BrowserAction, KeyBrowser};
 use crate::ui::repl::{ReplAction, ReplWidget};
-use crate::ui::status_bar::StatusBar;
+use crate::ui::status_bar::{ConnectionState, StatusBar};
 use crate::ui::tab_bar;
-
-#[derive(Debug)]
-enum AppTaskResult {
-    ScanBatch(Vec<crate::ui::key_browser::tree::KeyEntry>),
-    ScanFinished,
-    Error(String),
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppMode {
@@ -53,18 +52,19 @@ pub struct App {
     pub status_bar: StatusBar,
     pub repl: ReplWidget,
     pub command_palette: Option<CommandPalette>,
+    pub connection_screen: Option<ConnectionScreen>,
     pub readonly: bool,
     pub error_message: Option<String>,
+    pub client: Option<RedisClientHandle>,
+    last_profile: Option<ConnectionProfile>,
     pub scan_rx: Option<mpsc::Receiver<Vec<crate::ui::key_browser::tree::KeyEntry>>>,
-    task_tx: mpsc::UnboundedSender<AppTaskResult>,
-    task_rx: mpsc::UnboundedReceiver<AppTaskResult>,
     tick_count: u64,
+    reconnect_attempt: u32,
 }
 
 impl App {
     pub fn new(config: Config) -> Self {
         let sep = config.namespace_separator().chars().next().unwrap_or(':');
-        let (task_tx, task_rx) = mpsc::unbounded_channel();
         Self {
             should_quit: false,
             config,
@@ -74,12 +74,14 @@ impl App {
             status_bar: StatusBar::default(),
             repl: ReplWidget::new(),
             command_palette: None,
+            connection_screen: None,
             readonly: false,
             error_message: None,
+            client: None,
+            last_profile: None,
             scan_rx: None,
-            task_tx,
-            task_rx,
             tick_count: 0,
+            reconnect_attempt: 0,
         }
     }
 
@@ -93,8 +95,6 @@ impl App {
 
         while !self.should_quit {
             terminal.draw(|f| self.render(f))?;
-
-            self.drain_task_results();
 
             let event = tokio::time::timeout(Duration::from_millis(100), events.next()).await;
             if let Ok(Some(event)) = event {
@@ -114,6 +114,30 @@ impl App {
     }
 
     async fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) {
+        if self.mode() == &AppMode::ConnectionScreen {
+            if let Some(screen) = self.connection_screen.as_mut()
+                && let Some(action) = screen.handle_event(&Event::Key(key))
+            {
+                match action {
+                    ConnectionScreenAction::Connect(profile) => {
+                        self.connect_profile(profile).await;
+                        self.connection_screen = None;
+                        if self.mode() == &AppMode::ConnectionScreen {
+                            self.mode_stack.pop();
+                        }
+                    }
+                    ConnectionScreenAction::Cancel => {
+                        self.connection_screen = None;
+                        if self.mode() == &AppMode::ConnectionScreen {
+                            self.mode_stack.pop();
+                        }
+                    }
+                    ConnectionScreenAction::Save(_) | ConnectionScreenAction::Delete(_) => {}
+                }
+            }
+            return;
+        }
+
         if self.mode() == &AppMode::Help && key.code == KeyCode::Esc {
             self.mode_stack.pop();
             return;
@@ -147,6 +171,20 @@ impl App {
             KeyCode::Char('2') => self.active_tab = Tab::Repl,
             KeyCode::Char('3') => self.active_tab = Tab::Info,
             KeyCode::Char('4') => self.active_tab = Tab::PubSub,
+            KeyCode::Char('\\')
+                if key.modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.open_connection_screen();
+                return;
+            }
+            KeyCode::Char('r')
+                if key.modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.reconnect_active_connection().await;
+                return;
+            }
             KeyCode::Char('p')
                 if key.modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
@@ -180,6 +218,138 @@ impl App {
         self.update_status_bar_context();
     }
 
+    fn default_connection_profile() -> ConnectionProfile {
+        ConnectionProfile {
+            name: "default".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 6379,
+            db: 0,
+            username: None,
+            password: None,
+            last_connected: None,
+            mode: ConnectionMode::Standalone,
+            tls: None,
+            ssh_tunnel: None,
+        }
+    }
+
+    async fn reconnect_active_connection(&mut self) {
+        let profile = self
+            .client
+            .as_ref()
+            .map(|c| c.profile.clone())
+            .or_else(|| self.last_profile.clone())
+            .unwrap_or_else(Self::default_connection_profile);
+
+        self.reconnect_attempt = self.reconnect_attempt.saturating_add(1);
+        self.status_bar.connection_state = ConnectionState::Reconnecting {
+            attempt: self.reconnect_attempt,
+        };
+
+        let delays = backoff_sequence();
+        let idx = self
+            .reconnect_attempt
+            .saturating_sub(1)
+            .min((delays.len().saturating_sub(1)) as u32) as usize;
+        tokio::time::sleep(delays[idx]).await;
+
+        match RedisClientHandle::connect(&profile).await {
+            Ok(client) => {
+                let host = profile.host.clone();
+                let port = profile.port;
+                let db = profile.db;
+                self.client = Some(client);
+                self.last_profile = Some(profile.clone());
+                self.reconnect_attempt = 0;
+                self.status_bar.connection_state = ConnectionState::Connected {
+                    host,
+                    port,
+                    db,
+                };
+                self.error_message = None;
+                self.start_scan_for_profile(&profile).await;
+            }
+            Err(err) => {
+                self.client = None;
+                self.status_bar.connection_state = ConnectionState::Reconnecting {
+                    attempt: self.reconnect_attempt,
+                };
+                self.error_message = Some(format!("Reconnect failed: {err}"));
+            }
+        }
+    }
+
+    fn connections_file_path() -> Option<PathBuf> {
+        dirs::config_dir().map(|d| d.join("redis-tui").join("connections.toml"))
+    }
+
+    fn open_connection_screen(&mut self) {
+        let Some(path) = Self::connections_file_path() else {
+            self.error_message = Some("Could not determine config directory".to_string());
+            return;
+        };
+
+        match ConnectionStore::load(&path) {
+            Ok(store) => {
+                self.connection_screen = Some(ConnectionScreen::new(store));
+                self.mode_stack.push(AppMode::ConnectionScreen);
+            }
+            Err(err) => {
+                self.error_message = Some(format!("Failed to load connections: {err}"));
+            }
+        }
+    }
+
+    fn reset_key_browser_for_scan(&mut self) {
+        let sep = self
+            .config
+            .namespace_separator()
+            .chars()
+            .next()
+            .unwrap_or(':');
+        self.key_browser = KeyBrowser::new(sep);
+        self.status_bar.key_count = 0;
+        self.scan_rx = None;
+    }
+
+    async fn start_scan_for_profile(&mut self, profile: &ConnectionProfile) {
+        self.reset_key_browser_for_scan();
+        match RedisClientHandle::connect(profile).await {
+            Ok(scan_client) => {
+                self.scan_rx = Some(scanner_task::start_scan(scan_client, &self.config));
+            }
+            Err(err) => {
+                self.error_message = Some(format!("Connected, but scan setup failed: {err}"));
+            }
+        }
+    }
+
+    async fn connect_profile(&mut self, profile: ConnectionProfile) {
+        self.last_profile = Some(profile.clone());
+        self.status_bar.connection_state = ConnectionState::Reconnecting { attempt: 1 };
+        match RedisClientHandle::connect(&profile).await {
+            Ok(client) => {
+                let host = profile.host.clone();
+                let port = profile.port;
+                let db = profile.db;
+                self.client = Some(client);
+                self.reconnect_attempt = 0;
+                self.status_bar.connection_state = ConnectionState::Connected {
+                    host,
+                    port,
+                    db,
+                };
+                self.error_message = None;
+                self.start_scan_for_profile(&profile).await;
+            }
+            Err(err) => {
+                self.client = None;
+                self.status_bar.connection_state = ConnectionState::Disconnected;
+                self.error_message = Some(format!("Connection failed: {err}"));
+            }
+        }
+    }
+
     fn handle_tick(&mut self) {
         self.tick_count = self.tick_count.saturating_add(1);
         self.drain_scan_batches();
@@ -203,9 +373,9 @@ impl App {
                 }
             }
             BrowserAction::RefreshRequested => {
-                let _ = self.task_tx.send(AppTaskResult::Error(
+                self.error_message = Some(
                     "Refresh requested but scanner wiring is not initialized".to_string(),
-                ));
+                );
             }
         }
     }
@@ -228,18 +398,6 @@ impl App {
 
         if should_clear {
             self.scan_rx = None;
-        }
-    }
-
-    fn drain_task_results(&mut self) {
-        loop {
-            match self.task_rx.try_recv() {
-                Ok(AppTaskResult::ScanBatch(batch)) => self.key_browser.apply_scan_batch(batch),
-                Ok(AppTaskResult::ScanFinished) => self.key_browser.finish_scan(),
-                Ok(AppTaskResult::Error(msg)) => self.error_message = Some(msg),
-                Err(mpsc::error::TryRecvError::Empty) => break,
-                Err(mpsc::error::TryRecvError::Disconnected) => break,
-            }
         }
     }
 
@@ -316,6 +474,13 @@ impl App {
         if let Some(ref palette) = self.command_palette {
             palette.render(frame, frame.area());
         }
+
+        if self.mode() == &AppMode::ConnectionScreen
+            && let Some(ref screen) = self.connection_screen
+        {
+            let area = centered_rect(70, 70, frame.area());
+            screen.render(frame, area);
+        }
     }
 }
 
@@ -337,4 +502,121 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: ratatui::layout::Rect) -> ra
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::{Child, Command};
+    use std::time::Duration;
+
+    async fn spawn_redis_server_on_port(port: u16) -> Child {
+        let mut child = Command::new("redis-server")
+            .args([
+                "--port",
+                &port.to_string(),
+                "--daemonize",
+                "no",
+                "--loglevel",
+                "warning",
+            ])
+            .spawn()
+            .expect("Failed to start redis-server. Is it installed?");
+
+        let url = format!("redis://127.0.0.1:{port}");
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if let Ok(client) = redis::Client::open(url.as_str())
+                && client.get_connection().is_ok()
+            {
+                break;
+            }
+        }
+
+        child
+    }
+
+    fn invalid_profile() -> ConnectionProfile {
+        ConnectionProfile {
+            name: "invalid".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 1,
+            db: 0,
+            username: None,
+            password: None,
+            last_connected: None,
+            mode: ConnectionMode::Standalone,
+            tls: None,
+            ssh_tunnel: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_connect_profile_failure_sets_disconnected() {
+        let mut app = App::new(Config::default());
+        app.connect_profile(invalid_profile()).await;
+
+        assert!(app.client.is_none());
+        assert!(matches!(app.status_bar.connection_state, ConnectionState::Disconnected));
+        assert!(
+            app.error_message
+                .as_deref()
+                .is_some_and(|msg| msg.contains("Connection failed"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_reconnect_failure_sets_reconnecting_and_error() {
+        let mut app = App::new(Config::default());
+        app.last_profile = Some(invalid_profile());
+
+        app.reconnect_active_connection().await;
+
+        assert!(app.client.is_none());
+        assert!(matches!(
+            app.status_bar.connection_state,
+            ConnectionState::Reconnecting { attempt: 1 }
+        ));
+        assert!(
+            app.error_message
+                .as_deref()
+                .is_some_and(|msg| msg.contains("Reconnect failed"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_reconnect_success_sets_connected() {
+        let port = 16381;
+        let mut redis = spawn_redis_server_on_port(port).await;
+
+        let mut app = App::new(Config::default());
+        app.last_profile = Some(ConnectionProfile {
+            name: "test-local".to_string(),
+            host: "127.0.0.1".to_string(),
+            port,
+            db: 0,
+            username: None,
+            password: None,
+            last_connected: None,
+            mode: ConnectionMode::Standalone,
+            tls: None,
+            ssh_tunnel: None,
+        });
+
+        app.reconnect_active_connection().await;
+
+        assert!(app.client.is_some());
+        assert!(matches!(
+            app.status_bar.connection_state,
+            ConnectionState::Connected {
+                host: _,
+                port: 16381,
+                db: 0
+            }
+        ));
+        assert!(app.error_message.is_none());
+
+        let _ = redis.kill();
+        let _ = redis.wait();
+    }
 }

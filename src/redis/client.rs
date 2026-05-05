@@ -3,11 +3,134 @@ use std::time::Duration;
 
 use color_eyre::Result;
 use redis::aio::MultiplexedConnection;
+use thiserror::Error;
 
-use crate::config::connections::ConnectionProfile;
+use crate::config::connections::{ConnectionMode, ConnectionProfile, SentinelNode};
+
+pub type RedisResult<T> = std::result::Result<T, RedisError>;
+
+#[derive(Debug, Error)]
+pub enum RedisError {
+    #[error("connection failed: {0}")]
+    ConnectionFailed(String),
+    #[error("operation timed out: {0}")]
+    Timeout(&'static str),
+    #[error("invalid configuration: {0}")]
+    InvalidConfig(String),
+    #[error("command failed: {0}")]
+    CommandFailed(String),
+}
 
 pub enum RedisClient {
     Standalone(MultiplexedConnection),
+}
+
+fn resolve_password(profile: &ConnectionProfile) -> RedisResult<Option<String>> {
+    match &profile.password {
+        Some(password_ref) => password_ref
+            .resolve()
+            .map(Some)
+            .map_err(|e| RedisError::InvalidConfig(format!("password resolution failed: {e}"))),
+        None => Ok(None),
+    }
+}
+
+fn build_redis_url(profile: &ConnectionProfile, host: &str, port: u16) -> RedisResult<String> {
+    let password = resolve_password(profile)?;
+    let scheme = if profile.tls.as_ref().is_some_and(|tls| tls.enabled) {
+        "rediss"
+    } else {
+        "redis"
+    };
+
+    let auth = match (profile.username.as_deref(), password.as_deref()) {
+        (Some(user), Some(pass)) => format!("{user}:{pass}@"),
+        (Some(user), None) => format!("{user}@"),
+        (None, Some(pass)) => format!(":{pass}@"),
+        (None, None) => String::new(),
+    };
+
+    Ok(format!(
+        "{scheme}://{auth}{host}:{port}/{}",
+        profile.db
+    ))
+}
+
+async fn connect_with_timeout(url: &str) -> RedisResult<MultiplexedConnection> {
+    let client = redis::Client::open(url)
+        .map_err(|e| RedisError::ConnectionFailed(format!("invalid redis URL: {e}")))?;
+
+    tokio::time::timeout(Duration::from_secs(5), client.get_multiplexed_async_connection())
+        .await
+        .map_err(|_| RedisError::Timeout("connect"))
+        .and_then(|res| {
+            res.map_err(|e| RedisError::ConnectionFailed(format!("unable to connect: {e}")))
+        })
+}
+
+async fn resolve_sentinel_master(
+    profile: &ConnectionProfile,
+    master_name: &str,
+    sentinels: &[SentinelNode],
+) -> RedisResult<(String, u16)> {
+    if sentinels.is_empty() {
+        return Err(RedisError::InvalidConfig(
+            "sentinel mode requires at least one sentinel node".to_string(),
+        ));
+    }
+
+    let mut last_err: Option<RedisError> = None;
+    for sentinel in sentinels {
+        let url = build_redis_url(profile, &sentinel.host, sentinel.port)?;
+        match connect_with_timeout(&url).await {
+            Ok(mut conn) => {
+                let response: RedisResult<Vec<String>> = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("SENTINEL")
+                        .arg("get-master-addr-by-name")
+                        .arg(master_name)
+                        .query_async(&mut conn),
+                )
+                .await
+                .map_err(|_| RedisError::Timeout("sentinel get-master-addr-by-name"))
+                .and_then(|r| {
+                    r.map_err(|e| {
+                        RedisError::CommandFailed(format!(
+                            "sentinel lookup failed on {}:{}: {e}",
+                            sentinel.host, sentinel.port
+                        ))
+                    })
+                });
+
+                match response {
+                    Ok(values) if values.len() >= 2 => {
+                        let port = values[1].parse::<u16>().map_err(|e| {
+                            RedisError::CommandFailed(format!(
+                                "invalid sentinel master port '{}': {e}",
+                                values[1]
+                            ))
+                        })?;
+                        return Ok((values[0].clone(), port));
+                    }
+                    Ok(values) => {
+                        last_err = Some(RedisError::CommandFailed(format!(
+                            "sentinel returned invalid master tuple: {values:?}"
+                        )));
+                    }
+                    Err(err) => {
+                        last_err = Some(err);
+                    }
+                }
+            }
+            Err(err) => {
+                last_err = Some(err);
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| {
+        RedisError::ConnectionFailed("unable to resolve sentinel master".to_string())
+    }))
 }
 
 pub struct RedisClientHandle {
@@ -17,22 +140,23 @@ pub struct RedisClientHandle {
 }
 
 impl RedisClientHandle {
-    pub async fn connect(profile: &ConnectionProfile) -> Result<Self> {
-        let url = if let Some(ref user) = profile.username {
-            format!(
-                "redis://{}@{}:{}/{}",
-                user, profile.host, profile.port, profile.db
-            )
-        } else {
-            format!(
-                "redis://{}:{}/{}",
-                profile.host, profile.port, profile.db
-            )
+    pub async fn connect(profile: &ConnectionProfile) -> RedisResult<Self> {
+        let conn = match &profile.mode {
+            ConnectionMode::Standalone | ConnectionMode::Cluster => {
+                let url = build_redis_url(profile, &profile.host, profile.port)?;
+                connect_with_timeout(&url).await?
+            }
+            ConnectionMode::Sentinel {
+                master_name,
+                sentinels,
+            } => {
+                let (master_host, master_port) =
+                    resolve_sentinel_master(profile, master_name, sentinels).await?;
+                let url = build_redis_url(profile, &master_host, master_port)?;
+                connect_with_timeout(&url).await?
+            }
         };
-        let client = redis::Client::open(url)?;
-        let conn = tokio::time::timeout(Duration::from_secs(5), client.get_multiplexed_async_connection())
-            .await
-            .map_err(|_| color_eyre::eyre::eyre!("Connection timeout"))??;
+
         Ok(Self {
             client: RedisClient::Standalone(conn),
             profile: profile.clone(),

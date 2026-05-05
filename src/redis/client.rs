@@ -144,6 +144,10 @@ pub struct RedisClientHandle {
 }
 
 impl RedisClientHandle {
+    pub fn connection_url(profile: &ConnectionProfile) -> RedisResult<String> {
+        build_redis_url(profile, &profile.host, profile.port)
+    }
+
     pub async fn connect(profile: &ConnectionProfile) -> RedisResult<Self> {
         let conn = match &profile.mode {
             ConnectionMode::Standalone | ConnectionMode::Cluster => {

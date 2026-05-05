@@ -11,16 +11,20 @@ use ratatui::{
 use std::io::Stdout;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
+use futures::StreamExt;
 
 use crate::backoff::backoff_sequence;
 use crate::config::Config;
 use crate::config::connections::{ConnectionMode, ConnectionProfile, ConnectionStore};
 use crate::events::{Event, EventHandler};
 use crate::redis::client::{RedisClient, RedisClientHandle};
+use crate::redis::server::slowlog_get;
 use crate::ui::command_palette::{CommandPalette, PaletteAction};
 use crate::ui::connection_screen::{ConnectionScreen, ConnectionScreenAction};
+use crate::ui::info_dashboard::{InfoDashboard, SystemStats};
 use crate::ui::key_browser::scanner_task;
 use crate::ui::key_browser::{BrowserAction, KeyBrowser};
+use crate::ui::pubsub::{PubSubAction, PubSubMessage, PubSubWidget};
 use crate::ui::repl::{parse_pipeline, ReplAction, ReplLineStatus, ReplWidget};
 use crate::ui::status_bar::{ConnectionState, StatusBar};
 use crate::ui::tab_bar;
@@ -106,6 +110,8 @@ pub struct App {
     pub key_browser: KeyBrowser,
     pub status_bar: StatusBar,
     pub value_inspector: ValueInspector,
+    pub info_dashboard: InfoDashboard,
+    pub pubsub_widget: PubSubWidget,
     pub repl: ReplWidget,
     pub command_palette: Option<CommandPalette>,
     pub connection_screen: Option<ConnectionScreen>,
@@ -114,6 +120,7 @@ pub struct App {
     pub client: Option<RedisClientHandle>,
     last_profile: Option<ConnectionProfile>,
     pub scan_rx: Option<mpsc::Receiver<Vec<crate::ui::key_browser::tree::KeyEntry>>>,
+    pub pubsub_rx: Option<mpsc::UnboundedReceiver<PubSubMessage>>,
     tick_count: u64,
     reconnect_attempt: u32,
 }
@@ -129,6 +136,8 @@ impl App {
             key_browser: KeyBrowser::new(sep),
             status_bar: StatusBar::default(),
             value_inspector: ValueInspector::new(),
+            info_dashboard: InfoDashboard::new(),
+            pubsub_widget: PubSubWidget::new(),
             repl: ReplWidget::new(),
             command_palette: None,
             connection_screen: None,
@@ -137,8 +146,44 @@ impl App {
             client: None,
             last_profile: None,
             scan_rx: None,
+            pubsub_rx: None,
             tick_count: 0,
             reconnect_attempt: 0,
+        }
+    }
+
+    async fn handle_pubsub_action(&mut self, action: PubSubAction) {
+        match action {
+            PubSubAction::Subscribe(channel) => {
+                match self.start_pubsub_subscription(channel.clone()) {
+                    Ok(()) => {
+                        self.error_message = Some(format!("Subscribed to channel '{channel}'"));
+                    }
+                    Err(err) => {
+                        self.error_message = Some(format!("Subscribe failed: {err}"));
+                    }
+                }
+            }
+            PubSubAction::Publish { channel, message } => {
+                if let Some(client) = &self.client {
+                    match client.publish(&channel, &message).await {
+                        Ok(_) => {
+                            self.pubsub_widget.push_message(PubSubMessage {
+                                channel,
+                                pattern: None,
+                                payload: message,
+                                timestamp: std::time::Instant::now(),
+                            });
+                            self.error_message = None;
+                        }
+                        Err(err) => {
+                            self.error_message = Some(format!("Publish failed: {err}"));
+                        }
+                    }
+                } else {
+                    self.error_message = Some("Not connected".to_string());
+                }
+            }
         }
     }
 
@@ -234,7 +279,7 @@ impl App {
     async fn handle_event(&mut self, event: Event) {
         match event {
             Event::Key(key) => self.handle_key_event(key).await,
-            Event::Tick => self.handle_tick(),
+            Event::Tick => self.handle_tick().await,
             Event::Resize(_, _) => {}
         }
     }
@@ -295,7 +340,10 @@ impl App {
             }
             KeyCode::Char('1') => self.active_tab = Tab::Keys,
             KeyCode::Char('2') => self.active_tab = Tab::Repl,
-            KeyCode::Char('3') => self.active_tab = Tab::Info,
+            KeyCode::Char('3') => {
+                self.active_tab = Tab::Info;
+                self.refresh_info_dashboard().await;
+            }
             KeyCode::Char('4') => self.active_tab = Tab::PubSub,
             KeyCode::Char('\\')
                 if key.modifiers
@@ -338,7 +386,12 @@ impl App {
                     self.execute_repl_command(cmd).await;
                 }
             }
-            Tab::Info | Tab::PubSub => {}
+            Tab::Info => {}
+            Tab::PubSub => {
+                if let Some(action) = self.pubsub_widget.handle_event(&Event::Key(key)) {
+                    self.handle_pubsub_action(action).await;
+                }
+            }
         }
 
         self.update_status_bar_context();
@@ -476,11 +529,86 @@ impl App {
         }
     }
 
-    fn handle_tick(&mut self) {
+    async fn handle_tick(&mut self) {
         self.tick_count = self.tick_count.saturating_add(1);
         self.drain_scan_batches();
+        self.drain_pubsub_messages();
         self.status_bar.key_count = self.key_browser.tree.total_keys();
+        if self.active_tab == Tab::Info && self.tick_count.is_multiple_of(4) {
+            self.refresh_info_dashboard().await;
+        }
         self.update_status_bar_context();
+    }
+
+    fn start_pubsub_subscription(&mut self, channel: String) -> color_eyre::Result<()> {
+        let profile = self
+            .client
+            .as_ref()
+            .map(|c| c.profile.clone())
+            .or_else(|| self.last_profile.clone())
+            .ok_or_else(|| color_eyre::eyre::eyre!("Not connected"))?;
+
+        let url = RedisClientHandle::connection_url(&profile)
+            .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
+
+        let (tx, rx) = mpsc::unbounded_channel::<PubSubMessage>();
+        self.pubsub_rx = Some(rx);
+
+        tokio::spawn(async move {
+            let client = match redis::Client::open(url) {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+
+            let mut pubsub = match client.get_async_pubsub().await {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+
+            if pubsub.subscribe(channel.clone()).await.is_err() {
+                return;
+            }
+
+            let mut stream = pubsub.on_message();
+            while let Some(msg) = stream.next().await {
+                let payload = msg
+                    .get_payload::<String>()
+                    .unwrap_or_else(|_| "<non-utf8 payload>".to_string());
+
+                let _ = tx.send(PubSubMessage {
+                    channel: msg.get_channel_name().to_string(),
+                    pattern: msg.get_pattern::<String>().ok(),
+                    payload,
+                    timestamp: std::time::Instant::now(),
+                });
+            }
+        });
+
+        Ok(())
+    }
+
+    async fn refresh_info_dashboard(&mut self) {
+        let Some(client) = self.client.as_ref() else {
+            return;
+        };
+
+        match client.info("all").await {
+            Ok(raw) => {
+                self.info_dashboard.stats = SystemStats::from_info_sections(&raw);
+            }
+            Err(err) => {
+                self.error_message = Some(format!("Failed to refresh INFO: {err}"));
+            }
+        }
+
+        match slowlog_get(client, 100).await {
+            Ok(entries) => {
+                self.info_dashboard.slowlog = entries;
+            }
+            Err(err) => {
+                self.error_message = Some(format!("Failed to refresh SLOWLOG: {err}"));
+            }
+        }
     }
 
     async fn handle_browser_action(&mut self, action: BrowserAction) {
@@ -539,6 +667,26 @@ impl App {
         }
     }
 
+    fn drain_pubsub_messages(&mut self) {
+        let mut should_clear = false;
+        if let Some(rx) = self.pubsub_rx.as_mut() {
+            loop {
+                match rx.try_recv() {
+                    Ok(msg) => self.pubsub_widget.push_message(msg),
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        should_clear = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if should_clear {
+            self.pubsub_rx = None;
+        }
+    }
+
     fn update_status_bar_context(&mut self) {
         self.status_bar.key_count = self.key_browser.tree.total_keys();
         self.status_bar.hints = match self.active_tab {
@@ -588,11 +736,11 @@ impl App {
             Tab::Repl => {
                 self.repl.render(frame, main_layout[1]);
             }
-            _ => {
-                frame.render_widget(
-                    Block::default().borders(Borders::ALL).title("Placeholder"),
-                    main_layout[1],
-                );
+            Tab::Info => {
+                self.info_dashboard.render(frame, main_layout[1]);
+            }
+            Tab::PubSub => {
+                self.pubsub_widget.render(frame, main_layout[1]);
             }
         }
 

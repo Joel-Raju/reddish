@@ -291,8 +291,481 @@ Config file: `~/.config/redis-tui/config.toml`
 | `mouse_enabled` | `true` | Enable mouse support |
 | `confirm_deletes` | `true` | Require confirmation before DELETE |
 | `keybindings` | — | Override any default keybinding |
+| `auto_detect_content_type` | `true` | Auto-detect JSON, MessagePack, Protobuf in string values |
+| `danger_mode` | `false` | Show confirmation for bulk operations and FLUSH commands |
 
 All keybindings remappable. Vim, Emacs, and custom presets supported.
+
+---
+
+### 4.10 Smart Content Detection & Value Transforms
+
+#### Auto-Detection Pipeline
+
+When a String key is selected, the Value Inspector runs a detection cascade:
+
+1. **JSON probe**: `serde_json::from_str()` — if valid, render as syntax-highlighted tree
+2. **MessagePack probe**: attempt `rmp-serde` decode — if valid, show decoded structure
+3. **Protobuf probe**: if schema file configured for key pattern, decode and display
+4. **Base64 decode**: if value matches base64 pattern, show decoded bytes info
+5. **Compression detection**: detect gzip/zlib/zstd signatures, offer decompression
+
+**Keybinding**: `Ctrl+T` cycles through detected formats
+
+#### Context-Aware Transforms
+
+Accessible via `T` (Transform) menu from Value Inspector:
+
+| Transform | Description | Example |
+|---|---|---|
+| `JSON pretty` | Minified → pretty-printed | `{"a":1}` → formatted |
+| `JSON compact` | Pretty → minified | Remove whitespace |
+| `URL decode` | Decode percent-encoding | `%7B%22a%22%7D` → `{"a"}` |
+| `URL encode` | Encode special chars | `{"a"}` → `%7B%22a%22%7D` |
+| `JWT decode` | Show header/payload/signature | Decode JWT tokens |
+| `Unix timestamp` | Epoch → human readable | `1714800000` → `2024-05-04T00:00:00Z` |
+| `Compress` | gzip/zlib/zstd | Reduce size for storage |
+| `Decompress` | Auto-detect & decompress | Reverse compression |
+| `Hex dump` | Binary → hex representation | `AB` → `41 42` |
+| `Base64 encode/decode` | Toggle base64 | Binary-safe encoding |
+
+Transforms are applied in a pipeline — users can chain multiple transforms and preview before committing.
+
+---
+
+### 4.11 Transaction Builder (MULTI/EXEC)
+
+A visual transaction builder for queuing Redis commands and executing atomically.
+
+**Access**: `Ctrl+X` from any panel opens the Transaction Builder overlay
+
+#### Features
+
+- **Queue commands**: Type commands like REPL, but they're queued instead of executed
+- **Watch keys**: Add keys to watch for optimistic locking (`WATCH key`)
+- **Visual queue**: See all queued commands in order before execution
+- **Response preview**: On EXEC, see all responses in a structured view
+- **Save as recipe**: Store frequently-used transaction patterns
+
+#### Controls
+
+| Key | Action |
+|-----|--------|
+| `a` | Append command to queue |
+| `d` | Delete selected command from queue |
+| `w` | Add WATCH for selected key |
+| `Ctrl+E` | Execute transaction (EXEC) |
+| `Ctrl+R` | Discard transaction (DISCARD) |
+| `s` | Save as recipe |
+| `Enter` | Load saved recipe |
+
+#### Module Structure
+
+```rust
+// src/redis/transaction.rs
+pub struct TransactionBuilder {
+    pub watch_keys: Vec<String>,
+    pub commands: Vec<Vec<String>>,
+    pub executed: bool,
+}
+
+impl TransactionBuilder {
+    pub fn watch(&mut self, key: String)
+    pub fn queue(&mut self, command: Vec<String>)
+    pub async fn execute(&self, client: &RedisClient) -> Result<TransactionResult>
+    pub fn discard(&mut self)
+}
+```
+
+---
+
+### 4.12 Key Insights Panel
+
+On-demand analysis for any selected key that provides intelligence beyond raw data.
+
+**Access**: `I` (Insights) from Value Inspector
+
+#### Analysis Types
+
+**For all types:**
+- **Memory breakdown**: Exact bytes, percentage of total DB memory
+- **Access patterns**: Last access time, idle time (via `OBJECT IDLETIME`)
+- **TTL analysis**: Time remaining, percentage elapsed
+- **Encoding details**: Internal Redis encoding, optimization hints
+
+**Type-specific insights:**
+
+| Type | Insights |
+|------|----------|
+| String | Character count, line count, encoding (UTF-8 validity), entropy estimate |
+| List | Distribution of element sizes, growth pattern (append-only vs inserts) |
+| Hash | Field count distribution, avg field size, recommendations if fields > 1000 |
+| Set | Uniqueness ratio (if derived from list), density analysis |
+| ZSet | Score distribution (min/max/avg), member clustering |
+| Stream | Message rate, consumer lag, group health |
+
+**Recommendations engine:**
+- "This Hash has 5000+ fields — consider splitting by namespace"
+- "This List is only appended — consider using a Stream for consumer groups"
+- "This Set could be a ZSet with score=1 if you need ordering"
+- "Key not accessed in 7 days — consider adding TTL or removing"
+
+---
+
+### 4.13 Batch Operations Mode
+
+Bulk operations on multiple keys matching patterns or selections.
+
+**Access**: `B` from Key Browser opens Batch Operations overlay
+
+#### Supported Operations
+
+| Operation | Description | Redis Command |
+|-----------|-------------|---------------|
+| `Delete` | Remove all selected/matching keys | `DEL` |
+| `Copy` | Duplicate keys to new pattern | `DUMP`/`RESTORE` or `SET` |
+| `Move` | Move keys to different DB | `MOVE` |
+| `Migrate` | Move keys to different instance | `MIGRATE` |
+| `Rename` | Apply pattern-based rename | `RENAME` |
+| `Expire` | Set TTL on all keys | `EXPIRE` |
+| `Persist` | Remove TTL from all keys | `PERSIST` |
+| `Type convert` | Convert types (List→Set dedup) | Various |
+
+#### Pattern Matching
+
+- **Glob patterns**: `user:*:session` matches `user:123:session`, `user:abc:session`
+- **Regex patterns**: `user:\d+:session` for numeric IDs
+- **Multi-select**: Manually select keys with `Space`, then apply batch op
+
+#### Safety Features
+
+- **Preview**: Show first 10 affected keys before executing
+- **Dry-run mode**: Count keys that would be affected
+- **Confirmation threshold**: Require explicit confirmation if > N keys
+- **Rollback log**: Record batch operations for potential undo
+
+#### Module Structure
+
+```rust
+// src/redis/batch.rs
+pub struct BatchOperation {
+    pub keys: Vec<String>,
+    pub operation: BatchOpType,
+    pub dry_run: bool,
+}
+
+pub enum BatchOpType {
+    Delete,
+    Copy { pattern: String },
+    Move { db: u8 },
+    Migrate { host: String, port: u16, db: u8 },
+    Rename { pattern: String, replacement: String },
+    Expire { seconds: i64 },
+    Persist,
+}
+```
+
+---
+
+### 4.14 Snapshot & Compare
+
+Capture and compare keyspace state across time or environments.
+
+#### Snapshots
+
+**Create snapshot**: `Ctrl+S` from Key Browser
+- Captures: key names, types, sizes, TTLs, encodings
+- Scope options: current namespace, all keys, filtered subset
+- Storage: JSON file in `~/.local/share/redis-tui/snapshots/`
+
+**Snapshot metadata:**
+- Timestamp
+- Connection profile
+- Key count
+- Total memory
+- Redis version
+
+#### Compare Snapshots
+
+**Access**: `:compare` command or Compare menu
+
+**Diff view shows:**
+- **Added keys**: Present in second snapshot, absent in first
+- **Removed keys**: Present in first snapshot, absent in second
+- **Changed keys**: Same key, different value size/TTL/type
+- **Unchanged keys**: Identical between snapshots
+
+**Comparison modes:**
+- **Side-by-side**: Two columns with sync'd scrolling
+- **Unified diff**: Like `git diff`, shows only changes
+- **Statistics**: Summary counts and memory delta
+
+**Use cases:**
+- Debug data drift between staging and production
+- Verify deployment didn't corrupt data
+- Track key expiration patterns
+- Audit changes after batch operations
+
+#### Module Structure
+
+```rust
+// src/redis/snapshot.rs
+pub struct Snapshot {
+    pub timestamp: DateTime<Utc>,
+    pub connection: ConnectionProfile,
+    pub keys: IndexMap<String, KeySnapshot>,
+    pub metadata: SnapshotMetadata,
+}
+
+pub struct KeySnapshot {
+    pub redis_type: RedisType,
+    pub memory_bytes: u64,
+    pub ttl: Option<Duration>,
+    pub encoding: String,
+}
+
+pub fn diff_snaps(before: &Snapshot, after: &Snapshot) -> SnapshotDiff {
+    // Returns Added, Removed, Changed sets
+}
+```
+
+---
+
+### 4.15 Latency Doctor / Performance Advisor
+
+Dedicated health check panel that identifies performance issues.
+
+**Access**: `:doctor` or Tab 5 (configurable)
+
+#### Analysis Categories
+
+**1. Big Keys**
+- Top 10 largest keys by memory
+- Threshold alerts (>100KB, >1MB, >10MB)
+- Recommendations: "Consider splitting hash `large:hash` into smaller shards"
+
+**2. Hot Keys**
+- Keys with highest access frequency (via `--hotkeys` or sampling)
+- Replication lag correlation
+- Recommendations: "Add client-side caching for hot key `user:session:popular`"
+
+**3. Slow Commands**
+- Breakdown by command type from SLOWLOG
+- Duration percentiles (p50, p95, p99)
+- Recommendations: "Replace `KEYS user:*` with `SCAN` iterator"
+
+**4. Memory Health**
+- Fragmentation ratio analysis
+- Eviction rate trends
+- Maxmemory policy effectiveness
+- Recommendations: "Consider `maxmemory-policy allkeys-lru` for cache workloads"
+
+**5. Replication Lag**
+- Replica sync status
+- Offset delta over time
+- Recommendations: "Replica lagging by 5s — check network or `repl-backlog-size`"
+
+**6. Persistence Status**
+- RDB/AOF health
+- Last save duration
+- AOF rewrite frequency
+- Recommendations: "AOF growing large — schedule BGREWRITEAOF"
+
+#### One-Button Audit
+
+**`:doctor --full`** runs complete analysis and generates report:
+- Score: 0-100 health score
+- Priority issues (critical, warning, info)
+- Actionable remediation steps
+- Export to markdown for sharing
+
+---
+
+### 4.16 Session Recording & Replay
+
+Record all REPL commands and responses for later replay or debugging.
+
+#### Recording
+
+**Start recording**: `:record <session-name>` or `Ctrl+Shift+R`
+- Records: All commands, responses, timestamps, connection profile
+- Storage: `~/.local/share/redis-tui/sessions/<name>.json`
+
+**Session format:**
+```json
+{
+  "version": 1,
+  "recorded_at": "2026-05-05T10:00:00Z",
+  "connection": "prod-redis",
+  "entries": [
+    {
+      "timestamp": "2026-05-05T10:00:01.123Z",
+      "command": ["GET", "user:123"],
+      "response": { "type": "string", "value": "John Doe" }
+    }
+  ]
+}
+```
+
+#### Replay
+
+**Replay session**: `:replay <session-name>` or `Ctrl+Shift+P`
+
+**Replay modes:**
+- **Instant**: Execute all commands immediately, show aggregated results
+- **Timed**: Execute with original timing delays (for demos)
+- **Step-through**: Execute one command at a time with user confirmation
+
+**Target options:**
+- Same connection (verify current state)
+- Different connection (e.g., staging → production verification)
+- Dry-run (validate commands without executing)
+
+#### Use Cases
+
+- **Debugging**: Record session when bug occurs, replay to reproduce
+- **Demo**: Record workflow, replay for training or presentations
+- **Audit**: Record all admin actions for compliance
+- **Migration verification**: Run same commands on staging, then production
+
+---
+
+### 4.17 Data Generator
+
+Built-in tool to populate Redis with synthetic data for testing and load simulation.
+
+**Access**: `:generate` or `Ctrl+Shift+G`
+
+#### Generator Templates
+
+**Pre-built patterns:**
+- **User sessions**: `user:session:<id>` with TTL, hash of user data
+- **Cache entries**: `cache:<url_hash>` with random TTL, JSON payloads
+- **Leaderboard**: `leaderboard:game:<id>` as ZSet with scores
+- **Message queue**: `queue:jobs` as List with job JSON
+- **Time series**: `ts:metric:<name>:<timestamp>` pattern
+
+#### Configuration
+
+```rust
+// src/redis/generator.rs
+pub struct GeneratorConfig {
+    pub pattern: String,           // e.g., "user:session:{id}"
+    pub count: usize,              // Number of keys to generate
+    pub id_range: Range<u64>,      // ID substitution range
+    pub ttl_seconds: Option<u64>,  // Optional TTL
+    pub value_template: ValueTemplate,
+    pub distribution: Distribution, // Random, sequential, skewed
+}
+```
+
+#### Distribution Options
+
+| Distribution | Description | Use Case |
+|--------------|-------------|----------|
+| `Sequential` | IDs 1..N | Predictable test data |
+| `Random` | Random IDs in range | Uniform distribution |
+| `Zipfian` | Skewed hot/cold | Realistic cache simulation |
+| `Burst` | Clusters of writes | Load testing |
+
+#### Controls
+
+| Key | Action |
+|-----|--------|
+| `p` | Select pattern template |
+| `n` | Set count (number of keys) |
+| `t` | Set TTL |
+| `v` | Preview first 5 generated keys |
+| `Enter` | Execute generation |
+| `Esc` | Cancel |
+
+#### Safety
+
+- **Dry-run default**: Show preview before generating
+- **Namespace isolation**: Only generate in test namespaces by default
+- **Rate limiting**: Throttle to avoid overwhelming connection
+- **Cleanup command**: `:generate --cleanup <pattern>` to delete generated keys
+
+---
+
+### 4.18 Connection Groups & Workspaces
+
+Define workspaces that connect to multiple Redis instances simultaneously for comparison and coordinated operations.
+
+#### Workspace Definition
+
+**Config file**: `~/.config/redis-tui/workspaces.toml`
+
+```toml
+[[workspace]]
+name = "production-cluster"
+connections = ["prod-primary", "prod-replica-1", "prod-replica-2"]
+layout = "horizontal"  # or "vertical", "grid"
+
+[[workspace]]
+name = "staging-comparison"
+connections = ["staging-us", "staging-eu"]
+layout = "horizontal"
+
+[[workspace]]
+name = "sentinel-setup"
+connections = ["sentinel-1", "sentinel-2", "sentinel-3", "master", "replica"]
+layout = "grid"
+```
+
+#### UI Layout
+
+**Split view modes:**
+- **Horizontal**: Side-by-side comparison (2-4 connections)
+- **Vertical**: Stacked panels
+- **Grid**: 2x2 or 3x3 matrix for larger clusters
+- **Focus**: One main panel, others minimized to status bars
+
+**Per-panel features:**
+- Each panel shows independent Key Browser + Value Inspector
+- Synchronized navigation (optional): scroll both panels together
+- Independent REPL per connection
+- Cross-panel operations (copy from left, paste to right)
+
+#### Sentinel & Cluster Topology View
+
+For Sentinel setups, show topology visualization:
+- **Sentinel nodes**: List with health status
+- **Master**: Current master with connection details
+- **Replicas**: Connected replicas with lag indicators
+- **Auto-failover alerts**: Notification when master changes
+
+#### Module Structure
+
+```rust
+// src/app/workspace.rs
+pub struct Workspace {
+    pub name: String,
+    pub connections: Vec<ConnectionProfile>,
+    pub layout: Layout,
+    pub sync_navigation: bool,
+}
+
+pub enum Layout {
+    Horizontal,
+    Vertical,
+    Grid { rows: usize, cols: usize },
+    Focus { primary: usize },
+}
+```
+
+#### Controls
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+W` | Open workspace selector |
+| `Tab` | Switch focus between panels |
+| `Ctrl+Tab` | Cycle layouts |
+| `S` | Toggle sync navigation |
+| `C` | Copy selected key from focused panel |
+| `V` | Paste to focused panel |
+
+---
 
 ---
 
@@ -369,6 +842,71 @@ Focus cycles: Key Browser → Value Inspector → (back). Indicated by colored b
 - Terminal: xterm-256color minimum; true-color detected via `$COLORTERM`
 - OS: Linux, macOS; Windows (ConEmu / Windows Terminal)
 - SSH tunnel: spawns `ssh -L` subprocess, tears down on exit
+
+### Safety & Production Readiness
+
+#### SCAN Cursor Consistency
+
+The spec uses `SCAN` (good) but doesn't fully address cursor consistency during renames/deletions mid-scan. Mitigations:
+
+- **Snapshot timestamp**: Show "Scan stable as of HH:MM:SS" badge in status bar
+- **Delta detection**: If keys appear/disappear during scan, show inline banner: "Keyspace changed during scan — some keys may be duplicated or missing"
+- **Live-mode toggle**: Option to continuously re-scan for real-time accuracy (with performance warning)
+
+#### Big Key Streaming
+
+For large collections (Lists, Hashes, ZSets, Streams):
+
+- **Pagination**: Use `LRANGE`, `HSCAN`, `ZRANGE` with limits instead of loading all elements
+- **Lazy loading**: Only fetch next page when user scrolls near end
+- **Size warning**: "This hash has 50,000 fields — displaying first 100. Use filter to narrow."
+- **Direct jump**: `G` to jump to specific index in large lists
+
+#### Danger Mode & Confirmation Thresholds
+
+To prevent catastrophic mistakes:
+
+| Operation | Default Behavior | Danger Mode Required |
+|-----------|------------------|---------------------|
+| `DEL` single key | Confirm dialog | No |
+| `DEL` >10 keys | Explicit "DELETE 47 keys?" | No |
+| `DEL` >100 keys | Require `danger_mode: true` config | Yes |
+| `FLUSHDB` / `FLUSHALL` | Block by default | Yes, with typed confirmation |
+| `KEYS *` pattern | Block, suggest SCAN | Yes |
+| `MIGRATE` to external | Confirm with count | Yes |
+| `SCRIPT FLUSH` | Confirm with warning | Yes |
+
+**Danger mode config:**
+```toml
+# ~/.config/redis-tui/config.toml
+danger_mode = false  # Default false for safety
+
+[danger]
+# Patterns that always require confirmation
+protected_patterns = ["prod:*", "payment:*", "auth:*"]
+
+# Operations requiring explicit confirmation
+confirm_above_count = 10  # Keys
+confirm_above_memory_mb = 100  # Total memory affected
+```
+
+**Production banner:**
+When connected to a profile with `danger_mode: false` but >1000 keys:
+```
+┌─────────────────────────────────────────────────────────────┐
+│ ⚠ PRODUCTION DATABASE — 2.3M keys, 4.2GB memory            │
+│ Bulk operations disabled. Set danger_mode=true to enable.   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Client-Side Caching Tracking (RESP3)
+
+For Redis 6.0+ with RESP3:
+
+- Show which keys are tracked in client-side caching mode
+- Display cache hit/miss ratio for tracked keys
+- `CLIENT TRACKING` status indicator
+- Recommendations: "Enable client-side caching for frequently-accessed keys"
 
 ---
 
@@ -2441,10 +2979,17 @@ cargo build --release
 
 ### Post-v1 Roadmap
 
-- **Redis Stack support** — RedisSearch query UI, JSON type inspector, TimeSeries graphing
-- **Diff view** — compare two keys side by side
-- **Import / Export** — dump keys to JSON/RDB fragments, import from file
-- **Scripting** — run Lua scripts via EVAL with syntax highlighting
-- **Plugin system** — custom value renderers (e.g., Protobuf decoder via WASM plugin)
-- **Multi-server** — split-pane comparing two Redis instances simultaneously
-- **ACL editor** — visual editor for Redis ACL rules
+The following features are deferred to post-v1 releases:
+
+- **Redis Stack support** — RedisSearch query UI, RedisJSON type inspector with JSONPath queries, TimeSeries graphing with downsampling
+- **Import / Export** — dump keys to JSON/RDB fragments, import from file with conflict resolution
+- **Scripting** — run Lua scripts via EVAL with syntax highlighting, debugging, and result visualization
+- **Plugin system** — custom value renderers via WASM plugins (e.g., custom Protobuf decoders, domain-specific formatters)
+- **ACL editor** — visual editor for Redis ACL rules with permission matrix
+- **Query builder** — visual Redis Search/JSON query builder with result pagination
+- **Backup/Restore** — point-in-time recovery, scheduled backups to S3/GCS
+- **Alerting** — configurable alerts for memory thresholds, replication lag, slow commands
+- **Collaboration** — shared sessions, live collaboration on Redis debugging
+- **Metrics export** — Prometheus/OpenTelemetry exporters for Redis metrics
+- **Query plan visualization** — for Redis Search queries, show execution plan
+- **Data lineage** — track key origins and transformations across systems

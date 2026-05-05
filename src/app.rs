@@ -16,12 +16,12 @@ use crate::backoff::backoff_sequence;
 use crate::config::Config;
 use crate::config::connections::{ConnectionMode, ConnectionProfile, ConnectionStore};
 use crate::events::{Event, EventHandler};
-use crate::redis::client::RedisClientHandle;
+use crate::redis::client::{RedisClient, RedisClientHandle};
 use crate::ui::command_palette::{CommandPalette, PaletteAction};
 use crate::ui::connection_screen::{ConnectionScreen, ConnectionScreenAction};
 use crate::ui::key_browser::scanner_task;
 use crate::ui::key_browser::{BrowserAction, KeyBrowser};
-use crate::ui::repl::{ReplAction, ReplWidget};
+use crate::ui::repl::{parse_pipeline, ReplAction, ReplLineStatus, ReplWidget};
 use crate::ui::status_bar::{ConnectionState, StatusBar};
 use crate::ui::tab_bar;
 use crate::ui::value_inspector::ValueInspector;
@@ -34,6 +34,60 @@ pub enum AppMode {
     Search,
     Confirm,
     ConnectionScreen,
+}
+
+fn redis_value_to_string(value: &redis::Value) -> String {
+    match value {
+        redis::Value::Nil => "(nil)".to_string(),
+        redis::Value::Int(i) => i.to_string(),
+        redis::Value::BulkString(bytes) => String::from_utf8(bytes.clone())
+            .unwrap_or_else(|_| String::from_utf8_lossy(bytes).to_string()),
+        redis::Value::SimpleString(s) => s.clone(),
+        redis::Value::Okay => "OK".to_string(),
+        redis::Value::Array(items) => items
+            .iter()
+            .map(redis_value_to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+        redis::Value::Map(items) => items
+            .iter()
+            .map(|(k, v)| format!("{}: {}", redis_value_to_string(k), redis_value_to_string(v)))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        redis::Value::Set(items) => items
+            .iter()
+            .map(redis_value_to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+        redis::Value::Double(f) => f.to_string(),
+        redis::Value::Boolean(b) => b.to_string(),
+        redis::Value::Attribute { data, attributes } => {
+            let mut out = redis_value_to_string(data);
+            if !attributes.is_empty() {
+                out.push_str("\n# attributes\n");
+                out.push_str(
+                    &attributes
+                        .iter()
+                        .map(|(k, v)| {
+                            format!("{}: {}", redis_value_to_string(k), redis_value_to_string(v))
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                );
+            }
+            out
+        }
+        redis::Value::VerbatimString { text, .. } => text.clone(),
+        redis::Value::BigNumber(n) => n.to_string(),
+        redis::Value::Push { kind, data } => format!(
+            "push({kind:?}) {}",
+            data.iter()
+                .map(redis_value_to_string)
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+        redis::Value::ServerError(err) => format!("{err:?}"),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +140,75 @@ impl App {
             tick_count: 0,
             reconnect_attempt: 0,
         }
+    }
+
+    async fn execute_repl_command(&mut self, input: String) {
+        let stages = parse_pipeline(&input);
+        if stages.is_empty() {
+            return;
+        }
+
+        let mut last_output: Option<String> = None;
+        for stage in stages {
+            match self.execute_repl_stage(&stage, last_output.clone()).await {
+                Ok(output) => {
+                    last_output = Some(output);
+                }
+                Err(err) => {
+                    self.repl
+                        .add_result(&input, err.clone(), ReplLineStatus::Error(err.clone()));
+                    self.error_message = Some(err);
+                    return;
+                }
+            }
+        }
+
+        let output = last_output.unwrap_or_default();
+        self.repl
+            .add_result(&input, output, ReplLineStatus::Success);
+    }
+
+    async fn execute_repl_stage(
+        &self,
+        stage: &[String],
+        piped_input: Option<String>,
+    ) -> std::result::Result<String, String> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| "Not connected".to_string())?;
+
+        let mut tokens = stage.to_vec();
+        if let Some(input) = piped_input
+            && !input.is_empty()
+        {
+            tokens.push(input);
+        }
+        if tokens.is_empty() {
+            return Ok(String::new());
+        }
+
+        let cmd_name = tokens[0].to_uppercase();
+        let args = &tokens[1..];
+
+        let mut conn = match &client.client {
+            RedisClient::Standalone(conn) => conn.clone(),
+        };
+
+        let mut cmd = redis::cmd(&cmd_name);
+        for arg in args {
+            cmd.arg(arg);
+        }
+
+        let value: redis::Value = tokio::time::timeout(
+            Duration::from_secs(5),
+            cmd.query_async::<redis::Value>(&mut conn),
+        )
+        .await
+        .map_err(|_| format!("{cmd_name} timeout"))
+        .and_then(|res| res.map_err(|e| format!("{cmd_name} error: {e}")))?;
+
+        Ok(redis_value_to_string(&value))
     }
 
     pub fn mode(&self) -> &AppMode {
@@ -211,8 +334,8 @@ impl App {
                 }
             }
             Tab::Repl => {
-                if let Some(ReplAction::Submit(_cmd)) = self.repl.handle_event(&Event::Key(key)) {
-                    self.error_message = Some("REPL execution pipeline not wired yet".to_string());
+                if let Some(ReplAction::Submit(cmd)) = self.repl.handle_event(&Event::Key(key)) {
+                    self.execute_repl_command(cmd).await;
                 }
             }
             Tab::Info | Tab::PubSub => {}
@@ -523,7 +646,7 @@ mod tests {
     use std::time::Duration;
 
     async fn spawn_redis_server_on_port(port: u16) -> Child {
-        let mut child = Command::new("redis-server")
+        let child = Command::new("redis-server")
             .args([
                 "--port",
                 &port.to_string(),

@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::backend::TestBackend;
 use reddish_tui::events::Event;
 use reddish_tui::ui::command_palette::{CommandPalette, PaletteAction};

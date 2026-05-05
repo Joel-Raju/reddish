@@ -6,6 +6,10 @@ use redis::aio::MultiplexedConnection;
 use thiserror::Error;
 
 use crate::config::connections::{ConnectionMode, ConnectionProfile, SentinelNode};
+use crate::redis::types::{
+    bytes_to_string_lossy, map_pairs_to_index_map, stream_fields_from_map, RedisValue, StreamEntry,
+    StreamGroup, ZSetEntry,
+};
 
 pub type RedisResult<T> = std::result::Result<T, RedisError>;
 
@@ -355,6 +359,338 @@ impl RedisClientHandle {
                     .await
                     .map_err(|_| color_eyre::eyre::eyre!("PUBLISH timeout"))??;
                 Ok(val)
+            }
+        }
+    }
+
+    pub async fn get_value(&self, key: &str, r_type: RedisType) -> Result<RedisValue> {
+        match r_type {
+            RedisType::String => {
+                let raw = self.get(key).await?;
+                Ok(RedisValue::String(bytes_to_string_lossy(raw)))
+            }
+            RedisType::List => {
+                let vals = self.lrange(key, 0, -1).await?;
+                Ok(RedisValue::List(
+                    vals.into_iter().map(bytes_to_string_lossy).collect(),
+                ))
+            }
+            RedisType::Hash => {
+                let vals = self.hgetall(key).await?;
+                Ok(RedisValue::Hash(map_pairs_to_index_map(vals)))
+            }
+            RedisType::Set => {
+                let vals = self.smembers(key).await?;
+                Ok(RedisValue::Set(
+                    vals.into_iter().map(bytes_to_string_lossy).collect(),
+                ))
+            }
+            RedisType::ZSet => {
+                let vals = self.zrange_withscores(key, 0, -1).await?;
+                Ok(RedisValue::ZSet(
+                    vals.into_iter()
+                        .map(|(member, score)| ZSetEntry {
+                            score,
+                            member: bytes_to_string_lossy(member),
+                        })
+                        .collect(),
+                ))
+            }
+            RedisType::Stream => {
+                let vals = self.xrange(key).await?;
+                Ok(RedisValue::Stream(vals))
+            }
+            RedisType::Unknown => Err(color_eyre::eyre::eyre!(
+                "Cannot load value for unknown redis type"
+            )),
+        }
+    }
+
+    pub async fn set_string(&self, key: &str, value: &str) -> Result<()> {
+        self.set(key, value.as_bytes()).await
+    }
+
+    pub async fn list_push(&self, key: &str, value: &str, head: bool) -> Result<()> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let cmd = if head { "LPUSH" } else { "RPUSH" };
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd(cmd).arg(key).arg(value).query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("{cmd} timeout"))??;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn list_set(&self, key: &str, index: i64, value: &str) -> Result<()> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("LSET")
+                        .arg(key)
+                        .arg(index)
+                        .arg(value)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("LSET timeout"))??;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn list_remove(&self, key: &str, value: &str) -> Result<()> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("LREM")
+                        .arg(key)
+                        .arg(0)
+                        .arg(value)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("LREM timeout"))??;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn hash_set(&self, key: &str, field: &str, value: &str) -> Result<()> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("HSET")
+                        .arg(key)
+                        .arg(field)
+                        .arg(value)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("HSET timeout"))??;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn hash_del(&self, key: &str, fields: &[&str]) -> Result<()> {
+        if fields.is_empty() {
+            return Ok(());
+        }
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let mut cmd = redis::cmd("HDEL");
+                cmd.arg(key);
+                for field in fields {
+                    cmd.arg(field);
+                }
+                tokio::time::timeout(Duration::from_secs(5), cmd.query_async::<()>(&mut c))
+                    .await
+                    .map_err(|_| color_eyre::eyre::eyre!("HDEL timeout"))??;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn set_add(&self, key: &str, member: &str) -> Result<()> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("SADD")
+                        .arg(key)
+                        .arg(member)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("SADD timeout"))??;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn set_rem(&self, key: &str, member: &str) -> Result<()> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("SREM")
+                        .arg(key)
+                        .arg(member)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("SREM timeout"))??;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn zadd(&self, key: &str, score: f64, member: &str) -> Result<()> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("ZADD")
+                        .arg(key)
+                        .arg(score)
+                        .arg(member)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("ZADD timeout"))??;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn zrem(&self, key: &str, member: &str) -> Result<()> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("ZREM")
+                        .arg(key)
+                        .arg(member)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("ZREM timeout"))??;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn zscore_update(&self, key: &str, member: &str, score: f64) -> Result<()> {
+        self.zadd(key, score, member).await
+    }
+
+    pub async fn xadd(&self, key: &str, fields: &[(&str, &str)]) -> Result<String> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let mut cmd = redis::cmd("XADD");
+                cmd.arg(key).arg("*");
+                for (field, value) in fields {
+                    cmd.arg(field).arg(value);
+                }
+                let id: String = tokio::time::timeout(Duration::from_secs(5), cmd.query_async(&mut c))
+                    .await
+                    .map_err(|_| color_eyre::eyre::eyre!("XADD timeout"))??;
+                Ok(id)
+            }
+        }
+    }
+
+    pub async fn xdel(&self, key: &str, id: &str) -> Result<()> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("XDEL").arg(key).arg(id).query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("XDEL timeout"))??;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn xrange(&self, key: &str) -> Result<Vec<StreamEntry>> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let raw: Vec<(String, std::collections::HashMap<String, redis::Value>)> =
+                    tokio::time::timeout(
+                        Duration::from_secs(5),
+                        redis::cmd("XRANGE").arg(key).arg("-").arg("+").query_async(&mut c),
+                    )
+                    .await
+                    .map_err(|_| color_eyre::eyre::eyre!("XRANGE timeout"))??;
+
+                Ok(raw
+                    .into_iter()
+                    .map(|(id, fields)| StreamEntry {
+                        id,
+                        fields: stream_fields_from_map(fields),
+                    })
+                    .collect())
+            }
+        }
+    }
+
+    pub async fn xgroups(&self, key: &str) -> Result<Vec<StreamGroup>> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let rows: Vec<Vec<String>> = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("XINFO")
+                        .arg("GROUPS")
+                        .arg(key)
+                        .query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("XINFO GROUPS timeout"))??;
+
+                let mut out = Vec::new();
+                for row in rows {
+                    if row.len() >= 8 {
+                        out.push(StreamGroup {
+                            name: row.get(1).cloned().unwrap_or_default(),
+                            consumers: row.get(3).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0),
+                            pending: row.get(5).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0),
+                            last_delivered_id: row.get(7).cloned().unwrap_or_default(),
+                        });
+                    }
+                }
+                Ok(out)
+            }
+        }
+    }
+
+    pub async fn memory_usage(&self, key: &str) -> Result<u64> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let bytes: u64 = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("MEMORY").arg("USAGE").arg(key).query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("MEMORY USAGE timeout"))??;
+                Ok(bytes)
+            }
+        }
+    }
+
+    pub async fn object_encoding(&self, key: &str) -> Result<String> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let encoding: String = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("OBJECT").arg("ENCODING").arg(key).query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("OBJECT ENCODING timeout"))??;
+                Ok(encoding)
             }
         }
     }

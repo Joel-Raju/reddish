@@ -9,14 +9,22 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::io::Stdout;
+use tokio::sync::mpsc;
 
 use crate::config::Config;
 use crate::events::{Event, EventHandler};
 use crate::ui::command_palette::{CommandPalette, PaletteAction};
-use crate::ui::key_browser::KeyBrowser;
+use crate::ui::key_browser::{BrowserAction, KeyBrowser};
 use crate::ui::repl::{ReplAction, ReplWidget};
 use crate::ui::status_bar::StatusBar;
 use crate::ui::tab_bar;
+
+#[derive(Debug)]
+enum AppTaskResult {
+    ScanBatch(Vec<crate::ui::key_browser::tree::KeyEntry>),
+    ScanFinished,
+    Error(String),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppMode {
@@ -47,11 +55,16 @@ pub struct App {
     pub command_palette: Option<CommandPalette>,
     pub readonly: bool,
     pub error_message: Option<String>,
+    pub scan_rx: Option<mpsc::Receiver<Vec<crate::ui::key_browser::tree::KeyEntry>>>,
+    task_tx: mpsc::UnboundedSender<AppTaskResult>,
+    task_rx: mpsc::UnboundedReceiver<AppTaskResult>,
+    tick_count: u64,
 }
 
 impl App {
     pub fn new(config: Config) -> Self {
         let sep = config.namespace_separator().chars().next().unwrap_or(':');
+        let (task_tx, task_rx) = mpsc::unbounded_channel();
         Self {
             should_quit: false,
             config,
@@ -63,6 +76,10 @@ impl App {
             command_palette: None,
             readonly: false,
             error_message: None,
+            scan_rx: None,
+            task_tx,
+            task_rx,
+            tick_count: 0,
         }
     }
 
@@ -77,47 +94,171 @@ impl App {
         while !self.should_quit {
             terminal.draw(|f| self.render(f))?;
 
+            self.drain_task_results();
+
             let event = tokio::time::timeout(Duration::from_millis(100), events.next()).await;
             if let Ok(Some(event)) = event {
-                match event {
-                    Event::Key(key) => {
-                        if self.mode() == &AppMode::Help && key.code == KeyCode::Esc {
-                            self.mode_stack.pop();
-                        } else if let Some(ref mut palette) = self.command_palette {
-                            if let Some(action) = palette.handle_event(&event) {
-                                match action {
-                                    PaletteAction::Execute(cmd) => {
-                                        if cmd == "Quit" {
-                                            self.should_quit = true;
-                                        }
-                                    }
-                                    PaletteAction::Close => {}
-                                }
-                                self.command_palette = None;
-                            }
-                        } else if self.active_tab == Tab::Repl {
-                            if let Some(ReplAction::Submit(_cmd)) = self.repl.handle_event(&event) {
-                                // command execution deferred
-                            }
-                        } else {
-                            match key.code {
-                                KeyCode::Char('q') => self.should_quit = true,
-                                KeyCode::Char('?') => self.mode_stack.push(AppMode::Help),
-                                KeyCode::Char('1') => self.active_tab = Tab::Keys,
-                                KeyCode::Char('2') => self.active_tab = Tab::Repl,
-                                KeyCode::Char('3') => self.active_tab = Tab::Info,
-                                KeyCode::Char('4') => self.active_tab = Tab::PubSub,
-                                _ => {}
-                            }
-                        }
-                    }
-                    Event::Resize(_, _) => {}
-                    Event::Tick => {}
-                }
+                self.handle_event(event).await;
             }
         }
 
         Ok(())
+    }
+
+    async fn handle_event(&mut self, event: Event) {
+        match event {
+            Event::Key(key) => self.handle_key_event(key).await,
+            Event::Tick => self.handle_tick(),
+            Event::Resize(_, _) => {}
+        }
+    }
+
+    async fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) {
+        if self.mode() == &AppMode::Help && key.code == KeyCode::Esc {
+            self.mode_stack.pop();
+            return;
+        }
+
+        if let Some(ref mut palette) = self.command_palette {
+            if let Some(action) = palette.handle_event(&Event::Key(key)) {
+                match action {
+                    PaletteAction::Execute(cmd) => {
+                        if cmd == "Quit" {
+                            self.should_quit = true;
+                        }
+                    }
+                    PaletteAction::Close => {}
+                }
+                self.command_palette = None;
+            }
+            return;
+        }
+
+        match key.code {
+            KeyCode::Char('q') => {
+                self.should_quit = true;
+                return;
+            }
+            KeyCode::Char('?') => {
+                self.mode_stack.push(AppMode::Help);
+                return;
+            }
+            KeyCode::Char('1') => self.active_tab = Tab::Keys,
+            KeyCode::Char('2') => self.active_tab = Tab::Repl,
+            KeyCode::Char('3') => self.active_tab = Tab::Info,
+            KeyCode::Char('4') => self.active_tab = Tab::PubSub,
+            KeyCode::Char('p')
+                if key.modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.command_palette = Some(CommandPalette::new(vec![
+                    "Quit".to_string(),
+                    "Switch:Keys".to_string(),
+                    "Switch:REPL".to_string(),
+                    "Switch:Info".to_string(),
+                    "Switch:PubSub".to_string(),
+                ]));
+                return;
+            }
+            _ => {}
+        }
+
+        match self.active_tab {
+            Tab::Keys => {
+                if let Some(action) = self.key_browser.handle_event(&Event::Key(key)) {
+                    self.handle_browser_action(action);
+                }
+            }
+            Tab::Repl => {
+                if let Some(ReplAction::Submit(_cmd)) = self.repl.handle_event(&Event::Key(key)) {
+                    self.error_message = Some("REPL execution pipeline not wired yet".to_string());
+                }
+            }
+            Tab::Info | Tab::PubSub => {}
+        }
+
+        self.update_status_bar_context();
+    }
+
+    fn handle_tick(&mut self) {
+        self.tick_count = self.tick_count.saturating_add(1);
+        self.drain_scan_batches();
+        self.status_bar.key_count = self.key_browser.tree.total_keys();
+        self.update_status_bar_context();
+    }
+
+    fn handle_browser_action(&mut self, action: BrowserAction) {
+        match action {
+            BrowserAction::SelectKey(name, _r_type) => {
+                self.error_message = Some(format!("Selected key: {name}"));
+            }
+            BrowserAction::DeleteKey(name) => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: delete blocked".to_string());
+                    return;
+                }
+
+                if self.key_browser.tree.remove(&name) {
+                    self.status_bar.key_count = self.key_browser.tree.total_keys();
+                }
+            }
+            BrowserAction::RefreshRequested => {
+                let _ = self.task_tx.send(AppTaskResult::Error(
+                    "Refresh requested but scanner wiring is not initialized".to_string(),
+                ));
+            }
+        }
+    }
+
+    fn drain_scan_batches(&mut self) {
+        let mut should_clear = false;
+        if let Some(rx) = self.scan_rx.as_mut() {
+            loop {
+                match rx.try_recv() {
+                    Ok(batch) => self.key_browser.apply_scan_batch(batch),
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        self.key_browser.finish_scan();
+                        should_clear = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if should_clear {
+            self.scan_rx = None;
+        }
+    }
+
+    fn drain_task_results(&mut self) {
+        loop {
+            match self.task_rx.try_recv() {
+                Ok(AppTaskResult::ScanBatch(batch)) => self.key_browser.apply_scan_batch(batch),
+                Ok(AppTaskResult::ScanFinished) => self.key_browser.finish_scan(),
+                Ok(AppTaskResult::Error(msg)) => self.error_message = Some(msg),
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => break,
+            }
+        }
+    }
+
+    fn update_status_bar_context(&mut self) {
+        self.status_bar.key_count = self.key_browser.tree.total_keys();
+        self.status_bar.hints = match self.active_tab {
+            Tab::Keys => vec![
+                ("j/k".to_string(), "nav".to_string()),
+                ("Enter".to_string(), "open".to_string()),
+                ("D".to_string(), "delete".to_string()),
+            ],
+            Tab::Repl => vec![
+                ("Enter".to_string(), "run".to_string()),
+                ("Up/Down".to_string(), "history".to_string()),
+                ("Ctrl+P".to_string(), "palette".to_string()),
+            ],
+            Tab::Info => vec![("3".to_string(), "info".to_string())],
+            Tab::PubSub => vec![("4".to_string(), "pubsub".to_string())],
+        };
     }
 
     pub fn render(&self, frame: &mut Frame) {

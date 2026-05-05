@@ -1,11 +1,12 @@
 use std::time::Duration;
 
-use crossterm::event::{self, Event as CrosstermEvent, KeyEvent};
+use crossterm::event::{self, Event as CrosstermEvent, KeyEvent, MouseEvent};
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
 pub enum Event {
     Key(KeyEvent),
+    Mouse(MouseEvent),
     Tick,
     Resize(u16, u16),
 }
@@ -30,6 +31,11 @@ impl EventHandler {
                     }
                     Ok(CrosstermEvent::Resize(w, h)) => {
                         if tx_input.blocking_send(Event::Resize(w, h)).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(CrosstermEvent::Mouse(mouse)) => {
+                        if tx_input.blocking_send(Event::Mouse(mouse)).is_err() {
                             break;
                         }
                     }

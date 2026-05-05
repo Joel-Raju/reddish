@@ -16,6 +16,7 @@ use futures::StreamExt;
 use crate::backoff::backoff_sequence;
 use crate::config::Config;
 use crate::config::connections::{ConnectionMode, ConnectionProfile, ConnectionStore};
+use crate::config::keybindings::Keymap;
 use crate::events::{Event, EventHandler};
 use crate::redis::client::{RedisClient, RedisClientHandle};
 use crate::redis::server::slowlog_get;
@@ -120,6 +121,7 @@ pub struct App {
     pub readonly: bool,
     pub error_message: Option<String>,
     pub client: Option<RedisClientHandle>,
+    pub keymap: Keymap,
     last_profile: Option<ConnectionProfile>,
     pub scan_rx: Option<mpsc::Receiver<Vec<crate::ui::key_browser::tree::KeyEntry>>>,
     pub pubsub_rx: Option<mpsc::UnboundedReceiver<PubSubMessage>>,
@@ -147,6 +149,7 @@ impl App {
             readonly: false,
             error_message: None,
             client: None,
+            keymap: Keymap::default(),
             last_profile: None,
             scan_rx: None,
             pubsub_rx: None,
@@ -282,8 +285,43 @@ impl App {
     async fn handle_event(&mut self, event: Event) {
         match event {
             Event::Key(key) => self.handle_key_event(key).await,
+            Event::Mouse(mouse) => self.handle_mouse_event(mouse),
             Event::Tick => self.handle_tick().await,
             Event::Resize(_, _) => {}
+        }
+    }
+
+    fn handle_mouse_event(&mut self, mouse: crossterm::event::MouseEvent) {
+        use crossterm::event::{MouseButton, MouseEventKind};
+
+        match mouse.kind {
+            MouseEventKind::ScrollDown => {
+                if self.active_tab == Tab::Keys {
+                    let rows = self.key_browser.tree.visible_rows();
+                    if self.key_browser.cursor + 1 < rows.len() {
+                        self.key_browser.cursor += 1;
+                    }
+                }
+            }
+            MouseEventKind::ScrollUp => {
+                if self.active_tab == Tab::Keys && self.key_browser.cursor > 0 {
+                    self.key_browser.cursor -= 1;
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                if mouse.row == 0 {
+                    self.active_tab = if mouse.column < 20 {
+                        Tab::Keys
+                    } else if mouse.column < 35 {
+                        Tab::Repl
+                    } else if mouse.column < 50 {
+                        Tab::Info
+                    } else {
+                        Tab::PubSub
+                    };
+                }
+            }
+            _ => {}
         }
     }
 
@@ -363,37 +401,62 @@ impl App {
             return;
         }
 
+        if self.keymap.matches("quit", &key) {
+            self.should_quit = true;
+            return;
+        }
+
+        if self.keymap.matches("filter", &key) {
+            let mut keys = self
+                .key_browser
+                .tree
+                .all_keys()
+                .into_iter()
+                .map(|k| k.full_name)
+                .collect::<Vec<_>>();
+            keys.sort();
+            self.search.query.clear();
+            self.search.cursor = 0;
+            self.search.set_results(keys);
+            self.mode_stack.push(AppMode::Search);
+            return;
+        }
+
+        if self.keymap.matches("help", &key) {
+            self.mode_stack.push(AppMode::Help);
+            return;
+        }
+
+        if self.keymap.matches("palette", &key) {
+            self.command_palette = Some(CommandPalette::new(vec![
+                "Quit".to_string(),
+                "Switch:Keys".to_string(),
+                "Switch:REPL".to_string(),
+                "Switch:Info".to_string(),
+                "Switch:PubSub".to_string(),
+            ]));
+            return;
+        }
+
+        if self.keymap.matches("tab_keys", &key) {
+            self.active_tab = Tab::Keys;
+            return;
+        }
+        if self.keymap.matches("tab_repl", &key) {
+            self.active_tab = Tab::Repl;
+            return;
+        }
+        if self.keymap.matches("tab_info", &key) {
+            self.active_tab = Tab::Info;
+            self.refresh_info_dashboard().await;
+            return;
+        }
+        if self.keymap.matches("tab_pubsub", &key) {
+            self.active_tab = Tab::PubSub;
+            return;
+        }
+
         match key.code {
-            KeyCode::Char('q') => {
-                self.should_quit = true;
-                return;
-            }
-            KeyCode::Char('?') => {
-                self.mode_stack.push(AppMode::Help);
-                return;
-            }
-            KeyCode::Char('/') => {
-                let mut keys = self
-                    .key_browser
-                    .tree
-                    .all_keys()
-                    .into_iter()
-                    .map(|k| k.full_name)
-                    .collect::<Vec<_>>();
-                keys.sort();
-                self.search.query.clear();
-                self.search.cursor = 0;
-                self.search.set_results(keys);
-                self.mode_stack.push(AppMode::Search);
-                return;
-            }
-            KeyCode::Char('1') => self.active_tab = Tab::Keys,
-            KeyCode::Char('2') => self.active_tab = Tab::Repl,
-            KeyCode::Char('3') => {
-                self.active_tab = Tab::Info;
-                self.refresh_info_dashboard().await;
-            }
-            KeyCode::Char('4') => self.active_tab = Tab::PubSub,
             KeyCode::Char('\\')
                 if key.modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
@@ -408,25 +471,15 @@ impl App {
                 self.reconnect_active_connection().await;
                 return;
             }
-            KeyCode::Char('p')
-                if key.modifiers
-                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
-            {
-                self.command_palette = Some(CommandPalette::new(vec![
-                    "Quit".to_string(),
-                    "Switch:Keys".to_string(),
-                    "Switch:REPL".to_string(),
-                    "Switch:Info".to_string(),
-                    "Switch:PubSub".to_string(),
-                ]));
-                return;
-            }
             _ => {}
         }
 
         match self.active_tab {
             Tab::Keys => {
-                if let Some(action) = self.key_browser.handle_event(&Event::Key(key)) {
+                if let Some(action) = self
+                    .key_browser
+                    .handle_event_with_keymap(&Event::Key(key), &self.keymap)
+                {
                     self.handle_browser_action(action).await;
                 }
             }

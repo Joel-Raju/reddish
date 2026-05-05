@@ -27,6 +27,18 @@ pub struct Keymap {
     pub quit: KeyDef,
     #[serde(default = "default_copy")]
     pub copy: KeyDef,
+    #[serde(default = "default_help")]
+    pub help: KeyDef,
+    #[serde(default = "default_palette")]
+    pub palette: KeyDef,
+    #[serde(default = "default_tab_keys")]
+    pub tab_keys: KeyDef,
+    #[serde(default = "default_tab_repl")]
+    pub tab_repl: KeyDef,
+    #[serde(default = "default_tab_info")]
+    pub tab_info: KeyDef,
+    #[serde(default = "default_tab_pubsub")]
+    pub tab_pubsub: KeyDef,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -55,6 +67,12 @@ impl Keymap {
             edit: KeyDef { key: "e".to_string() },
             quit: KeyDef { key: "q".to_string() },
             copy: KeyDef { key: "y".to_string() },
+            help: KeyDef { key: "?".to_string() },
+            palette: KeyDef { key: "ctrl+p".to_string() },
+            tab_keys: KeyDef { key: "1".to_string() },
+            tab_repl: KeyDef { key: "2".to_string() },
+            tab_info: KeyDef { key: "3".to_string() },
+            tab_pubsub: KeyDef { key: "4".to_string() },
         }
     }
 
@@ -72,6 +90,12 @@ impl Keymap {
             edit: KeyDef { key: "ctrl+e".to_string() },
             quit: KeyDef { key: "ctrl+c".to_string() },
             copy: KeyDef { key: "ctrl+w".to_string() },
+            help: KeyDef { key: "?".to_string() },
+            palette: KeyDef { key: "ctrl+x".to_string() },
+            tab_keys: KeyDef { key: "alt+1".to_string() },
+            tab_repl: KeyDef { key: "alt+2".to_string() },
+            tab_info: KeyDef { key: "alt+3".to_string() },
+            tab_pubsub: KeyDef { key: "alt+4".to_string() },
         }
     }
 
@@ -89,6 +113,12 @@ impl Keymap {
             "edit" => &self.edit,
             "quit" => &self.quit,
             "copy" => &self.copy,
+            "help" => &self.help,
+            "palette" => &self.palette,
+            "tab_keys" => &self.tab_keys,
+            "tab_repl" => &self.tab_repl,
+            "tab_info" => &self.tab_info,
+            "tab_pubsub" => &self.tab_pubsub,
             _ => return false,
         };
         let (expected_code, expected_mods) = parse_keydef(&def.key);
@@ -130,3 +160,9 @@ fn default_filter() -> KeyDef { KeyDef { key: "/".to_string() } }
 fn default_edit() -> KeyDef { KeyDef { key: "e".to_string() } }
 fn default_quit() -> KeyDef { KeyDef { key: "q".to_string() } }
 fn default_copy() -> KeyDef { KeyDef { key: "y".to_string() } }
+fn default_help() -> KeyDef { KeyDef { key: "?".to_string() } }
+fn default_palette() -> KeyDef { KeyDef { key: "ctrl+p".to_string() } }
+fn default_tab_keys() -> KeyDef { KeyDef { key: "1".to_string() } }
+fn default_tab_repl() -> KeyDef { KeyDef { key: "2".to_string() } }
+fn default_tab_info() -> KeyDef { KeyDef { key: "3".to_string() } }
+fn default_tab_pubsub() -> KeyDef { KeyDef { key: "4".to_string() } }

@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use crate::events::Event;
+use crate::config::keybindings::Keymap;
 use crate::redis::client::RedisType;
 use crate::ui::key_browser::tree::{KeyEntry, NamespaceTree};
 
@@ -44,21 +45,26 @@ impl KeyBrowser {
     }
 
     pub fn handle_event(&mut self, event: &Event) -> Option<BrowserAction> {
+        self.handle_event_with_keymap(event, &Keymap::default())
+    }
+
+    pub fn handle_event_with_keymap(
+        &mut self,
+        event: &Event,
+        keymap: &Keymap,
+    ) -> Option<BrowserAction> {
         use crossterm::event::KeyCode;
         if let Event::Key(key) = event {
-            match key.code {
-                KeyCode::Down | KeyCode::Char('j') => {
+            if keymap.matches("nav_down", key) || matches!(key.code, KeyCode::Down) {
                     let rows = self.tree.visible_rows();
                     if self.cursor + 1 < rows.len() {
                         self.cursor += 1;
                     }
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
+            } else if keymap.matches("nav_up", key) || matches!(key.code, KeyCode::Up) {
                     if self.cursor > 0 {
                         self.cursor -= 1;
                     }
-                }
-                KeyCode::Enter => {
+            } else if keymap.matches("confirm", key) || matches!(key.code, KeyCode::Enter) {
                     let rows = self.tree.visible_rows();
                     if let Some(row) = rows.get(self.cursor)
                         && !row.is_namespace
@@ -69,17 +75,16 @@ impl KeyBrowser {
                             key.redis_type.clone().unwrap_or(RedisType::Unknown),
                         ));
                     }
-                }
-                KeyCode::Char('D') => {
+            } else if keymap.matches("delete", key) || matches!(key.code, KeyCode::Char('D')) {
                     let rows = self.tree.visible_rows();
                     if let Some(row) = rows.get(self.cursor)
                         && let Some(ref key) = row.key
                     {
                         return Some(BrowserAction::DeleteKey(key.full_name.clone()));
                     }
+            } else if keymap.matches("refresh", key) {
+                return Some(BrowserAction::RefreshRequested);
                 }
-                _ => {}
-            }
         }
         None
     }

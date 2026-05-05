@@ -24,6 +24,7 @@ use crate::ui::key_browser::{BrowserAction, KeyBrowser};
 use crate::ui::repl::{ReplAction, ReplWidget};
 use crate::ui::status_bar::{ConnectionState, StatusBar};
 use crate::ui::tab_bar;
+use crate::ui::value_inspector::ValueInspector;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppMode {
@@ -50,6 +51,7 @@ pub struct App {
     pub mode_stack: Vec<AppMode>,
     pub key_browser: KeyBrowser,
     pub status_bar: StatusBar,
+    pub value_inspector: ValueInspector,
     pub repl: ReplWidget,
     pub command_palette: Option<CommandPalette>,
     pub connection_screen: Option<ConnectionScreen>,
@@ -72,6 +74,7 @@ impl App {
             mode_stack: vec![AppMode::Normal],
             key_browser: KeyBrowser::new(sep),
             status_bar: StatusBar::default(),
+            value_inspector: ValueInspector::new(),
             repl: ReplWidget::new(),
             command_palette: None,
             connection_screen: None,
@@ -204,7 +207,7 @@ impl App {
         match self.active_tab {
             Tab::Keys => {
                 if let Some(action) = self.key_browser.handle_event(&Event::Key(key)) {
-                    self.handle_browser_action(action);
+                    self.handle_browser_action(action).await;
                 }
             }
             Tab::Repl => {
@@ -357,10 +360,22 @@ impl App {
         self.update_status_bar_context();
     }
 
-    fn handle_browser_action(&mut self, action: BrowserAction) {
+    async fn handle_browser_action(&mut self, action: BrowserAction) {
         match action {
-            BrowserAction::SelectKey(name, _r_type) => {
-                self.error_message = Some(format!("Selected key: {name}"));
+            BrowserAction::SelectKey(name, r_type) => {
+                self.value_inspector.set_loading(name.clone());
+                if let Some(client) = &self.client {
+                    match client.get_value(&name, r_type).await {
+                        Ok(value) => self.value_inspector.set_value(name, value),
+                        Err(err) => {
+                            self.value_inspector
+                                .set_error(Some(name), format!("Failed to load value: {err}"));
+                        }
+                    }
+                } else {
+                    self.value_inspector
+                        .set_error(Some(name), "Not connected".to_string());
+                }
             }
             BrowserAction::DeleteKey(name) => {
                 if self.readonly {
@@ -445,10 +460,7 @@ impl App {
         match self.active_tab {
             Tab::Keys => {
                 self.key_browser.render(frame, content_layout[0]);
-                frame.render_widget(
-                    Block::default().borders(Borders::ALL).title("Value"),
-                    content_layout[1],
-                );
+                self.value_inspector.render(frame, content_layout[1]);
             }
             Tab::Repl => {
                 self.repl.render(frame, main_layout[1]);

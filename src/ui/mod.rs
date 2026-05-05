@@ -9,5 +9,6 @@ pub mod search;
 pub mod status_bar;
 pub mod tab_bar;
 pub mod theme;
+pub mod value_inspector;
 pub mod value_viewer;
 pub mod widgets;

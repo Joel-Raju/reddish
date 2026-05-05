@@ -15,6 +15,8 @@ pub enum SearchAction {
 pub struct GlobalSearch {
     pub query: String,
     pub results: Vec<String>,
+    pub filtered: Vec<String>,
+    pub cursor: usize,
 }
 
 impl Default for GlobalSearch {
@@ -28,6 +30,29 @@ impl GlobalSearch {
         Self {
             query: String::new(),
             results: Vec::new(),
+            filtered: Vec::new(),
+            cursor: 0,
+        }
+    }
+
+    pub fn set_results(&mut self, results: Vec<String>) {
+        self.results = results;
+        self.apply_filter();
+    }
+
+    pub fn apply_filter(&mut self) {
+        let q = self.query.to_lowercase();
+        self.filtered = if q.is_empty() {
+            self.results.clone()
+        } else {
+            self.results
+                .iter()
+                .filter(|item| item.to_lowercase().contains(&q))
+                .cloned()
+                .collect()
+        };
+        if self.cursor >= self.filtered.len() {
+            self.cursor = self.filtered.len().saturating_sub(1);
         }
     }
 
@@ -37,13 +62,33 @@ impl GlobalSearch {
             match key.code {
                 KeyCode::Char(c) => {
                     self.query.push(c);
+                    self.apply_filter();
                     None
                 }
                 KeyCode::Backspace => {
                     self.query.pop();
+                    self.apply_filter();
                     None
                 }
-                KeyCode::Enter => Some(SearchAction::Execute(self.query.clone())),
+                KeyCode::Down => {
+                    if self.cursor + 1 < self.filtered.len() {
+                        self.cursor += 1;
+                    }
+                    None
+                }
+                KeyCode::Up => {
+                    if self.cursor > 0 {
+                        self.cursor -= 1;
+                    }
+                    None
+                }
+                KeyCode::Enter => {
+                    if let Some(selected) = self.filtered.get(self.cursor) {
+                        Some(SearchAction::Execute(selected.clone()))
+                    } else {
+                        Some(SearchAction::Execute(self.query.clone()))
+                    }
+                }
                 KeyCode::Esc => Some(SearchAction::Close),
                 _ => None,
             }
@@ -64,6 +109,31 @@ impl GlobalSearch {
 
         let query_widget = Paragraph::new(format!("> {}", self.query));
         frame.render_widget(query_widget, inner);
+
+        if !self.filtered.is_empty() {
+            let preview = self
+                .filtered
+                .iter()
+                .take(8)
+                .enumerate()
+                .map(|(idx, item)| {
+                    if idx == self.cursor {
+                        format!("> {item}")
+                    } else {
+                        format!("  {item}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let result_area = Rect {
+                x: inner.x,
+                y: inner.y.saturating_add(2),
+                width: inner.width,
+                height: inner.height.saturating_sub(2),
+            };
+            frame.render_widget(Paragraph::new(preview), result_area);
+        }
     }
 }
 

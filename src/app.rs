@@ -26,6 +26,7 @@ use crate::ui::key_browser::scanner_task;
 use crate::ui::key_browser::{BrowserAction, KeyBrowser};
 use crate::ui::pubsub::{PubSubAction, PubSubMessage, PubSubWidget};
 use crate::ui::repl::{parse_pipeline, ReplAction, ReplLineStatus, ReplWidget};
+use crate::ui::search::{GlobalSearch, SearchAction};
 use crate::ui::status_bar::{ConnectionState, StatusBar};
 use crate::ui::tab_bar;
 use crate::ui::value_inspector::ValueInspector;
@@ -112,6 +113,7 @@ pub struct App {
     pub value_inspector: ValueInspector,
     pub info_dashboard: InfoDashboard,
     pub pubsub_widget: PubSubWidget,
+    pub search: GlobalSearch,
     pub repl: ReplWidget,
     pub command_palette: Option<CommandPalette>,
     pub connection_screen: Option<ConnectionScreen>,
@@ -138,6 +140,7 @@ impl App {
             value_inspector: ValueInspector::new(),
             info_dashboard: InfoDashboard::new(),
             pubsub_widget: PubSubWidget::new(),
+            search: GlobalSearch::new(),
             repl: ReplWidget::new(),
             command_palette: None,
             connection_screen: None,
@@ -285,6 +288,37 @@ impl App {
     }
 
     async fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) {
+        if self.mode() == &AppMode::Search {
+            if let Some(action) = self.search.handle_event(&Event::Key(key)) {
+                match action {
+                    SearchAction::Execute(key_name) => {
+                        if self.key_browser.jump_to_key(&key_name) {
+                            let rows = self.key_browser.tree.visible_rows();
+                            if let Some(row) = rows.get(self.key_browser.cursor)
+                                && let Some(key) = row.key.as_ref()
+                            {
+                                let action = BrowserAction::SelectKey(
+                                    key.full_name.clone(),
+                                    key.redis_type.clone().unwrap_or(crate::redis::client::RedisType::Unknown),
+                                );
+                                self.handle_browser_action(action).await;
+                            }
+                        }
+                        self.active_tab = Tab::Keys;
+                        if self.mode() == &AppMode::Search {
+                            self.mode_stack.pop();
+                        }
+                    }
+                    SearchAction::Close => {
+                        if self.mode() == &AppMode::Search {
+                            self.mode_stack.pop();
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
         if self.mode() == &AppMode::ConnectionScreen {
             if let Some(screen) = self.connection_screen.as_mut()
                 && let Some(action) = screen.handle_event(&Event::Key(key))
@@ -336,6 +370,21 @@ impl App {
             }
             KeyCode::Char('?') => {
                 self.mode_stack.push(AppMode::Help);
+                return;
+            }
+            KeyCode::Char('/') => {
+                let mut keys = self
+                    .key_browser
+                    .tree
+                    .all_keys()
+                    .into_iter()
+                    .map(|k| k.full_name)
+                    .collect::<Vec<_>>();
+                keys.sort();
+                self.search.query.clear();
+                self.search.cursor = 0;
+                self.search.set_results(keys);
+                self.mode_stack.push(AppMode::Search);
                 return;
             }
             KeyCode::Char('1') => self.active_tab = Tab::Keys,
@@ -756,6 +805,10 @@ impl App {
 
         if let Some(ref palette) = self.command_palette {
             palette.render(frame, frame.area());
+        }
+
+        if self.mode() == &AppMode::Search {
+            self.search.render(frame, frame.area());
         }
 
         if self.mode() == &AppMode::ConnectionScreen

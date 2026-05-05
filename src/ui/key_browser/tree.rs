@@ -126,12 +126,38 @@ impl NamespaceTree {
         self.count_keys(&self.root)
     }
 
+    pub fn all_keys(&self) -> Vec<KeyEntry> {
+        let mut out = Vec::new();
+        self.collect_all_keys(&self.root, &mut out);
+        out
+    }
+
+    pub fn expand_all(&mut self) {
+        Self::expand_all_nodes(&mut self.root);
+    }
+
     fn count_keys(&self, node: &TreeNode) -> usize {
         let mut count = node.keys.len();
         for child in node.children.values() {
             count += self.count_keys(child);
         }
         count
+    }
+
+    fn collect_all_keys(&self, node: &TreeNode, out: &mut Vec<KeyEntry>) {
+        for key in &node.keys {
+            out.push(key.clone());
+        }
+        for child in node.children.values() {
+            self.collect_all_keys(child, out);
+        }
+    }
+
+    fn expand_all_nodes(node: &mut TreeNode) {
+        node.expanded = true;
+        for child in node.children.values_mut() {
+            Self::expand_all_nodes(child);
+        }
     }
 
     fn find_node_mut(&mut self, path: &[&str]) -> Option<&mut TreeNode> {

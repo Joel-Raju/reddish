@@ -122,4 +122,21 @@ impl KeyBrowser {
     pub fn finish_scan(&mut self) {
         self.state = BrowserState::Ready;
     }
+
+    pub fn index_of_key(&self, full_name: &str) -> Option<usize> {
+        self.tree
+            .visible_rows()
+            .iter()
+            .position(|row| row.key.as_ref().is_some_and(|k| k.full_name == full_name))
+    }
+
+    pub fn jump_to_key(&mut self, full_name: &str) -> bool {
+        self.tree.expand_all();
+        if let Some(idx) = self.index_of_key(full_name) {
+            self.cursor = idx;
+            true
+        } else {
+            false
+        }
+    }
 }

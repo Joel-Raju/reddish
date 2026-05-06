@@ -32,6 +32,8 @@ impl TreeNode {
 pub struct NamespaceTree {
     separator: char,
     pub root: TreeNode,
+    max_keys: usize,
+    current_keys: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -43,25 +45,32 @@ pub struct TreeRow {
 }
 
 impl NamespaceTree {
-    pub fn new(separator: char) -> Self {
+    pub fn new(separator: char, max_keys: usize) -> Self {
         Self {
             separator,
             root: TreeNode::new(String::new()),
+            max_keys,
+            current_keys: 0,
         }
     }
 
-    pub fn insert(&mut self, key: KeyEntry) {
+    pub fn insert(&mut self, key: KeyEntry) -> bool {
+        if self.current_keys >= self.max_keys {
+            return false;
+        }
         let parts: Vec<&str> = key.full_name.split(self.separator).collect();
         if parts.is_empty() {
             self.root.keys.push(key);
-            return;
+            self.current_keys += 1;
+            return true;
         }
 
         let mut node = &mut self.root;
         for (i, part) in parts.iter().enumerate() {
             if i == parts.len() - 1 {
                 node.keys.push(key.clone());
-                return;
+                self.current_keys += 1;
+                return true;
             }
             let segment = part.to_string();
             if !node.children.contains_key(&segment) {
@@ -69,6 +78,11 @@ impl NamespaceTree {
             }
             node = node.children.get_mut(&segment).unwrap();
         }
+        false
+    }
+
+    pub fn at_capacity(&self) -> bool {
+        self.current_keys >= self.max_keys
     }
 
     pub fn visible_rows(&self) -> Vec<TreeRow> {

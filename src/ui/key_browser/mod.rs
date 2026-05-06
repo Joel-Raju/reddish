@@ -35,9 +35,9 @@ pub struct KeyBrowser {
 }
 
 impl KeyBrowser {
-    pub fn new(separator: char) -> Self {
+    pub fn new(separator: char, max_keys: usize) -> Self {
         Self {
-            tree: NamespaceTree::new(separator),
+            tree: NamespaceTree::new(separator, max_keys),
             cursor: 0,
             filter: None,
             state: BrowserState::Scanning { keys_loaded: 0 },

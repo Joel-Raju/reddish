@@ -14,6 +14,7 @@ pub struct Config {
     pub color_scheme: Option<String>,
     pub mouse_enabled: Option<bool>,
     pub confirm_deletes: Option<bool>,
+    pub max_keys_in_memory: Option<usize>,
 }
 
 impl Config {
@@ -54,6 +55,10 @@ impl Config {
 
     pub fn confirm_deletes(&self) -> bool {
         self.confirm_deletes.unwrap_or(true)
+    }
+
+    pub fn max_keys_in_memory(&self) -> usize {
+        self.max_keys_in_memory.unwrap_or(500000)
     }
 }
 

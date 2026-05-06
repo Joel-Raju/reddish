@@ -153,7 +153,7 @@ async fn test_scanner_never_uses_keys_command() {
 
 #[test]
 fn test_namespace_tree_insert_and_visible_rows() {
-    let mut tree = NamespaceTree::new(':');
+    let mut tree = NamespaceTree::new(':', 500_000));
     tree.insert(KeyEntry { full_name: "user:session:abc".to_string(), redis_type: None, ttl: None });
     tree.insert(KeyEntry { full_name: "user:session:def".to_string(), redis_type: None, ttl: None });
     tree.insert(KeyEntry { full_name: "user:profile:xyz".to_string(), redis_type: None, ttl: None });
@@ -182,7 +182,7 @@ fn test_namespace_tree_insert_and_visible_rows() {
 
 #[test]
 fn test_namespace_tree_remove() {
-    let mut tree = NamespaceTree::new(':');
+    let mut tree = NamespaceTree::new(':', 500_000));
     tree.insert(KeyEntry { full_name: "a:b".to_string(), redis_type: None, ttl: None });
     tree.insert(KeyEntry { full_name: "a:c".to_string(), redis_type: None, ttl: None });
     tree.insert(KeyEntry { full_name: "a:d".to_string(), redis_type: None, ttl: None });

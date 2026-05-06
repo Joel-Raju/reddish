@@ -11,6 +11,7 @@ use ratatui::{
 use std::io::Stdout;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use futures::StreamExt;
 
 use crate::backoff::backoff_sequence;
@@ -125,6 +126,7 @@ pub struct App {
     pub startup_profile: Option<ConnectionProfile>,
     last_profile: Option<ConnectionProfile>,
     pub scan_rx: Option<mpsc::Receiver<Vec<crate::ui::key_browser::tree::KeyEntry>>>,
+    pub scan_cancel: Option<CancellationToken>,
     pub pubsub_rx: Option<mpsc::UnboundedReceiver<PubSubMessage>>,
     tick_count: u64,
     reconnect_attempt: u32,
@@ -133,12 +135,13 @@ pub struct App {
 impl App {
     pub fn new(config: Config) -> Self {
         let sep = config.namespace_separator().chars().next().unwrap_or(':');
+        let max_keys = config.max_keys_in_memory();
         Self {
             should_quit: false,
             config,
             active_tab: Tab::Keys,
             mode_stack: vec![AppMode::Normal],
-            key_browser: KeyBrowser::new(sep),
+            key_browser: KeyBrowser::new(sep, max_keys),
             status_bar: StatusBar::default(),
             value_inspector: ValueInspector::new(),
             info_dashboard: InfoDashboard::new(),
@@ -154,6 +157,7 @@ impl App {
             startup_profile: None,
             last_profile: None,
             scan_rx: None,
+            scan_cancel: None,
             pubsub_rx: None,
             tick_count: 0,
             reconnect_attempt: 0,
@@ -594,8 +598,11 @@ impl App {
             .chars()
             .next()
             .unwrap_or(':');
-        self.key_browser = KeyBrowser::new(sep);
+        self.key_browser = KeyBrowser::new(sep, self.config.max_keys_in_memory());
         self.status_bar.key_count = 0;
+        if let Some(cancel) = self.scan_cancel.take() {
+            cancel.cancel();
+        }
         self.scan_rx = None;
     }
 
@@ -603,7 +610,9 @@ impl App {
         self.reset_key_browser_for_scan();
         match RedisClientHandle::connect(profile).await {
             Ok(scan_client) => {
-                self.scan_rx = Some(scanner_task::start_scan(scan_client, &self.config));
+                let (rx, cancel) = scanner_task::start_scan(scan_client, &self.config);
+                self.scan_rx = Some(rx);
+                self.scan_cancel = Some(cancel);
             }
             Err(err) => {
                 self.error_message = Some(format!("Connected, but scan setup failed: {err}"));

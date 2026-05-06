@@ -42,6 +42,7 @@ pub struct TreeRow {
     pub label: String,
     pub is_namespace: bool,
     pub key: Option<KeyEntry>,
+    pub path: Vec<String>,
 }
 
 impl NamespaceTree {
@@ -87,21 +88,24 @@ impl NamespaceTree {
 
     pub fn visible_rows(&self) -> Vec<TreeRow> {
         let mut rows = Vec::new();
-        self.collect_rows(&self.root, 0, &mut rows);
+        self.collect_rows(&self.root, 0, &[], &mut rows);
         rows
     }
 
-    fn collect_rows(&self, node: &TreeNode, depth: usize, rows: &mut Vec<TreeRow>) {
+    fn collect_rows(&self, node: &TreeNode, depth: usize, path: &[String], rows: &mut Vec<TreeRow>) {
         for (name, child) in &node.children {
             let prefix = if child.expanded { "▼ " } else { "▶ " };
+            let mut row_path = path.to_vec();
+            row_path.push(name.clone());
             rows.push(TreeRow {
                 depth,
                 label: format!("{}{}", prefix, name),
                 is_namespace: true,
                 key: None,
+                path: row_path.clone(),
             });
             if child.expanded {
-                self.collect_rows(child, depth + 1, rows);
+                self.collect_rows(child, depth + 1, &row_path, rows);
             }
         }
         for key in &node.keys {
@@ -110,7 +114,14 @@ impl NamespaceTree {
                 label: key.full_name.rsplit_once(self.separator).map(|(_, s)| s.to_string()).unwrap_or_else(|| key.full_name.clone()),
                 is_namespace: false,
                 key: Some(key.clone()),
+                path: path.to_vec(),
             });
+        }
+    }
+
+    pub fn toggle(&mut self, path: &[&str]) {
+        if let Some(node) = self.find_node_mut(path) {
+            node.expanded = !node.expanded;
         }
     }
 
@@ -131,7 +142,11 @@ impl NamespaceTree {
         if let Some(node) = self.find_parent_node_mut(&parts) {
             let before = node.keys.len();
             node.keys.retain(|k| k.full_name != full_name);
-            return node.keys.len() < before;
+            let removed = node.keys.len() < before;
+            if removed {
+                self.current_keys = self.current_keys.saturating_sub(1);
+            }
+            return removed;
         }
         false
     }

@@ -75,13 +75,23 @@ impl KeyBrowser {
                             key.redis_type.clone().unwrap_or(RedisType::Unknown),
                         ));
                     }
-            } else if keymap.matches("delete", key) || matches!(key.code, KeyCode::Char('D')) {
+            } else if keymap.matches("nav_right", key) || matches!(key.code, KeyCode::Right | KeyCode::Char('l')) {
                     let rows = self.tree.visible_rows();
-                    if let Some(row) = rows.get(self.cursor)
-                        && let Some(ref key) = row.key
-                    {
-                        return Some(BrowserAction::DeleteKey(key.full_name.clone()));
+                    if let Some(row) = rows.get(self.cursor) {
+                        if row.is_namespace {
+                            let path: Vec<&str> = row.path.iter().map(|s| s.as_str()).collect();
+                            self.tree.expand(&path);
+                        }
                     }
+            } else if keymap.matches("nav_left", key) || matches!(key.code, KeyCode::Left | KeyCode::Char('h')) {
+                    let rows = self.tree.visible_rows();
+                    if let Some(row) = rows.get(self.cursor) {
+                        if row.is_namespace {
+                            let path: Vec<&str> = row.path.iter().map(|s| s.as_str()).collect();
+                            self.tree.collapse(&path);
+                        }
+                    }
+            } else if keymap.matches("delete", key) || matches!(key.code, KeyCode::Char('D')) {
             } else if keymap.matches("refresh", key) {
                 return Some(BrowserAction::RefreshRequested);
                 }

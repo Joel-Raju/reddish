@@ -153,7 +153,7 @@ async fn test_scanner_never_uses_keys_command() {
 
 #[test]
 fn test_namespace_tree_insert_and_visible_rows() {
-    let mut tree = NamespaceTree::new(':', 500_000));
+    let mut tree = NamespaceTree::new(':', 500_000);
     tree.insert(KeyEntry { full_name: "user:session:abc".to_string(), redis_type: None, ttl: None });
     tree.insert(KeyEntry { full_name: "user:session:def".to_string(), redis_type: None, ttl: None });
     tree.insert(KeyEntry { full_name: "user:profile:xyz".to_string(), redis_type: None, ttl: None });
@@ -182,7 +182,7 @@ fn test_namespace_tree_insert_and_visible_rows() {
 
 #[test]
 fn test_namespace_tree_remove() {
-    let mut tree = NamespaceTree::new(':', 500_000));
+    let mut tree = NamespaceTree::new(':', 500_000);
     tree.insert(KeyEntry { full_name: "a:b".to_string(), redis_type: None, ttl: None });
     tree.insert(KeyEntry { full_name: "a:c".to_string(), redis_type: None, ttl: None });
     tree.insert(KeyEntry { full_name: "a:d".to_string(), redis_type: None, ttl: None });
@@ -281,7 +281,7 @@ async fn test_redis_client_ttl() {
 fn test_key_browser_renders_without_panic() {
     let backend = TestBackend::new(80, 24);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
-    let mut browser = KeyBrowser::new(':');
+    let mut browser = KeyBrowser::new(':', 500_000);
     browser.apply_scan_batch(vec![
         KeyEntry { full_name: "a".to_string(), redis_type: None, ttl: None },
         KeyEntry { full_name: "b".to_string(), redis_type: None, ttl: None },
@@ -292,7 +292,7 @@ fn test_key_browser_renders_without_panic() {
 
 #[test]
 fn test_scan_batch_updates_browser() {
-    let mut browser = KeyBrowser::new(':');
+    let mut browser = KeyBrowser::new(':', 500_000);
     assert_eq!(browser.tree.total_keys(), 0);
     let batch: Vec<KeyEntry> = (0..50)
         .map(|i| KeyEntry {

@@ -1,8 +1,7 @@
 use ratatui::{
-    layout::Rect,
-    style::{Color, Style},
-    widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
+    layout::Rect,
+    widgets::{Block, Borders, Paragraph, Wrap},
 };
 
 use crate::events::Event;
@@ -49,9 +48,12 @@ impl StringViewMode {
                 use base64::Engine;
                 base64::engine::general_purpose::STANDARD.encode(value.as_bytes())
             }
-            StringViewMode::Hex => {
-                value.as_bytes().iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ")
-            }
+            StringViewMode::Hex => value
+                .as_bytes()
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<Vec<_>>()
+                .join(" "),
         }
     }
 }
@@ -112,13 +114,10 @@ impl ValueInspector {
 
     pub fn handle_event(&mut self, event: &Event) -> Option<InspectorAction> {
         use crossterm::event::KeyCode;
-        if let Event::Key(key) = event {
-            match key.code {
-                KeyCode::Tab => {
-                    self.string_view = self.string_view.next();
-                }
-                _ => {}
-            }
+        if let Event::Key(key) = event
+            && key.code == KeyCode::Tab
+        {
+            self.string_view = self.string_view.next();
         }
         None
     }
@@ -153,7 +152,12 @@ fn render_value_preview(value: &RedisValue, view_mode: &StringViewMode) -> Strin
             format!("[{}]\n{}", view_mode.label(), view_mode.render(s))
         }
         RedisValue::List(items) => {
-            let preview = items.iter().take(10).cloned().collect::<Vec<_>>().join("\n");
+            let preview = items
+                .iter()
+                .take(10)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n");
             format!("List (len={}):\n{}", items.len(), preview)
         }
         RedisValue::Hash(entries) => {
@@ -166,7 +170,12 @@ fn render_value_preview(value: &RedisValue, view_mode: &StringViewMode) -> Strin
             format!("Hash (fields={}):\n{}", entries.len(), preview)
         }
         RedisValue::Set(items) => {
-            let preview = items.iter().take(10).cloned().collect::<Vec<_>>().join("\n");
+            let preview = items
+                .iter()
+                .take(10)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n");
             format!("Set (len={}):\n{}", items.len(), preview)
         }
         RedisValue::ZSet(entries) => {

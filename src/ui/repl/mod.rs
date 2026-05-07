@@ -2,9 +2,9 @@ use std::collections::VecDeque;
 
 use crossterm::event::KeyModifiers;
 use ratatui::{
+    Frame,
     layout::Rect,
     widgets::{Block, Borders, Paragraph, Wrap},
-    Frame,
 };
 
 use crate::events::Event;
@@ -13,10 +13,41 @@ pub mod history;
 use history::CommandHistory;
 
 const COMMON_REDIS_COMMANDS: &[&str] = &[
-    "GET", "SET", "DEL", "EXISTS", "TTL", "EXPIRE", "TYPE", "RENAME", "PING", "INFO",
-    "HGET", "HSET", "HGETALL", "HDEL", "LPUSH", "RPUSH", "LPOP", "RPOP", "LRANGE", "LSET",
-    "LREM", "SADD", "SREM", "SMEMBERS", "ZADD", "ZREM", "ZRANGE", "PUBLISH", "SUBSCRIBE",
-    "SCAN", "KEYS", "DBSIZE", "XADD", "XRANGE", "XDEL",
+    "GET",
+    "SET",
+    "DEL",
+    "EXISTS",
+    "TTL",
+    "EXPIRE",
+    "TYPE",
+    "RENAME",
+    "PING",
+    "INFO",
+    "HGET",
+    "HSET",
+    "HGETALL",
+    "HDEL",
+    "LPUSH",
+    "RPUSH",
+    "LPOP",
+    "RPOP",
+    "LRANGE",
+    "LSET",
+    "LREM",
+    "SADD",
+    "SREM",
+    "SMEMBERS",
+    "ZADD",
+    "ZREM",
+    "ZRANGE",
+    "PUBLISH",
+    "SUBSCRIBE",
+    "SCAN",
+    "KEYS",
+    "DBSIZE",
+    "XADD",
+    "XRANGE",
+    "XDEL",
 ];
 
 pub fn tokenize_shell_like(input: &str) -> Vec<String> {
@@ -83,7 +114,7 @@ pub enum ReplLineStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::{autocomplete_first_token, parse_pipeline, tokenize_shell_like, ReplWidget};
+    use super::{ReplWidget, autocomplete_first_token, parse_pipeline, tokenize_shell_like};
     use crate::events::Event;
     use crossterm::event::{KeyCode, KeyEvent};
 
@@ -231,7 +262,7 @@ impl ReplWidget {
                     self.cursor = self.input.len();
                 }
                 KeyCode::Down => {
-                    self.input = self.command_history.next();
+                    self.input = self.command_history.next_entry();
                     self.cursor = 0;
                     self.cursor = self.input.len();
                 }

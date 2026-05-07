@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::backend::TestBackend;
 use reddish_tui::events::Event;
 use reddish_tui::ui::command_palette::{CommandPalette, PaletteAction};
-use reddish_tui::ui::repl::{ReplLine, ReplLineStatus, ReplAction, ReplWidget};
+use reddish_tui::ui::repl::{ReplAction, ReplLine, ReplLineStatus, ReplWidget};
 
 #[test]
 fn test_repl_line_status() {
@@ -74,10 +74,7 @@ fn test_palette_filters_items() {
 
 #[test]
 fn test_palette_selects_item_on_enter() {
-    let mut palette = CommandPalette::new(vec![
-        "Connect".to_string(),
-        "Disconnect".to_string(),
-    ]);
+    let mut palette = CommandPalette::new(vec!["Connect".to_string(), "Disconnect".to_string()]);
     let action = palette.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
     assert!(matches!(action, Some(PaletteAction::Execute(ref s)) if s == "Connect"));
 }

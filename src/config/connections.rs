@@ -69,11 +69,11 @@ impl PasswordRef {
             PasswordRef::Plaintext(s) => Ok(s.clone()),
             PasswordRef::Env(var) => std::env::var(var)
                 .map_err(|_| color_eyre::eyre::eyre!("Environment variable {} not set", var)),
-            PasswordRef::Keychain { service, account } => {
-                Err(color_eyre::eyre::eyre!(
-                    "Keychain password resolution requires store initialization. Run: `keyring set --service={} --user={} <password>`", service, account
-                ))
-            }
+            PasswordRef::Keychain { service, account } => Err(color_eyre::eyre::eyre!(
+                "Keychain password resolution requires store initialization. Run: `keyring set --service={} --user={} <password>`",
+                service,
+                account
+            )),
         }
     }
 }

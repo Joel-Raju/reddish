@@ -4,12 +4,12 @@ use std::time::Duration;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::backend::TestBackend;
 use reddish_tui::config::connections::{ConnectionProfile, ConnectionStore, PasswordRef};
+use reddish_tui::events::Event;
 use reddish_tui::redis::client::{RedisClientHandle, Ttl};
 use reddish_tui::redis::scanner::Scanner;
-use reddish_tui::ui::key_browser::tree::{KeyEntry, NamespaceTree};
 use reddish_tui::ui::key_browser::KeyBrowser;
+use reddish_tui::ui::key_browser::tree::{KeyEntry, NamespaceTree};
 use reddish_tui::ui::widgets::confirm::ConfirmDialog;
-use reddish_tui::events::Event;
 
 #[test]
 fn test_connection_profile_serialization() {
@@ -98,7 +98,10 @@ async fn test_scanner_scans_all_keys() {
     let mut c = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
     };
-    redis::cmd("FLUSHDB").query_async::<()>(&mut c).await.unwrap();
+    redis::cmd("FLUSHDB")
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
 
     for i in 0..500 {
         redis::cmd("SET")
@@ -124,7 +127,10 @@ async fn test_scanner_scans_all_keys() {
     assert!(scanner.finished);
 
     // Cleanup
-    redis::cmd("FLUSHDB").query_async::<()>(&mut c).await.unwrap();
+    redis::cmd("FLUSHDB")
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -154,10 +160,26 @@ async fn test_scanner_never_uses_keys_command() {
 #[test]
 fn test_namespace_tree_insert_and_visible_rows() {
     let mut tree = NamespaceTree::new(':', 500_000);
-    tree.insert(KeyEntry { full_name: "user:session:abc".to_string(), redis_type: None, ttl: None });
-    tree.insert(KeyEntry { full_name: "user:session:def".to_string(), redis_type: None, ttl: None });
-    tree.insert(KeyEntry { full_name: "user:profile:xyz".to_string(), redis_type: None, ttl: None });
-    tree.insert(KeyEntry { full_name: "queue:jobs".to_string(), redis_type: None, ttl: None });
+    tree.insert(KeyEntry {
+        full_name: "user:session:abc".to_string(),
+        redis_type: None,
+        ttl: None,
+    });
+    tree.insert(KeyEntry {
+        full_name: "user:session:def".to_string(),
+        redis_type: None,
+        ttl: None,
+    });
+    tree.insert(KeyEntry {
+        full_name: "user:profile:xyz".to_string(),
+        redis_type: None,
+        ttl: None,
+    });
+    tree.insert(KeyEntry {
+        full_name: "queue:jobs".to_string(),
+        redis_type: None,
+        ttl: None,
+    });
 
     assert_eq!(tree.total_keys(), 4);
 
@@ -183,16 +205,32 @@ fn test_namespace_tree_insert_and_visible_rows() {
 #[test]
 fn test_namespace_tree_remove() {
     let mut tree = NamespaceTree::new(':', 500_000);
-    tree.insert(KeyEntry { full_name: "a:b".to_string(), redis_type: None, ttl: None });
-    tree.insert(KeyEntry { full_name: "a:c".to_string(), redis_type: None, ttl: None });
-    tree.insert(KeyEntry { full_name: "a:d".to_string(), redis_type: None, ttl: None });
+    tree.insert(KeyEntry {
+        full_name: "a:b".to_string(),
+        redis_type: None,
+        ttl: None,
+    });
+    tree.insert(KeyEntry {
+        full_name: "a:c".to_string(),
+        redis_type: None,
+        ttl: None,
+    });
+    tree.insert(KeyEntry {
+        full_name: "a:d".to_string(),
+        redis_type: None,
+        ttl: None,
+    });
 
     assert_eq!(tree.total_keys(), 3);
     tree.remove("a:c");
     assert_eq!(tree.total_keys(), 2);
 
     let rows = tree.visible_rows();
-    assert!(!rows.iter().any(|r| r.label == "c" || r.label.contains("a:c")));
+    assert!(
+        !rows
+            .iter()
+            .any(|r| r.label == "c" || r.label.contains("a:c"))
+    );
 }
 
 #[test]
@@ -243,9 +281,18 @@ async fn test_redis_client_delete() {
     let mut c = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
     };
-    redis::cmd("SET").arg("del_test").arg("value").query_async::<()>(&mut c).await.unwrap();
+    redis::cmd("SET")
+        .arg("del_test")
+        .arg("value")
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
     client.delete("del_test").await.unwrap();
-    let exists: i64 = redis::cmd("EXISTS").arg("del_test").query_async(&mut c).await.unwrap();
+    let exists: i64 = redis::cmd("EXISTS")
+        .arg("del_test")
+        .query_async(&mut c)
+        .await
+        .unwrap();
     assert_eq!(exists, 0);
 }
 
@@ -266,13 +313,30 @@ async fn test_redis_client_ttl() {
     let mut c = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
     };
-    redis::cmd("SET").arg("ttl_test").arg("v").query_async::<()>(&mut c).await.unwrap();
-    redis::cmd("EXPIRE").arg("ttl_test").arg(100).query_async::<()>(&mut c).await.unwrap();
+    redis::cmd("SET")
+        .arg("ttl_test")
+        .arg("v")
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
+    redis::cmd("EXPIRE")
+        .arg("ttl_test")
+        .arg(100)
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
 
     let ttl = client.ttl("ttl_test").await.unwrap();
-    assert!(!matches!(ttl, Ttl::KeyNotFound), "TTL should not be KeyNotFound");
+    assert!(
+        !matches!(ttl, Ttl::KeyNotFound),
+        "TTL should not be KeyNotFound"
+    );
 
-    redis::cmd("PERSIST").arg("ttl_test").query_async::<()>(&mut c).await.unwrap();
+    redis::cmd("PERSIST")
+        .arg("ttl_test")
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
     let ttl2 = client.ttl("ttl_test").await.unwrap();
     assert_eq!(ttl2, Ttl::NoExpiry);
 }
@@ -283,9 +347,21 @@ fn test_key_browser_renders_without_panic() {
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     let mut browser = KeyBrowser::new(':', 500_000);
     browser.apply_scan_batch(vec![
-        KeyEntry { full_name: "a".to_string(), redis_type: None, ttl: None },
-        KeyEntry { full_name: "b".to_string(), redis_type: None, ttl: None },
-        KeyEntry { full_name: "c".to_string(), redis_type: None, ttl: None },
+        KeyEntry {
+            full_name: "a".to_string(),
+            redis_type: None,
+            ttl: None,
+        },
+        KeyEntry {
+            full_name: "b".to_string(),
+            redis_type: None,
+            ttl: None,
+        },
+        KeyEntry {
+            full_name: "c".to_string(),
+            redis_type: None,
+            ttl: None,
+        },
     ]);
     let _ = terminal.draw(|f| browser.render(f, f.area()));
 }
@@ -303,5 +379,8 @@ fn test_scan_batch_updates_browser() {
         .collect();
     browser.apply_scan_batch(batch);
     assert_eq!(browser.tree.total_keys(), 50);
-    assert!(matches!(browser.state, reddish_tui::ui::key_browser::BrowserState::Scanning { keys_loaded: 50 }));
+    assert!(matches!(
+        browser.state,
+        reddish_tui::ui::key_browser::BrowserState::Scanning { keys_loaded: 50 }
+    ));
 }

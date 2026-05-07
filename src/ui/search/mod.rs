@@ -1,7 +1,7 @@
 use ratatui::{
+    Frame,
     layout::Rect,
     widgets::{Block, Borders, Clear, Paragraph},
-    Frame,
 };
 
 use crate::events::Event;

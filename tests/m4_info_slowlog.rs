@@ -1,8 +1,8 @@
+use ratatui::backend::TestBackend;
 use reddish_tui::config::connections::ConnectionProfile;
 use reddish_tui::redis::client::RedisClientHandle;
-use reddish_tui::redis::server::{slowlog_get, ServerInfo, SlowLogEntry};
-use reddish_tui::ui::info_dashboard::{SystemStats, InfoDashboard};
-use ratatui::backend::TestBackend;
+use reddish_tui::redis::server::{ServerInfo, SlowLogEntry, slowlog_get};
+use reddish_tui::ui::info_dashboard::{InfoDashboard, SystemStats};
 
 fn test_profile() -> ConnectionProfile {
     ConnectionProfile {
@@ -84,16 +84,14 @@ fn test_info_dashboard_renders_without_panic() {
     let backend = TestBackend::new(80, 24);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     let mut dashboard = InfoDashboard::new();
-    dashboard.slowlog = vec![
-        SlowLogEntry {
-            id: 1,
-            timestamp: 1234567890,
-            duration_us: 150,
-            command: vec!["GET".to_string(), "foo".to_string()],
-            client: None,
-            name: None,
-        },
-    ];
+    dashboard.slowlog = vec![SlowLogEntry {
+        id: 1,
+        timestamp: 1234567890,
+        duration_us: 150,
+        command: vec!["GET".to_string(), "foo".to_string()],
+        client: None,
+        name: None,
+    }];
     dashboard.stats = SystemStats {
         redis_version: Some("7.0".to_string()),
         uptime_in_seconds: Some(60),

@@ -1,8 +1,8 @@
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Style},
     widgets::{Block, Borders, List, ListItem, ListState},
-    Frame,
 };
 
 use crate::config::connections::{ConnectionProfile, ConnectionStore};
@@ -42,7 +42,9 @@ impl ConnectionScreen {
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
-        let block = Block::default().borders(Borders::ALL).title("Connections (Esc to cancel)");
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title("Connections (Esc to cancel)");
         let items: Vec<ListItem> = self
             .store
             .profiles

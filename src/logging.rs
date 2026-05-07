@@ -1,5 +1,5 @@
 use color_eyre::Result;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::config::Config;
 
@@ -17,8 +17,7 @@ pub fn init_logging(config: &Config) -> Result<()> {
     // (or we can store it in App; for M0 we leak to keep API simple)
     let _leaked = Box::leak(Box::new(_guard));
 
-    let filter = EnvFilter::try_new(config.log_level())
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_new(config.log_level()).unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::registry()
         .with(filter)

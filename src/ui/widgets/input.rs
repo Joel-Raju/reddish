@@ -1,10 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
-    layout::Rect,
-    style::{Color, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
     Frame,
+    layout::Rect,
+    widgets::{Block, Borders, Paragraph},
 };
 
 use crate::events::Event;

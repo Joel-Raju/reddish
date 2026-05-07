@@ -2,10 +2,10 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Style},
     widgets::{Block, Borders, Paragraph},
-    Frame,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -64,7 +64,10 @@ impl StatusBar {
     pub fn render(&self, frame: &mut Frame, area: Rect) {
         let conn_text = match &self.connection_state {
             ConnectionState::Connected { host, port, db } => {
-                let lat = self.latency_ms.map(|l| format!("{}ms", l)).unwrap_or_default();
+                let lat = self
+                    .latency_ms
+                    .map(|l| format!("{}ms", l))
+                    .unwrap_or_default();
                 format!("● {}:{} db{} | {}", host, port, db, lat)
             }
             ConnectionState::Reconnecting { attempt } => {

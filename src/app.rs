@@ -2,17 +2,17 @@ use std::time::Duration;
 
 use color_eyre::Result;
 use crossterm::event::KeyCode;
+use futures::StreamExt;
 use ratatui::{
+    Frame, Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     widgets::{Block, Borders, Paragraph},
-    Frame, Terminal,
 };
 use std::io::Stdout;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use futures::StreamExt;
 
 use crate::backoff::backoff_sequence;
 use crate::config::Config;
@@ -27,7 +27,7 @@ use crate::ui::info_dashboard::{InfoDashboard, SystemStats};
 use crate::ui::key_browser::scanner_task;
 use crate::ui::key_browser::{BrowserAction, KeyBrowser};
 use crate::ui::pubsub::{PubSubAction, PubSubMessage, PubSubWidget};
-use crate::ui::repl::{parse_pipeline, ReplAction, ReplLineStatus, ReplWidget};
+use crate::ui::repl::{ReplAction, ReplLineStatus, ReplWidget, parse_pipeline};
 use crate::ui::search::{GlobalSearch, SearchAction};
 use crate::ui::status_bar::{ConnectionState, StatusBar};
 use crate::ui::tab_bar;
@@ -347,7 +347,9 @@ impl App {
                             {
                                 let action = BrowserAction::SelectKey(
                                     key.full_name.clone(),
-                                    key.redis_type.clone().unwrap_or(crate::redis::client::RedisType::Unknown),
+                                    key.redis_type
+                                        .clone()
+                                        .unwrap_or(crate::redis::client::RedisType::Unknown),
                                 );
                                 self.handle_browser_action(action).await;
                             }
@@ -468,14 +470,16 @@ impl App {
 
         match key.code {
             KeyCode::Char('\\')
-                if key.modifiers
+                if key
+                    .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
                 self.open_connection_screen();
                 return;
             }
             KeyCode::Char('r')
-                if key.modifiers
+                if key
+                    .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
                 self.reconnect_active_connection().await;
@@ -552,11 +556,7 @@ impl App {
                 self.client = Some(client);
                 self.last_profile = Some(profile.clone());
                 self.reconnect_attempt = 0;
-                self.status_bar.connection_state = ConnectionState::Connected {
-                    host,
-                    port,
-                    db,
-                };
+                self.status_bar.connection_state = ConnectionState::Connected { host, port, db };
                 self.error_message = None;
                 self.start_scan_for_profile(&profile).await;
             }
@@ -630,11 +630,7 @@ impl App {
                 let db = profile.db;
                 self.client = Some(client);
                 self.reconnect_attempt = 0;
-                self.status_bar.connection_state = ConnectionState::Connected {
-                    host,
-                    port,
-                    db,
-                };
+                self.status_bar.connection_state = ConnectionState::Connected { host, port, db };
                 self.error_message = None;
                 self.start_scan_for_profile(&profile).await;
             }
@@ -756,9 +752,8 @@ impl App {
                 }
             }
             BrowserAction::RefreshRequested => {
-                self.error_message = Some(
-                    "Refresh requested but scanner wiring is not initialized".to_string(),
-                );
+                self.error_message =
+                    Some("Refresh requested but scanner wiring is not initialized".to_string());
             }
         }
     }
@@ -866,7 +861,9 @@ impl App {
         if self.mode() == &AppMode::Help {
             let help_text = "Keyboard Shortcuts:\n\n1-4: Switch tabs\nq: Quit\n?: Help\nEnter: Select key\nj/k or arrows: Navigate\nCtrl+P: Command palette\nD: Delete";
             let area = centered_rect(70, 60, frame.area());
-            let block = Block::default().borders(Borders::ALL).title("Help (Esc to close)");
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title("Help (Esc to close)");
             let paragraph = Paragraph::new(help_text).block(block);
             frame.render_widget(paragraph, area);
         }
@@ -888,7 +885,11 @@ impl App {
     }
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, r: ratatui::layout::Rect) -> ratatui::layout::Rect {
+fn centered_rect(
+    percent_x: u16,
+    percent_y: u16,
+    r: ratatui::layout::Rect,
+) -> ratatui::layout::Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -961,7 +962,10 @@ mod tests {
         app.connect_profile(invalid_profile()).await;
 
         assert!(app.client.is_none());
-        assert!(matches!(app.status_bar.connection_state, ConnectionState::Disconnected));
+        assert!(matches!(
+            app.status_bar.connection_state,
+            ConnectionState::Disconnected
+        ));
         assert!(
             app.error_message
                 .as_deref()

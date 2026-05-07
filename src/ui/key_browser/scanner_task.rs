@@ -8,7 +8,10 @@ use crate::ui::key_browser::tree::KeyEntry;
 
 /// Start a background SCAN task. Returns a cancellation token and a receiver.
 /// The sender is dropped on completion or cancellation, so the receiver sees None.
-pub fn start_scan(client: RedisClientHandle, config: &Config) -> (mpsc::Receiver<Vec<KeyEntry>>, CancellationToken) {
+pub fn start_scan(
+    client: RedisClientHandle,
+    config: &Config,
+) -> (mpsc::Receiver<Vec<KeyEntry>>, CancellationToken) {
     let count = config.scan_count();
     let (tx, rx) = mpsc::channel(64);
     let cancel = CancellationToken::new();
@@ -24,7 +27,11 @@ pub fn start_scan(client: RedisClientHandle, config: &Config) -> (mpsc::Receiver
                 Ok(keys) => {
                     let batch: Vec<KeyEntry> = keys
                         .into_iter()
-                        .map(|k| KeyEntry { full_name: k, redis_type: None, ttl: None })
+                        .map(|k| KeyEntry {
+                            full_name: k,
+                            redis_type: None,
+                            ttl: None,
+                        })
                         .collect();
                     if batch.is_empty() && scanner.finished {
                         break;

@@ -1,7 +1,7 @@
 use ratatui::{
+    Frame,
     layout::Rect,
     widgets::{Block, Borders, Clear, Paragraph},
-    Frame,
 };
 
 pub struct HelpOverlay {
@@ -32,9 +32,7 @@ impl HelpOverlay {
         frame.render_widget(Clear, popup_area);
 
         let title = format!("Keybindings — {:?}", self.context);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title);
+        let block = Block::default().borders(Borders::ALL).title(title);
         let inner = block.inner(popup_area);
         frame.render_widget(block, popup_area);
 

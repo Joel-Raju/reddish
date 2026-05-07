@@ -1,10 +1,12 @@
-use reddish_tui::config::connections::{ConnectionProfile, ConnectionMode, SentinelNode, TlsConfig, SshTunnelConfig};
-use reddish_tui::redis::client::parse_cluster_nodes;
-use reddish_tui::backoff::backoff_sequence;
-use reddish_tui::ui::connection_screen::ConnectionScreen;
-use reddish_tui::app::App;
 use crossterm::event::{KeyCode, KeyEvent};
+use reddish_tui::app::App;
+use reddish_tui::backoff::backoff_sequence;
+use reddish_tui::config::connections::{
+    ConnectionMode, ConnectionProfile, SentinelNode, SshTunnelConfig, TlsConfig,
+};
 use reddish_tui::events::Event;
+use reddish_tui::redis::client::parse_cluster_nodes;
+use reddish_tui::ui::connection_screen::ConnectionScreen;
 
 #[test]
 fn test_parse_cluster_nodes() {
@@ -15,7 +17,10 @@ fn test_parse_cluster_nodes() {
     let nodes = parse_cluster_nodes(raw).unwrap();
     assert_eq!(nodes.len(), 3);
 
-    let myself = nodes.iter().find(|n| n.flags.contains(&"myself".to_string())).unwrap();
+    let myself = nodes
+        .iter()
+        .find(|n| n.flags.contains(&"myself".to_string()))
+        .unwrap();
     assert!(myself.flags.contains(&"master".to_string()));
     assert_eq!(myself.slots.len(), 1);
     assert_eq!(myself.slots[0], (0, 5460));
@@ -145,9 +150,10 @@ fn test_connection_profile_with_mode_roundtrip() {
         last_connected: None,
         mode: ConnectionMode::Sentinel {
             master_name: "mymaster".to_string(),
-            sentinels: vec![
-                SentinelNode { host: "127.0.0.1".to_string(), port: 26379 },
-            ],
+            sentinels: vec![SentinelNode {
+                host: "127.0.0.1".to_string(),
+                port: 26379,
+            }],
         },
         tls: Some(TlsConfig {
             enabled: true,

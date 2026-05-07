@@ -6,8 +6,7 @@ use reddish_tui::{
         Config,
         connections::{ConnectionMode, ConnectionProfile, ConnectionStore, PasswordRef},
     },
-    logging,
-    terminal,
+    logging, terminal,
 };
 use redis::IntoConnectionInfo;
 
@@ -72,9 +71,7 @@ fn main() -> Result<()> {
         }
     }
 
-    let result = tokio::runtime::Runtime::new()?.block_on(async {
-        app.run(&mut term).await
-    });
+    let result = tokio::runtime::Runtime::new()?.block_on(async { app.run(&mut term).await });
 
     terminal::restore_terminal(&mut term)?;
     result

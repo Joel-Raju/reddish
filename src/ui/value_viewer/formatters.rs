@@ -33,7 +33,10 @@ pub fn detect_format(data: &[u8]) -> FormatHint {
     }
 
     // Check if all bytes are printable ASCII
-    if data.iter().all(|&b| b.is_ascii_graphic() || b == b' ' || b == b'\n' || b == b'\r' || b == b'\t') {
+    if data
+        .iter()
+        .all(|&b| b.is_ascii_graphic() || b == b' ' || b == b'\n' || b == b'\r' || b == b'\t')
+    {
         // Check if it's a valid integer
         if let Ok(s) = std::str::from_utf8(data) {
             let trimmed = s.trim();
@@ -43,10 +46,11 @@ pub fn detect_format(data: &[u8]) -> FormatHint {
             // Check if it's a valid float
             if !trimmed.is_empty() {
                 let mut chars = trimmed.chars();
-                if chars.all(|c| c.is_ascii_digit() || c == '.' || c == '-' || c == 'e' || c == 'E' || c == '+') {
-                    if trimmed.contains('.') || trimmed.contains('e') || trimmed.contains('E') {
-                        return FormatHint::Float;
-                    }
+                if chars.all(|c| {
+                    c.is_ascii_digit() || c == '.' || c == '-' || c == 'e' || c == 'E' || c == '+'
+                }) && (trimmed.contains('.') || trimmed.contains('e') || trimmed.contains('E'))
+                {
+                    return FormatHint::Float;
                 }
             }
             return FormatHint::String;
@@ -59,9 +63,7 @@ pub fn detect_format(data: &[u8]) -> FormatHint {
 /// Convert raw data to a string representation based on the format hint.
 pub fn stringify(data: &[u8], hint: FormatHint) -> String {
     match hint {
-        FormatHint::Json => {
-            String::from_utf8_lossy(data).to_string()
-        }
+        FormatHint::Json => String::from_utf8_lossy(data).to_string(),
         FormatHint::String | FormatHint::Int | FormatHint::Float => {
             String::from_utf8_lossy(data).to_string()
         }
@@ -78,11 +80,11 @@ pub fn stringify(data: &[u8], hint: FormatHint) -> String {
 /// Create a preview string, truncated to max_len characters.
 pub fn preview(data: &[u8], max_len: usize, hint: FormatHint) -> String {
     let s = stringify(data, hint);
-        if s.len() > max_len {
-            let visible_len = max_len.saturating_sub(3);
-            let mut preview = s.chars().take(visible_len).collect::<String>();
-            preview.push_str("...");
-            preview
+    if s.len() > max_len {
+        let visible_len = max_len.saturating_sub(3);
+        let mut preview = s.chars().take(visible_len).collect::<String>();
+        preview.push_str("...");
+        preview
     } else {
         s
     }

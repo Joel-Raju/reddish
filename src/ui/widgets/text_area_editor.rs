@@ -1,8 +1,8 @@
 use crossterm::event::KeyModifiers;
 use ratatui::{
+    Frame,
     layout::Rect,
     widgets::{Block, Borders, Paragraph, Wrap},
-    Frame,
 };
 
 use crate::events::Event;
@@ -46,8 +46,12 @@ impl TextAreaEditor {
                 lines.push(String::new());
             }
             match key.code {
-                KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 's' => return true,
-                KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'x' => return true,
+                KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 's' => {
+                    return true;
+                }
+                KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'x' => {
+                    return true;
+                }
                 KeyCode::Char(c) => {
                     let line_idx = self.cursor.0.min(lines.len().saturating_sub(1));
                     let col = self.cursor.1.min(lines[line_idx].len());

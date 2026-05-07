@@ -33,7 +33,8 @@ pub struct StreamGroup {
 }
 
 pub fn bytes_to_string_lossy(bytes: Vec<u8>) -> String {
-    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(&e.into_bytes()).to_string())
+    String::from_utf8(bytes)
+        .unwrap_or_else(|e| String::from_utf8_lossy(&e.into_bytes()).to_string())
 }
 
 pub fn map_pairs_to_index_map(pairs: Vec<(String, Vec<u8>)>) -> IndexMap<String, String> {

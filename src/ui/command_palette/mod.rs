@@ -1,8 +1,8 @@
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Style},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
-    Frame,
 };
 
 use crate::events::Event;
@@ -76,7 +76,9 @@ impl CommandPalette {
         let popup_area = centered_rect(60, 20, area);
         frame.render_widget(Clear, popup_area);
 
-        let block = Block::default().borders(Borders::ALL).title("Command Palette (Ctrl+P)");
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title("Command Palette (Ctrl+P)");
         let inner = block.inner(popup_area);
         frame.render_widget(block, popup_area);
 

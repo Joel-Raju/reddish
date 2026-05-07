@@ -61,7 +61,10 @@ async fn test_event_tick_fires() {
             Err(_) => break,
         }
     }
-    assert!(tick_count >= 1, "Expected at least one Tick event within 300ms");
+    assert!(
+        tick_count >= 1,
+        "Expected at least one Tick event within 300ms"
+    );
 }
 
 #[test]

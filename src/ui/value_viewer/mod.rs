@@ -1,13 +1,13 @@
 pub mod formatters;
 
 use ratatui::{
+    Frame,
     layout::Rect,
     widgets::{Block, Borders, Paragraph, Wrap},
-    Frame,
 };
 
 use crate::redis::client::RedisType;
-use formatters::{detect_format, stringify, FormatHint};
+use formatters::{FormatHint, detect_format, stringify};
 
 pub struct ValueViewer {
     pub key: String,
@@ -30,7 +30,11 @@ impl ValueViewer {
     pub fn render(&self, frame: &mut Frame, area: Rect) {
         let text = stringify(&self.data, self.format_hint.clone());
         let paragraph = Paragraph::new(text)
-            .block(Block::default().borders(Borders::ALL).title(self.key.clone()))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(self.key.clone()),
+            )
             .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, area);
     }

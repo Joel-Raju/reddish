@@ -1,8 +1,8 @@
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Style},
     widgets::Paragraph,
-    Frame,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

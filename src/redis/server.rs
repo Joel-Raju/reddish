@@ -62,10 +62,7 @@ fn parse_slowlog_entry(raw: Vec<redis::Value>) -> color_eyre::Result<SlowLogEntr
     let timestamp = next_u64(&mut iter)?;
     let duration_us = next_u64(&mut iter)?;
     let command = match iter.next() {
-        Some(redis::Value::Array(cmds)) => cmds
-            .into_iter()
-            .filter_map(value_to_string)
-            .collect(),
+        Some(redis::Value::Array(cmds)) => cmds.into_iter().filter_map(value_to_string).collect(),
         _ => Vec::new(),
     };
 

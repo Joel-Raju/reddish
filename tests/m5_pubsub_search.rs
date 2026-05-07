@@ -1,11 +1,11 @@
+use crossterm::event::{KeyCode, KeyEvent};
 use futures::StreamExt;
+use ratatui::backend::TestBackend;
 use reddish_tui::config::connections::ConnectionProfile;
+use reddish_tui::events::Event;
 use reddish_tui::redis::client::RedisClientHandle;
 use reddish_tui::ui::pubsub::{PubSubMessage, PubSubWidget};
 use reddish_tui::ui::search::{GlobalSearch, SearchAction};
-use crossterm::event::{KeyCode, KeyEvent};
-use reddish_tui::events::Event;
-use ratatui::backend::TestBackend;
 
 fn test_profile() -> ConnectionProfile {
     ConnectionProfile {
@@ -38,7 +38,11 @@ async fn test_publish_and_subscribe() {
     let receivers = client.publish("test_channel", "hello").await.unwrap();
     assert_eq!(receivers, 1);
 
-    let msg = tokio::time::timeout(std::time::Duration::from_secs(2), pubsub.on_message().next()).await;
+    let msg = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        pubsub.on_message().next(),
+    )
+    .await;
     assert!(msg.is_ok());
     let payload: String = msg.unwrap().unwrap().get_payload().unwrap();
     assert_eq!(payload, "hello");

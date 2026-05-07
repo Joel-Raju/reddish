@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use reddish_tui::config::keybindings::Keymap;
 use reddish_tui::ui::help::{HelpContext, HelpOverlay};
-use reddish_tui::ui::theme::{Theme, THEMES};
+use reddish_tui::ui::theme::{THEMES, Theme};
 
 #[test]
 fn test_all_themes_have_all_fields() {
@@ -14,7 +14,10 @@ fn test_all_themes_have_all_fields() {
     }
 
     let names: Vec<_> = THEMES.iter().map(|t| t.name).collect();
-    assert_eq!(names.len(), std::collections::HashSet::<&&str>::from_iter(names.iter()).len());
+    assert_eq!(
+        names.len(),
+        std::collections::HashSet::<&&str>::from_iter(names.iter()).len()
+    );
 }
 
 #[test]

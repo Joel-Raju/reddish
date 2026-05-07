@@ -72,7 +72,7 @@ impl CommandHistory {
             .unwrap_or_else(|| current_input.to_string())
     }
 
-    pub fn next(&mut self) -> String {
+    pub fn next_entry(&mut self) -> String {
         if self.entries.is_empty() {
             return String::new();
         }
@@ -85,10 +85,7 @@ impl CommandHistory {
             }
             Some(idx) => {
                 self.cursor = Some(idx + 1);
-                self.entries
-                    .get(idx + 1)
-                    .cloned()
-                    .unwrap_or_default()
+                self.entries.get(idx + 1).cloned().unwrap_or_default()
             }
         }
     }
@@ -99,5 +96,9 @@ impl CommandHistory {
 
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 }

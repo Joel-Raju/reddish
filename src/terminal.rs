@@ -1,14 +1,14 @@
-use std::io::{self, stdout, Stdout};
+use std::io::{self, Stdout, stdout};
 
 use crossterm::{
-    execute,
     event::{DisableMouseCapture, EnableMouseCapture},
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
+    Terminal,
     backend::{Backend, CrosstermBackend},
     crossterm::cursor::Show,
-    Terminal,
 };
 
 /// Initialize the terminal: enable raw mode and enter alternate screen.
@@ -24,7 +24,12 @@ pub fn init_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
 /// Idempotent — safe to call multiple times.
 pub fn restore_terminal<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
     let _ = disable_raw_mode();
-    let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture, Show);
+    let _ = execute!(
+        io::stdout(),
+        LeaveAlternateScreen,
+        DisableMouseCapture,
+        Show
+    );
     let _ = terminal.show_cursor();
     Ok(())
 }

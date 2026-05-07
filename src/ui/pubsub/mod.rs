@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
 
 use ratatui::{
+    Frame,
     layout::Rect,
     widgets::{Block, Borders, Paragraph, Wrap},
-    Frame,
 };
 
 #[derive(Debug, Clone)]
@@ -151,10 +151,7 @@ impl PubSubWidget {
             .collect::<Vec<_>>()
             .join("\n");
 
-        let active = self
-            .active_channel
-            .as_deref()
-            .unwrap_or("<none>");
+        let active = self.active_channel.as_deref().unwrap_or("<none>");
 
         let composed = format!(
             "Active: {active}\nMode: {mode} (Tab to toggle)\nInput: {}\n\n{}",

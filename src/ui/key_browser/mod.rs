@@ -2,14 +2,14 @@ pub mod scanner_task;
 pub mod tree;
 
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Style},
     widgets::{Block, Borders, List, ListItem, ListState},
-    Frame,
 };
 
-use crate::events::Event;
 use crate::config::keybindings::Keymap;
+use crate::events::Event;
 use crate::redis::client::RedisType;
 use crate::ui::key_browser::tree::{KeyEntry, NamespaceTree};
 
@@ -56,45 +56,49 @@ impl KeyBrowser {
         use crossterm::event::KeyCode;
         if let Event::Key(key) = event {
             if keymap.matches("nav_down", key) || matches!(key.code, KeyCode::Down) {
-                    let rows = self.tree.visible_rows();
-                    if self.cursor + 1 < rows.len() {
-                        self.cursor += 1;
-                    }
+                let rows = self.tree.visible_rows();
+                if self.cursor + 1 < rows.len() {
+                    self.cursor += 1;
+                }
             } else if keymap.matches("nav_up", key) || matches!(key.code, KeyCode::Up) {
-                    if self.cursor > 0 {
-                        self.cursor -= 1;
-                    }
+                if self.cursor > 0 {
+                    self.cursor -= 1;
+                }
             } else if keymap.matches("confirm", key) || matches!(key.code, KeyCode::Enter) {
-                    let rows = self.tree.visible_rows();
-                    if let Some(row) = rows.get(self.cursor)
-                        && !row.is_namespace
-                        && let Some(ref key) = row.key
-                    {
-                        return Some(BrowserAction::SelectKey(
-                            key.full_name.clone(),
-                            key.redis_type.clone().unwrap_or(RedisType::Unknown),
-                        ));
-                    }
-            } else if keymap.matches("nav_right", key) || matches!(key.code, KeyCode::Right | KeyCode::Char('l')) {
-                    let rows = self.tree.visible_rows();
-                    if let Some(row) = rows.get(self.cursor) {
-                        if row.is_namespace {
-                            let path: Vec<&str> = row.path.iter().map(|s| s.as_str()).collect();
-                            self.tree.expand(&path);
-                        }
-                    }
-            } else if keymap.matches("nav_left", key) || matches!(key.code, KeyCode::Left | KeyCode::Char('h')) {
-                    let rows = self.tree.visible_rows();
-                    if let Some(row) = rows.get(self.cursor) {
-                        if row.is_namespace {
-                            let path: Vec<&str> = row.path.iter().map(|s| s.as_str()).collect();
-                            self.tree.collapse(&path);
-                        }
-                    }
+                let rows = self.tree.visible_rows();
+                if let Some(row) = rows.get(self.cursor)
+                    && !row.is_namespace
+                    && let Some(ref key) = row.key
+                {
+                    return Some(BrowserAction::SelectKey(
+                        key.full_name.clone(),
+                        key.redis_type.clone().unwrap_or(RedisType::Unknown),
+                    ));
+                }
+            } else if keymap.matches("nav_right", key)
+                || matches!(key.code, KeyCode::Right | KeyCode::Char('l'))
+            {
+                let rows = self.tree.visible_rows();
+                if let Some(row) = rows.get(self.cursor)
+                    && row.is_namespace
+                {
+                    let path: Vec<&str> = row.path.iter().map(|s| s.as_str()).collect();
+                    self.tree.expand(&path);
+                }
+            } else if keymap.matches("nav_left", key)
+                || matches!(key.code, KeyCode::Left | KeyCode::Char('h'))
+            {
+                let rows = self.tree.visible_rows();
+                if let Some(row) = rows.get(self.cursor)
+                    && row.is_namespace
+                {
+                    let path: Vec<&str> = row.path.iter().map(|s| s.as_str()).collect();
+                    self.tree.collapse(&path);
+                }
             } else if keymap.matches("delete", key) || matches!(key.code, KeyCode::Char('D')) {
             } else if keymap.matches("refresh", key) {
                 return Some(BrowserAction::RefreshRequested);
-                }
+            }
         }
         None
     }

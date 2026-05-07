@@ -75,7 +75,8 @@ impl NamespaceTree {
             }
             let segment = part.to_string();
             if !node.children.contains_key(&segment) {
-                node.children.insert(segment.clone(), TreeNode::new(segment.clone()));
+                node.children
+                    .insert(segment.clone(), TreeNode::new(segment.clone()));
             }
             node = node.children.get_mut(&segment).unwrap();
         }
@@ -92,7 +93,13 @@ impl NamespaceTree {
         rows
     }
 
-    fn collect_rows(&self, node: &TreeNode, depth: usize, path: &[String], rows: &mut Vec<TreeRow>) {
+    fn collect_rows(
+        &self,
+        node: &TreeNode,
+        depth: usize,
+        path: &[String],
+        rows: &mut Vec<TreeRow>,
+    ) {
         for (name, child) in &node.children {
             let prefix = if child.expanded { "▼ " } else { "▶ " };
             let mut row_path = path.to_vec();
@@ -111,7 +118,11 @@ impl NamespaceTree {
         for key in &node.keys {
             rows.push(TreeRow {
                 depth,
-                label: key.full_name.rsplit_once(self.separator).map(|(_, s)| s.to_string()).unwrap_or_else(|| key.full_name.clone()),
+                label: key
+                    .full_name
+                    .rsplit_once(self.separator)
+                    .map(|(_, s)| s.to_string())
+                    .unwrap_or_else(|| key.full_name.clone()),
                 is_namespace: false,
                 key: Some(key.clone()),
                 path: path.to_vec(),

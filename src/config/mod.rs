@@ -24,8 +24,9 @@ impl Config {
             return Ok(Self::default());
         }
         let contents = std::fs::read_to_string(&path)?;
-        let config: Config = toml::from_str(&contents)
-            .map_err(|e| color_eyre::eyre::eyre!("Invalid TOML in config file {:?}: {}", path, e))?;
+        let config: Config = toml::from_str(&contents).map_err(|e| {
+            color_eyre::eyre::eyre!("Invalid TOML in config file {:?}: {}", path, e)
+        })?;
         Ok(config)
     }
 

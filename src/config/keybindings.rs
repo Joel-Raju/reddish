@@ -55,47 +55,119 @@ impl Default for Keymap {
 impl Keymap {
     pub fn vim() -> Self {
         Self {
-            nav_up: KeyDef { key: "k".to_string() },
-            nav_down: KeyDef { key: "j".to_string() },
-            nav_left: KeyDef { key: "h".to_string() },
-            nav_right: KeyDef { key: "l".to_string() },
-            confirm: KeyDef { key: "Enter".to_string() },
-            cancel: KeyDef { key: "Esc".to_string() },
-            delete: KeyDef { key: "d".to_string() },
-            refresh: KeyDef { key: "r".to_string() },
-            filter: KeyDef { key: "/".to_string() },
-            edit: KeyDef { key: "e".to_string() },
-            quit: KeyDef { key: "q".to_string() },
-            copy: KeyDef { key: "y".to_string() },
-            help: KeyDef { key: "?".to_string() },
-            palette: KeyDef { key: "ctrl+p".to_string() },
-            tab_keys: KeyDef { key: "1".to_string() },
-            tab_repl: KeyDef { key: "2".to_string() },
-            tab_info: KeyDef { key: "3".to_string() },
-            tab_pubsub: KeyDef { key: "4".to_string() },
+            nav_up: KeyDef {
+                key: "k".to_string(),
+            },
+            nav_down: KeyDef {
+                key: "j".to_string(),
+            },
+            nav_left: KeyDef {
+                key: "h".to_string(),
+            },
+            nav_right: KeyDef {
+                key: "l".to_string(),
+            },
+            confirm: KeyDef {
+                key: "Enter".to_string(),
+            },
+            cancel: KeyDef {
+                key: "Esc".to_string(),
+            },
+            delete: KeyDef {
+                key: "d".to_string(),
+            },
+            refresh: KeyDef {
+                key: "r".to_string(),
+            },
+            filter: KeyDef {
+                key: "/".to_string(),
+            },
+            edit: KeyDef {
+                key: "e".to_string(),
+            },
+            quit: KeyDef {
+                key: "q".to_string(),
+            },
+            copy: KeyDef {
+                key: "y".to_string(),
+            },
+            help: KeyDef {
+                key: "?".to_string(),
+            },
+            palette: KeyDef {
+                key: "ctrl+p".to_string(),
+            },
+            tab_keys: KeyDef {
+                key: "1".to_string(),
+            },
+            tab_repl: KeyDef {
+                key: "2".to_string(),
+            },
+            tab_info: KeyDef {
+                key: "3".to_string(),
+            },
+            tab_pubsub: KeyDef {
+                key: "4".to_string(),
+            },
         }
     }
 
     pub fn emacs() -> Self {
         Self {
-            nav_up: KeyDef { key: "ctrl+p".to_string() },
-            nav_down: KeyDef { key: "ctrl+n".to_string() },
-            nav_left: KeyDef { key: "ctrl+b".to_string() },
-            nav_right: KeyDef { key: "ctrl+f".to_string() },
-            confirm: KeyDef { key: "Enter".to_string() },
-            cancel: KeyDef { key: "ctrl+g".to_string() },
-            delete: KeyDef { key: "ctrl+d".to_string() },
-            refresh: KeyDef { key: "ctrl+l".to_string() },
-            filter: KeyDef { key: "ctrl+s".to_string() },
-            edit: KeyDef { key: "ctrl+e".to_string() },
-            quit: KeyDef { key: "ctrl+c".to_string() },
-            copy: KeyDef { key: "ctrl+w".to_string() },
-            help: KeyDef { key: "?".to_string() },
-            palette: KeyDef { key: "ctrl+x".to_string() },
-            tab_keys: KeyDef { key: "alt+1".to_string() },
-            tab_repl: KeyDef { key: "alt+2".to_string() },
-            tab_info: KeyDef { key: "alt+3".to_string() },
-            tab_pubsub: KeyDef { key: "alt+4".to_string() },
+            nav_up: KeyDef {
+                key: "ctrl+p".to_string(),
+            },
+            nav_down: KeyDef {
+                key: "ctrl+n".to_string(),
+            },
+            nav_left: KeyDef {
+                key: "ctrl+b".to_string(),
+            },
+            nav_right: KeyDef {
+                key: "ctrl+f".to_string(),
+            },
+            confirm: KeyDef {
+                key: "Enter".to_string(),
+            },
+            cancel: KeyDef {
+                key: "ctrl+g".to_string(),
+            },
+            delete: KeyDef {
+                key: "ctrl+d".to_string(),
+            },
+            refresh: KeyDef {
+                key: "ctrl+l".to_string(),
+            },
+            filter: KeyDef {
+                key: "ctrl+s".to_string(),
+            },
+            edit: KeyDef {
+                key: "ctrl+e".to_string(),
+            },
+            quit: KeyDef {
+                key: "ctrl+c".to_string(),
+            },
+            copy: KeyDef {
+                key: "ctrl+w".to_string(),
+            },
+            help: KeyDef {
+                key: "?".to_string(),
+            },
+            palette: KeyDef {
+                key: "ctrl+x".to_string(),
+            },
+            tab_keys: KeyDef {
+                key: "alt+1".to_string(),
+            },
+            tab_repl: KeyDef {
+                key: "alt+2".to_string(),
+            },
+            tab_info: KeyDef {
+                key: "alt+3".to_string(),
+            },
+            tab_pubsub: KeyDef {
+                key: "alt+4".to_string(),
+            },
         }
     }
 
@@ -148,21 +220,93 @@ fn parse_keydef(key: &str) -> (KeyCode, KeyModifiers) {
     (code, modifiers)
 }
 
-fn default_nav_up() -> KeyDef { KeyDef { key: "k".to_string() } }
-fn default_nav_down() -> KeyDef { KeyDef { key: "j".to_string() } }
-fn default_nav_left() -> KeyDef { KeyDef { key: "h".to_string() } }
-fn default_nav_right() -> KeyDef { KeyDef { key: "l".to_string() } }
-fn default_confirm() -> KeyDef { KeyDef { key: "Enter".to_string() } }
-fn default_cancel() -> KeyDef { KeyDef { key: "Esc".to_string() } }
-fn default_delete() -> KeyDef { KeyDef { key: "d".to_string() } }
-fn default_refresh() -> KeyDef { KeyDef { key: "r".to_string() } }
-fn default_filter() -> KeyDef { KeyDef { key: "/".to_string() } }
-fn default_edit() -> KeyDef { KeyDef { key: "e".to_string() } }
-fn default_quit() -> KeyDef { KeyDef { key: "q".to_string() } }
-fn default_copy() -> KeyDef { KeyDef { key: "y".to_string() } }
-fn default_help() -> KeyDef { KeyDef { key: "?".to_string() } }
-fn default_palette() -> KeyDef { KeyDef { key: "ctrl+p".to_string() } }
-fn default_tab_keys() -> KeyDef { KeyDef { key: "1".to_string() } }
-fn default_tab_repl() -> KeyDef { KeyDef { key: "2".to_string() } }
-fn default_tab_info() -> KeyDef { KeyDef { key: "3".to_string() } }
-fn default_tab_pubsub() -> KeyDef { KeyDef { key: "4".to_string() } }
+fn default_nav_up() -> KeyDef {
+    KeyDef {
+        key: "k".to_string(),
+    }
+}
+fn default_nav_down() -> KeyDef {
+    KeyDef {
+        key: "j".to_string(),
+    }
+}
+fn default_nav_left() -> KeyDef {
+    KeyDef {
+        key: "h".to_string(),
+    }
+}
+fn default_nav_right() -> KeyDef {
+    KeyDef {
+        key: "l".to_string(),
+    }
+}
+fn default_confirm() -> KeyDef {
+    KeyDef {
+        key: "Enter".to_string(),
+    }
+}
+fn default_cancel() -> KeyDef {
+    KeyDef {
+        key: "Esc".to_string(),
+    }
+}
+fn default_delete() -> KeyDef {
+    KeyDef {
+        key: "d".to_string(),
+    }
+}
+fn default_refresh() -> KeyDef {
+    KeyDef {
+        key: "r".to_string(),
+    }
+}
+fn default_filter() -> KeyDef {
+    KeyDef {
+        key: "/".to_string(),
+    }
+}
+fn default_edit() -> KeyDef {
+    KeyDef {
+        key: "e".to_string(),
+    }
+}
+fn default_quit() -> KeyDef {
+    KeyDef {
+        key: "q".to_string(),
+    }
+}
+fn default_copy() -> KeyDef {
+    KeyDef {
+        key: "y".to_string(),
+    }
+}
+fn default_help() -> KeyDef {
+    KeyDef {
+        key: "?".to_string(),
+    }
+}
+fn default_palette() -> KeyDef {
+    KeyDef {
+        key: "ctrl+p".to_string(),
+    }
+}
+fn default_tab_keys() -> KeyDef {
+    KeyDef {
+        key: "1".to_string(),
+    }
+}
+fn default_tab_repl() -> KeyDef {
+    KeyDef {
+        key: "2".to_string(),
+    }
+}
+fn default_tab_info() -> KeyDef {
+    KeyDef {
+        key: "3".to_string(),
+    }
+}
+fn default_tab_pubsub() -> KeyDef {
+    KeyDef {
+        key: "4".to_string(),
+    }
+}

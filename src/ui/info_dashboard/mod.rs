@@ -1,7 +1,7 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     widgets::{Block, Borders, Paragraph, Wrap},
-    Frame,
 };
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -22,11 +22,15 @@ impl SystemStats {
     pub fn from_info_sections(info: &str) -> Self {
         Self {
             redis_version: get_val(info, "Server", "redis_version"),
-            uptime_in_seconds: get_val(info, "Server", "uptime_in_seconds").and_then(|s| s.parse().ok()),
-            connected_clients: get_val(info, "Clients", "connected_clients").and_then(|s| s.parse().ok()),
+            uptime_in_seconds: get_val(info, "Server", "uptime_in_seconds")
+                .and_then(|s| s.parse().ok()),
+            connected_clients: get_val(info, "Clients", "connected_clients")
+                .and_then(|s| s.parse().ok()),
             used_memory_human: get_val(info, "Memory", "used_memory_human"),
-            total_commands_processed: get_val(info, "Stats", "total_commands_processed").and_then(|s| s.parse().ok()),
-            instantaneous_ops_per_sec: get_val(info, "Stats", "instantaneous_ops_per_sec").and_then(|s| s.parse().ok()),
+            total_commands_processed: get_val(info, "Stats", "total_commands_processed")
+                .and_then(|s| s.parse().ok()),
+            instantaneous_ops_per_sec: get_val(info, "Stats", "instantaneous_ops_per_sec")
+                .and_then(|s| s.parse().ok()),
             keyspace_hits: get_val(info, "Stats", "keyspace_hits").and_then(|s| s.parse().ok()),
             keyspace_misses: get_val(info, "Stats", "keyspace_misses").and_then(|s| s.parse().ok()),
             evicted_keys: get_val(info, "Stats", "evicted_keys").and_then(|s| s.parse().ok()),
@@ -72,15 +76,31 @@ impl InfoDashboard {
         let stats_text = format!(
             "Redis: {}\nUptime: {}s\nClients: {}\nMemory: {}\nCmds: {}\nOps/sec: {}\nHits: {}\nMisses: {}\nEvicted: {}\nExpired: {}",
             self.stats.redis_version.as_deref().unwrap_or("N/A"),
-            self.stats.uptime_in_seconds.map_or("N/A".to_string(), |v| v.to_string()),
-            self.stats.connected_clients.map_or("N/A".to_string(), |v| v.to_string()),
+            self.stats
+                .uptime_in_seconds
+                .map_or("N/A".to_string(), |v| v.to_string()),
+            self.stats
+                .connected_clients
+                .map_or("N/A".to_string(), |v| v.to_string()),
             self.stats.used_memory_human.as_deref().unwrap_or("N/A"),
-            self.stats.total_commands_processed.map_or("N/A".to_string(), |v| v.to_string()),
-            self.stats.instantaneous_ops_per_sec.map_or("N/A".to_string(), |v| v.to_string()),
-            self.stats.keyspace_hits.map_or("N/A".to_string(), |v| v.to_string()),
-            self.stats.keyspace_misses.map_or("N/A".to_string(), |v| v.to_string()),
-            self.stats.evicted_keys.map_or("N/A".to_string(), |v| v.to_string()),
-            self.stats.expired_keys.map_or("N/A".to_string(), |v| v.to_string()),
+            self.stats
+                .total_commands_processed
+                .map_or("N/A".to_string(), |v| v.to_string()),
+            self.stats
+                .instantaneous_ops_per_sec
+                .map_or("N/A".to_string(), |v| v.to_string()),
+            self.stats
+                .keyspace_hits
+                .map_or("N/A".to_string(), |v| v.to_string()),
+            self.stats
+                .keyspace_misses
+                .map_or("N/A".to_string(), |v| v.to_string()),
+            self.stats
+                .evicted_keys
+                .map_or("N/A".to_string(), |v| v.to_string()),
+            self.stats
+                .expired_keys
+                .map_or("N/A".to_string(), |v| v.to_string()),
         );
         let stats_para = Paragraph::new(stats_text)
             .block(Block::default().borders(Borders::ALL).title("Server Stats"))

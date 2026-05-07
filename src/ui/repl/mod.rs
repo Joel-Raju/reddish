@@ -47,7 +47,7 @@ pub fn tokenize_shell_like(input: &str) -> Vec<String> {
 
 pub fn parse_pipeline(input: &str) -> Vec<Vec<String>> {
     input
-        .split('|')
+        .split(";;")
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(tokenize_shell_like)
@@ -98,7 +98,7 @@ mod tests {
 
     #[test]
     fn test_parse_pipeline_stages() {
-        let stages = parse_pipeline("GET foo | STRLEN");
+        let stages = parse_pipeline("GET foo ;; STRLEN");
         assert_eq!(stages, vec![vec!["GET", "foo"], vec!["STRLEN"]]);
     }
 
@@ -138,6 +138,7 @@ pub struct ReplWidget {
     pub cursor: usize,
     pub scroll: u16,
     pub max_history: usize,
+    pub raw_mode: bool,
 }
 
 impl Default for ReplWidget {
@@ -160,6 +161,7 @@ impl ReplWidget {
             cursor: 0,
             scroll: 0,
             max_history: 1000,
+            raw_mode: false,
         }
     }
 
@@ -171,6 +173,12 @@ impl ReplWidget {
                     self.input.clear();
                     self.cursor = 0;
                     self.command_history.reset_cursor();
+                }
+                KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'l' => {
+                    self.history.clear();
+                }
+                KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'r' => {
+                    self.raw_mode = !self.raw_mode;
                 }
                 KeyCode::Char(c) => {
                     self.input.insert(self.cursor, c);

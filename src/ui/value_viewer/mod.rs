@@ -6,72 +6,32 @@ use ratatui::{
     Frame,
 };
 
-use crate::events::Event;
 use crate::redis::client::RedisType;
-use crate::ui::value_viewer::formatters::{detect_format, FormatHint, preview};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ValueMode {
-    Viewing,
-    Editing,
-    Readonly,
-}
+use formatters::{detect_format, stringify, FormatHint};
 
 pub struct ValueViewer {
     pub key: String,
     pub redis_type: RedisType,
-    pub raw: Vec<u8>,
-    pub mode: ValueMode,
-    pub formatted: String,
-    pub dirty: bool,
-    pub hint: FormatHint,
-    pub scroll: u16,
+    pub data: Vec<u8>,
+    pub format_hint: FormatHint,
 }
 
 impl ValueViewer {
-    pub fn new(key: impl Into<String>, redis_type: RedisType, raw: Vec<u8>) -> Self {
-        let hint = detect_format(&raw);
-        let formatted = formatters::stringify(&raw, hint.clone());
+    pub fn new(key: &str, redis_type: RedisType, data: Vec<u8>) -> Self {
+        let format_hint = detect_format(&data);
         Self {
-            key: key.into(),
+            key: key.to_string(),
             redis_type,
-            raw,
-            mode: ValueMode::Viewing,
-            formatted,
-            dirty: false,
-            hint,
-            scroll: 0,
-        }
-    }
-
-    pub fn handle_event(&mut self, event: &Event) {
-        use crossterm::event::KeyCode;
-        if let Event::Key(key) = event {
-            match key.code {
-                KeyCode::Up if self.scroll > 0 => self.scroll -= 1,
-                KeyCode::Down => self.scroll += 1,
-                _ => {}
-            }
+            data,
+            format_hint,
         }
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!("Value ({:?}) [{}]", self.redis_type, self.key));
-        let text = if self.mode == ValueMode::Editing {
-            format!("[EDITING]\n{}", self.formatted)
-        } else {
-            self.formatted.clone()
-        };
+        let text = stringify(&self.data, self.format_hint.clone());
         let paragraph = Paragraph::new(text)
-            .block(block)
-            .wrap(Wrap { trim: false })
-            .scroll((self.scroll, 0));
+            .block(Block::default().borders(Borders::ALL).title(self.key.clone()))
+            .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, area);
-    }
-
-    pub fn preview(&self, max_chars: usize) -> String {
-        preview(&self.raw, max_chars, self.hint.clone())
     }
 }

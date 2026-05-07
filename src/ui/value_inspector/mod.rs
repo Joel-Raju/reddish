@@ -1,16 +1,74 @@
 use ratatui::{
     layout::Rect,
+    style::{Color, Style},
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
 
+use crate::events::Event;
 use crate::redis::types::RedisValue;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum StringViewMode {
+    Raw,
+    Json,
+    Base64,
+    Hex,
+}
+
+impl StringViewMode {
+    pub fn next(&self) -> Self {
+        match self {
+            StringViewMode::Raw => StringViewMode::Json,
+            StringViewMode::Json => StringViewMode::Base64,
+            StringViewMode::Base64 => StringViewMode::Hex,
+            StringViewMode::Hex => StringViewMode::Raw,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            StringViewMode::Raw => "Raw",
+            StringViewMode::Json => "JSON",
+            StringViewMode::Base64 => "Base64",
+            StringViewMode::Hex => "Hex",
+        }
+    }
+
+    pub fn render(&self, value: &str) -> String {
+        match self {
+            StringViewMode::Raw => value.to_string(),
+            StringViewMode::Json => {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(value) {
+                    serde_json::to_string_pretty(&json).unwrap_or_else(|_| value.to_string())
+                } else {
+                    value.to_string()
+                }
+            }
+            StringViewMode::Base64 => {
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD.encode(value.as_bytes())
+            }
+            StringViewMode::Hex => {
+                value.as_bytes().iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InspectorAction {
+    WriteString { key: String, value: String },
+    SetTtl { key: String, seconds: i64 },
+}
 
 pub struct ValueInspector {
     pub key: Option<String>,
     pub value: Option<RedisValue>,
     pub loading: bool,
     pub error: Option<String>,
+    pub edit_mode: bool,
+    pub string_view: StringViewMode,
 }
 
 impl Default for ValueInspector {
@@ -26,6 +84,8 @@ impl ValueInspector {
             value: None,
             loading: false,
             error: None,
+            edit_mode: false,
+            string_view: StringViewMode::Raw,
         }
     }
 
@@ -50,6 +110,19 @@ impl ValueInspector {
         self.error = None;
     }
 
+    pub fn handle_event(&mut self, event: &Event) -> Option<InspectorAction> {
+        use crossterm::event::KeyCode;
+        if let Event::Key(key) = event {
+            match key.code {
+                KeyCode::Tab => {
+                    self.string_view = self.string_view.next();
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
     pub fn render(&self, frame: &mut Frame, area: Rect) {
         let title = self
             .key
@@ -62,7 +135,7 @@ impl ValueInspector {
         } else if let Some(err) = &self.error {
             format!("Error: {err}")
         } else if let Some(value) = &self.value {
-            render_value_preview(value)
+            render_value_preview(value, &self.string_view)
         } else {
             "Select a key and press Enter to inspect its value".to_string()
         };
@@ -74,9 +147,11 @@ impl ValueInspector {
     }
 }
 
-fn render_value_preview(value: &RedisValue) -> String {
+fn render_value_preview(value: &RedisValue, view_mode: &StringViewMode) -> String {
     match value {
-        RedisValue::String(s) => s.clone(),
+        RedisValue::String(s) => {
+            format!("[{}]\n{}", view_mode.label(), view_mode.render(s))
+        }
         RedisValue::List(items) => {
             let preview = items.iter().take(10).cloned().collect::<Vec<_>>().join("\n");
             format!("List (len={}):\n{}", items.len(), preview)

@@ -1,69 +1,89 @@
-use base64::{engine::general_purpose::STANDARD as BASE64_ENGINE, Engine};
-use serde_json::Value;
+use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FormatHint {
     Json,
-    Base64,
-    Number,
-    RawString,
+    String,
     Blob,
+    Int,
+    Float,
 }
 
-pub fn detect_format(raw: &[u8]) -> FormatHint {
-    if raw.len() > 64 && is_base64ish(raw) {
-        return FormatHint::Base64;
+impl fmt::Display for FormatHint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FormatHint::Json => write!(f, "json"),
+            FormatHint::String => write!(f, "string"),
+            FormatHint::Blob => write!(f, "blob"),
+            FormatHint::Int => write!(f, "int"),
+            FormatHint::Float => write!(f, "float"),
+        }
     }
-    if is_valid_json(raw) {
+}
+
+/// Detect the format of raw bytes.
+pub fn detect_format(data: &[u8]) -> FormatHint {
+    if data.is_empty() {
+        return FormatHint::String;
+    }
+
+    // Try JSON first
+    if serde_json::from_slice::<serde_json::Value>(data).is_ok() {
         return FormatHint::Json;
     }
-    if raw.iter().all(|b| b.is_ascii_digit() || *b == b'.' || *b == b'-') && !raw.is_empty() {
-        return FormatHint::Number;
+
+    // Check if all bytes are printable ASCII
+    if data.iter().all(|&b| b.is_ascii_graphic() || b == b' ' || b == b'\n' || b == b'\r' || b == b'\t') {
+        // Check if it's a valid integer
+        if let Ok(s) = std::str::from_utf8(data) {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_digit() || c == '-') {
+                return FormatHint::Int;
+            }
+            // Check if it's a valid float
+            if !trimmed.is_empty() {
+                let mut chars = trimmed.chars();
+                if chars.all(|c| c.is_ascii_digit() || c == '.' || c == '-' || c == 'e' || c == 'E' || c == '+') {
+                    if trimmed.contains('.') || trimmed.contains('e') || trimmed.contains('E') {
+                        return FormatHint::Float;
+                    }
+                }
+            }
+            return FormatHint::String;
+        }
     }
-    if raw.iter().any(|b| b.is_ascii_control() && *b != b'\n' && *b != b'\r' && *b != b'\t') {
-        return FormatHint::Blob;
-    }
-    FormatHint::RawString
+
+    FormatHint::Blob
 }
 
-fn is_base64ish(raw: &[u8]) -> bool {
-    raw.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'+' || *b == b'/' || *b == b'=')
-}
-
-fn is_valid_json(raw: &[u8]) -> bool {
-    std::str::from_utf8(raw)
-        .ok()
-        .and_then(|s| serde_json::from_str::<Value>(s).ok())
-        .is_some()
-}
-
-fn b64enc(data: &[u8]) -> String {
-    BASE64_ENGINE.encode(data)
-}
-
-pub fn stringify(raw: &[u8], hint: FormatHint) -> String {
+/// Convert raw data to a string representation based on the format hint.
+pub fn stringify(data: &[u8], hint: FormatHint) -> String {
     match hint {
-        FormatHint::Json => pretty_print_json(raw),
-        FormatHint::Blob => b64enc(raw),
-        _ => std::str::from_utf8(raw)
-            .map(String::from)
-            .unwrap_or_else(|_| b64enc(raw)),
+        FormatHint::Json => {
+            String::from_utf8_lossy(data).to_string()
+        }
+        FormatHint::String | FormatHint::Int | FormatHint::Float => {
+            String::from_utf8_lossy(data).to_string()
+        }
+        FormatHint::Blob => {
+            // For binary data, show hex representation
+            data.iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
     }
 }
 
-pub fn preview(raw: &[u8], max_chars: usize, hint: FormatHint) -> String {
-    let s = stringify(raw, hint);
-    if s.chars().count() <= max_chars {
-        s
+/// Create a preview string, truncated to max_len characters.
+pub fn preview(data: &[u8], max_len: usize, hint: FormatHint) -> String {
+    let s = stringify(data, hint);
+        if s.len() > max_len {
+            let visible_len = max_len.saturating_sub(3);
+            let mut preview = s.chars().take(visible_len).collect::<String>();
+            preview.push_str("...");
+            preview
     } else {
-        s.chars().take(max_chars.saturating_sub(3)).collect::<String>() + "..."
+        s
     }
-}
-
-pub fn pretty_print_json(raw: &[u8]) -> String {
-    std::str::from_utf8(raw)
-        .ok()
-        .and_then(|s| serde_json::from_str::<Value>(s).ok())
-        .and_then(|v| serde_json::to_string_pretty(&v).ok())
-        .unwrap_or_else(|| String::from_utf8_lossy(raw).to_string())
 }

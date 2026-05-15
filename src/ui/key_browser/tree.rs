@@ -116,13 +116,30 @@ impl NamespaceTree {
             }
         }
         for key in &node.keys {
+            let type_badge = key
+                .redis_type
+                .as_ref()
+                .map(|t| format!("[{}] ", t.badge_char()))
+                .unwrap_or_default();
+            let ttl_badge = key
+                .ttl
+                .as_ref()
+                .map(|t| {
+                    let s = t.display();
+                    if s.is_empty() { String::new() } else { format!(" {}", s) }
+                })
+                .unwrap_or_default();
             rows.push(TreeRow {
                 depth,
-                label: key
-                    .full_name
-                    .rsplit_once(self.separator)
-                    .map(|(_, s)| s.to_string())
-                    .unwrap_or_else(|| key.full_name.clone()),
+                label: format!(
+                    "{}{}{}",
+                    type_badge,
+                    key.full_name
+                        .rsplit_once(self.separator)
+                        .map(|(_, s)| s.to_string())
+                        .unwrap_or_else(|| key.full_name.clone()),
+                    ttl_badge
+                ),
                 is_namespace: false,
                 key: Some(key.clone()),
                 path: path.to_vec(),

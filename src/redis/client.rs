@@ -816,11 +816,48 @@ impl From<&str> for RedisType {
     }
 }
 
+impl RedisType {
+    pub fn badge_char(&self) -> &'static str {
+        match self {
+            RedisType::String => "S",
+            RedisType::List => "L",
+            RedisType::Hash => "H",
+            RedisType::Set => "St",
+            RedisType::ZSet => "Z",
+            RedisType::Stream => "X",
+            RedisType::Unknown => "?",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ttl {
     NoExpiry,
     Expires(Duration),
     KeyNotFound,
+}
+
+impl Ttl {
+    pub fn display(&self) -> String {
+        match self {
+            Ttl::NoExpiry => "∞".to_string(),
+            Ttl::Expires(d) => {
+                let secs = d.as_secs();
+                if secs == 0 {
+                    "exp".to_string()
+                } else if secs >= 86400 {
+                    format!("{}d{}h", secs / 86400, (secs % 86400) / 3600)
+                } else if secs >= 3600 {
+                    format!("{}h{}m", secs / 3600, (secs % 3600) / 60)
+                } else if secs >= 60 {
+                    format!("{}m{}s", secs / 60, secs % 60)
+                } else {
+                    format!("{}s", secs)
+                }
+            }
+            Ttl::KeyNotFound => String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

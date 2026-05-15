@@ -5,7 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::backend::TestBackend;
 use reddish_tui::config::connections::{ConnectionProfile, ConnectionStore, PasswordRef};
 use reddish_tui::events::Event;
-use reddish_tui::redis::client::{RedisClientHandle, Ttl};
+use reddish_tui::redis::client::{RedisClientHandle, RedisType, Ttl};
 use reddish_tui::redis::scanner::Scanner;
 use reddish_tui::ui::key_browser::tree::{KeyEntry, NamespaceTree};
 use reddish_tui::ui::key_browser::{BrowserAction, KeyBrowser};
@@ -231,6 +231,43 @@ fn test_namespace_tree_remove() {
             .iter()
             .any(|r| r.label == "c" || r.label.contains("a:c"))
     );
+}
+
+#[test]
+fn test_redis_type_badge_chars() {
+    assert_eq!(RedisType::String.badge_char(), "S");
+    assert_eq!(RedisType::List.badge_char(), "L");
+    assert_eq!(RedisType::Hash.badge_char(), "H");
+    assert_eq!(RedisType::Set.badge_char(), "St");
+    assert_eq!(RedisType::ZSet.badge_char(), "Z");
+    assert_eq!(RedisType::Stream.badge_char(), "X");
+    assert_eq!(RedisType::Unknown.badge_char(), "?");
+}
+
+#[test]
+fn test_ttl_display() {
+    use std::time::Duration;
+    assert_eq!(Ttl::NoExpiry.display(), "∞");
+    assert_eq!(Ttl::KeyNotFound.display(), "");
+    assert_eq!(Ttl::Expires(Duration::from_secs(0)).display(), "exp");
+    assert_eq!(Ttl::Expires(Duration::from_secs(5)).display(), "5s");
+    assert_eq!(Ttl::Expires(Duration::from_secs(65)).display(), "1m5s");
+    assert_eq!(Ttl::Expires(Duration::from_secs(3661)).display(), "1h1m");
+    assert_eq!(Ttl::Expires(Duration::from_secs(90061)).display(), "1d1h");
+}
+
+#[test]
+fn test_tree_row_has_badges_when_set() {
+    let mut tree = NamespaceTree::new(':', 500_000);
+    tree.insert(KeyEntry {
+        full_name: "testkey".to_string(),
+        redis_type: Some(RedisType::String),
+        ttl: Some(Ttl::Expires(Duration::from_secs(120))),
+    });
+    let rows = tree.visible_rows();
+    // Key is at root, no .rsplit_once match, so label uses full name directly
+    assert!(rows[0].label.contains("[S]"), "expected type badge [S] in label, got: {}", rows[0].label);
+    assert!(rows[0].label.contains("2m0s"), "expected TTL badge in label, got: {}", rows[0].label);
 }
 
 #[test]

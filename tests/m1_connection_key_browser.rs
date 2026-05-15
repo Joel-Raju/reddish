@@ -7,8 +7,8 @@ use reddish_tui::config::connections::{ConnectionProfile, ConnectionStore, Passw
 use reddish_tui::events::Event;
 use reddish_tui::redis::client::{RedisClientHandle, Ttl};
 use reddish_tui::redis::scanner::Scanner;
-use reddish_tui::ui::key_browser::KeyBrowser;
 use reddish_tui::ui::key_browser::tree::{KeyEntry, NamespaceTree};
+use reddish_tui::ui::key_browser::{BrowserAction, KeyBrowser};
 use reddish_tui::ui::widgets::confirm::ConfirmDialog;
 
 #[test]
@@ -231,6 +231,48 @@ fn test_namespace_tree_remove() {
             .iter()
             .any(|r| r.label == "c" || r.label.contains("a:c"))
     );
+}
+
+#[test]
+fn test_key_browser_delete_returns_action() {
+    use reddish_tui::events::Event;
+
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.apply_scan_batch(vec![
+        KeyEntry {
+            full_name: "testkey".to_string(),
+            redis_type: None,
+            ttl: None,
+        },
+    ]);
+
+    let action = browser
+        .handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+    assert!(matches!(action, Some(BrowserAction::DeleteKey(ref name)) if name == "testkey"));
+}
+
+#[test]
+fn test_key_browser_delete_on_empty_cursor_does_nothing() {
+    use reddish_tui::events::Event;
+
+    let mut browser = KeyBrowser::new(':', 500_000);
+    let action = browser
+        .handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+    assert!(action.is_none(), "Delete on empty tree should return None");
+}
+
+#[test]
+fn test_app_delete_pending_state() {
+    use reddish_tui::app::{App, AppMode};
+
+    let mut app = App::new(reddish_tui::config::Config::default());
+    assert_eq!(app.mode(), &AppMode::Normal);
+    assert!(app.pending_delete_key.is_none());
+
+    app.pending_delete_key = Some("testkey".to_string());
+    app.mode_stack.push(AppMode::Confirm);
+    assert_eq!(app.mode(), &AppMode::Confirm);
+    assert_eq!(app.pending_delete_key.as_deref(), Some("testkey"));
 }
 
 #[test]

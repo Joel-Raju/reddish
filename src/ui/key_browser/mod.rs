@@ -96,6 +96,12 @@ impl KeyBrowser {
                     self.tree.collapse(&path);
                 }
             } else if keymap.matches("delete", key) || matches!(key.code, KeyCode::Char('D')) {
+                    let rows = self.tree.visible_rows();
+                    if let Some(row) = rows.get(self.cursor)
+                        && let Some(ref key) = row.key
+                    {
+                        return Some(BrowserAction::DeleteKey(key.full_name.clone()));
+                    }
             } else if keymap.matches("refresh", key) {
                 return Some(BrowserAction::RefreshRequested);
             }

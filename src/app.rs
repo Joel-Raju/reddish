@@ -32,6 +32,7 @@ use crate::ui::search::{GlobalSearch, SearchAction};
 use crate::ui::status_bar::{ConnectionState, StatusBar};
 use crate::ui::tab_bar;
 use crate::ui::value_inspector::ValueInspector;
+use crate::ui::widgets::confirm::ConfirmDialog;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppMode {
@@ -130,6 +131,7 @@ pub struct App {
     pub pubsub_rx: Option<mpsc::UnboundedReceiver<PubSubMessage>>,
     tick_count: u64,
     reconnect_attempt: u32,
+    pub pending_delete_key: Option<String>,
 }
 
 impl App {
@@ -161,6 +163,7 @@ impl App {
             pubsub_rx: None,
             tick_count: 0,
             reconnect_attempt: 0,
+            pending_delete_key: None,
         }
     }
 
@@ -336,6 +339,34 @@ impl App {
     }
 
     async fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) {
+        if self.mode() == &AppMode::Confirm {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Enter => {
+                    let key_name = self.pending_delete_key.take();
+                    self.mode_stack.pop();
+                    if let Some(name) = key_name {
+                        if self.key_browser.tree.remove(&name) {
+                            self.status_bar.key_count = self.key_browser.tree.total_keys();
+                        }
+                        if let Some(client) = &self.client {
+                            if let Err(err) = client.delete(&name).await {
+                                self.error_message =
+                                    Some(format!("Failed to delete key '{name}': {err}"));
+                            }
+                        } else {
+                            self.error_message = Some("Not connected".to_string());
+                        }
+                    }
+                }
+                KeyCode::Char('n') | KeyCode::Esc => {
+                    self.pending_delete_key = None;
+                    self.mode_stack.pop();
+                }
+                _ => {}
+            }
+            return;
+        }
+
         if self.mode() == &AppMode::Search {
             if let Some(action) = self.search.handle_event(&Event::Key(key)) {
                 match action {
@@ -743,13 +774,11 @@ impl App {
             }
             BrowserAction::DeleteKey(name) => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: delete blocked".to_string());
+                    self.error_message = Some("Read-only mode: delete blocked (press Esc)".to_string());
                     return;
                 }
-
-                if self.key_browser.tree.remove(&name) {
-                    self.status_bar.key_count = self.key_browser.tree.total_keys();
-                }
+                self.pending_delete_key = Some(name.clone());
+                self.mode_stack.push(AppMode::Confirm);
             }
             BrowserAction::RefreshRequested => {
                 self.error_message =
@@ -857,6 +886,16 @@ impl App {
         }
 
         self.status_bar.render(frame, main_layout[2]);
+
+        if self.mode() == &AppMode::Confirm {
+            let key_name = self
+                .pending_delete_key
+                .as_deref()
+                .unwrap_or("unknown");
+            let dialog = ConfirmDialog::new(format!("Delete key '{}'?", key_name));
+            let area = centered_rect(60, 20, frame.area());
+            dialog.render(frame, area);
+        }
 
         if self.mode() == &AppMode::Help {
             let help_text = "Keyboard Shortcuts:\n\n1-4: Switch tabs\nq: Quit\n?: Help\nEnter: Select key\nj/k or arrows: Navigate\nCtrl+P: Command palette\nD: Delete";

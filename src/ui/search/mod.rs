@@ -92,8 +92,22 @@ impl GlobalSearch {
     }
 
     pub fn handle_event(&mut self, event: &Event) -> Option<SearchAction> {
+        self.handle_event_with_keymap(event, &crate::config::keybindings::Keymap::default())
+    }
+
+    pub fn handle_event_with_keymap(&mut self, event: &Event, keymap: &crate::config::keybindings::Keymap) -> Option<SearchAction> {
         use crossterm::event::KeyCode;
         if let Event::Key(key) = event {
+            if keymap.matches("search_close", key) {
+                return Some(SearchAction::Close);
+            }
+            if keymap.matches("search_execute", key) {
+                if let Some(selected) = self.filtered.get(self.cursor) {
+                    return Some(SearchAction::Execute(selected.clone()));
+                } else {
+                    return Some(SearchAction::Execute(self.query.clone()));
+                }
+            }
             match key.code {
                 KeyCode::Char(c) => {
                     self.query.push(c);
@@ -117,14 +131,6 @@ impl GlobalSearch {
                     }
                     None
                 }
-                KeyCode::Enter => {
-                    if let Some(selected) = self.filtered.get(self.cursor) {
-                        Some(SearchAction::Execute(selected.clone()))
-                    } else {
-                        Some(SearchAction::Execute(self.query.clone()))
-                    }
-                }
-                KeyCode::Esc => Some(SearchAction::Close),
                 _ => None,
             }
         } else {

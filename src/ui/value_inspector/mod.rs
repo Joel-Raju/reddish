@@ -218,6 +218,10 @@ impl ValueInspector {
     }
 
     pub fn handle_event(&mut self, event: &Event) -> Option<InspectorAction> {
+        self.handle_event_with_keymap(event, &crate::config::keybindings::Keymap::default())
+    }
+
+    pub fn handle_event_with_keymap(&mut self, event: &Event, keymap: &crate::config::keybindings::Keymap) -> Option<InspectorAction> {
         use crossterm::event::KeyCode;
         let Event::Key(key) = event else {
             return None;
@@ -340,26 +344,23 @@ impl ValueInspector {
             return None;
         }
 
-        match key.code {
-            KeyCode::Tab => {
-                self.string_view = self.string_view.next();
-            }
-            KeyCode::Char('e') | KeyCode::Char('E') => {
-                if let Some(RedisValue::String(ref s)) = self.value {
-                    self.edit_mode = true;
-                    self.text_editor = Some(TextAreaEditor::new(s.clone()));
-                }
-            }
-            KeyCode::Char('t') => {
-                self.list_prompt = Some(InputWidget::new("TTL in seconds (blank=persist)"));
-                self.prompt_mode = Some(PromptMode::SetTtlSeconds);
-            }
-            KeyCode::Char('y') => {
-                if let Some(RedisValue::String(ref s)) = self.value {
-                    return Some(InspectorAction::CopyValue(s.clone()));
-                }
-            }
-            _ => {}
+        if key.code == KeyCode::Tab {
+            self.string_view = self.string_view.next();
+        }
+        if keymap.matches("edit", key)
+            && let Some(RedisValue::String(ref s)) = self.value
+        {
+            self.edit_mode = true;
+            self.text_editor = Some(TextAreaEditor::new(s.clone()));
+        }
+        if keymap.matches("set_ttl", key) {
+            self.list_prompt = Some(InputWidget::new("TTL in seconds (blank=persist)"));
+            self.prompt_mode = Some(PromptMode::SetTtlSeconds);
+        }
+        if keymap.matches("copy", key)
+            && let Some(RedisValue::String(ref s)) = self.value
+        {
+            return Some(InspectorAction::CopyValue(s.clone()));
         }
 
         // List-specific key handling
@@ -375,37 +376,33 @@ impl ValueInspector {
                         self.list_cursor += 1;
                     }
                 }
-                KeyCode::Char('a') => {
-                    self.list_prompt = Some(InputWidget::new("Value to RPUSH"));
-                    self.prompt_mode = Some(PromptMode::Rpush);
-                }
-                KeyCode::Char('p') => {
-                    self.list_prompt = Some(InputWidget::new("Value to LPUSH"));
-                    self.prompt_mode = Some(PromptMode::Lpush);
-                }
-                KeyCode::Char('D') => {
-                    if let Some(val) = items.get(self.list_cursor) {
-                        return Some(InspectorAction::ListRemove {
-                            key: self.key.clone().unwrap_or_default(),
-                            value: val.clone(),
-                        });
-                    }
-                }
-                KeyCode::Char('e') | KeyCode::Char('E') => {
-                    if let Some(val) = items.get(self.list_cursor) {
-                        let mut prompt = InputWidget::new(format!("Edit [{}]", self.list_cursor));
-                        prompt.value = val.clone();
-                        prompt.cursor = val.len();
-                        self.list_prompt = Some(prompt);
-                        self.prompt_mode = Some(PromptMode::Lset(self.list_cursor));
-                    }
-                }
-                KeyCode::Char('y') => {
-                    if let Some(val) = items.get(self.list_cursor) {
-                        return Some(InspectorAction::CopyValue(val.clone()));
-                    }
-                }
                 _ => {}
+            }
+            if keymap.matches("inspector_list_push", key) {
+                self.list_prompt = Some(InputWidget::new("Value to RPUSH"));
+                self.prompt_mode = Some(PromptMode::Rpush);
+            } else if keymap.matches("inspector_list_prepend", key) {
+                self.list_prompt = Some(InputWidget::new("Value to LPUSH"));
+                self.prompt_mode = Some(PromptMode::Lpush);
+            } else if keymap.matches("delete", key) {
+                if let Some(val) = items.get(self.list_cursor) {
+                    return Some(InspectorAction::ListRemove {
+                        key: self.key.clone().unwrap_or_default(),
+                        value: val.clone(),
+                    });
+                }
+            } else if keymap.matches("edit", key) {
+                if let Some(val) = items.get(self.list_cursor) {
+                    let mut prompt = InputWidget::new(format!("Edit [{}]", self.list_cursor));
+                    prompt.value = val.clone();
+                    prompt.cursor = val.len();
+                    self.list_prompt = Some(prompt);
+                    self.prompt_mode = Some(PromptMode::Lset(self.list_cursor));
+                }
+            } else if keymap.matches("copy", key)
+                && let Some(val) = items.get(self.list_cursor)
+            {
+                return Some(InspectorAction::CopyValue(val.clone()));
             }
         }
 
@@ -423,33 +420,30 @@ impl ValueInspector {
                         self.hash_cursor += 1;
                     }
                 }
-                KeyCode::Char('a') => {
-                    self.list_prompt = Some(InputWidget::new("Field name"));
-                    self.prompt_mode = Some(PromptMode::HashAddField);
-                }
-                KeyCode::Char('D') => {
-                    if let Some((field, _)) = fields.get(self.hash_cursor) {
-                        return Some(InspectorAction::HashDel {
-                            key: self.key.clone().unwrap_or_default(),
-                            field: (*field).clone(),
-                        });
-                    }
-                }
-                KeyCode::Char('e') | KeyCode::Char('E') => {
-                    if let Some((field, val)) = fields.get(self.hash_cursor) {
-                        let mut prompt = InputWidget::new(format!("Value for '{}'", field));
-                        prompt.value = (*val).clone();
-                        prompt.cursor = val.len();
-                        self.list_prompt = Some(prompt);
-                        self.prompt_mode = Some(PromptMode::HashEdit((*field).clone(), self.hash_cursor));
-                    }
-                }
-                KeyCode::Char('y') => {
-                    if let Some((_, val)) = fields.get(self.hash_cursor) {
-                        return Some(InspectorAction::CopyValue((*val).clone()));
-                    }
-                }
                 _ => {}
+            }
+            if keymap.matches("inspector_hash_add", key) {
+                self.list_prompt = Some(InputWidget::new("Field name"));
+                self.prompt_mode = Some(PromptMode::HashAddField);
+            } else if keymap.matches("delete", key) {
+                if let Some((field, _)) = fields.get(self.hash_cursor) {
+                    return Some(InspectorAction::HashDel {
+                        key: self.key.clone().unwrap_or_default(),
+                        field: (*field).clone(),
+                    });
+                }
+            } else if keymap.matches("edit", key) {
+                if let Some((field, val)) = fields.get(self.hash_cursor) {
+                    let mut prompt = InputWidget::new(format!("Value for '{}'", field));
+                    prompt.value = (*val).clone();
+                    prompt.cursor = val.len();
+                    self.list_prompt = Some(prompt);
+                    self.prompt_mode = Some(PromptMode::HashEdit((*field).clone(), self.hash_cursor));
+                }
+            } else if keymap.matches("copy", key)
+                && let Some((_, val)) = fields.get(self.hash_cursor)
+            {
+                return Some(InspectorAction::CopyValue((*val).clone()));
             }
         }
 
@@ -463,24 +457,22 @@ impl ValueInspector {
                 KeyCode::Down | KeyCode::Char('j') => {
                     if self.set_cursor + 1 < items.len() { self.set_cursor += 1; }
                 }
-                KeyCode::Char('a') => {
-                    self.list_prompt = Some(InputWidget::new("Member to SADD"));
-                    self.prompt_mode = Some(PromptMode::SetAddMember);
-                }
-                KeyCode::Char('D') => {
-                    if let Some(member) = items.get(self.set_cursor) {
-                        return Some(InspectorAction::SetRem {
-                            key: self.key.clone().unwrap_or_default(),
-                            member: (*member).clone(),
-                        });
-                    }
-                }
-                KeyCode::Char('y') => {
-                    if let Some(member) = items.get(self.set_cursor) {
-                        return Some(InspectorAction::CopyValue((*member).clone()));
-                    }
-                }
                 _ => {}
+            }
+            if keymap.matches("inspector_set_add", key) {
+                self.list_prompt = Some(InputWidget::new("Member to SADD"));
+                self.prompt_mode = Some(PromptMode::SetAddMember);
+            } else if keymap.matches("delete", key)
+                && let Some(member) = items.get(self.set_cursor)
+            {
+                return Some(InspectorAction::SetRem {
+                    key: self.key.clone().unwrap_or_default(),
+                    member: (*member).clone(),
+                });
+            } else if keymap.matches("copy", key)
+                && let Some(member) = items.get(self.set_cursor)
+            {
+                return Some(InspectorAction::CopyValue((*member).clone()));
             }
         }
 
@@ -493,36 +485,32 @@ impl ValueInspector {
                 KeyCode::Down | KeyCode::Char('j') => {
                     if self.zset_cursor + 1 < entries.len() { self.zset_cursor += 1; }
                 }
-                KeyCode::Char('a') => {
-                    self.list_prompt = Some(InputWidget::new("Member to ZADD"));
-                    self.prompt_mode = Some(PromptMode::ZSetAddMember);
-                }
-                KeyCode::Char('e') | KeyCode::Char('E') => {
-                    if let Some(entry) = entries.get(self.zset_cursor) {
-                        let mut prompt = InputWidget::new(format!("Score for '{}'", entry.member));
-                        prompt.value = entry.score.to_string();
-                        prompt.cursor = entry.score.to_string().len();
-                        self.list_prompt = Some(prompt);
-                        self.prompt_mode = Some(PromptMode::ZSetEditScore(entry.member.clone(), self.zset_cursor));
-                    }
-                }
-                KeyCode::Char('D') => {
-                    if let Some(entry) = entries.get(self.zset_cursor) {
-                        return Some(InspectorAction::ZRem {
-                            key: self.key.clone().unwrap_or_default(),
-                            member: entry.member.clone(),
-                        });
-                    }
-                }
-                KeyCode::Char('s') => {
-                    self.zset_sort_score_asc = !self.zset_sort_score_asc;
-                }
-                KeyCode::Char('y') => {
-                    if let Some(entry) = entries.get(self.zset_cursor) {
-                        return Some(InspectorAction::CopyValue(entry.member.clone()));
-                    }
-                }
                 _ => {}
+            }
+            if keymap.matches("inspector_zset_add", key) {
+                self.list_prompt = Some(InputWidget::new("Member to ZADD"));
+                self.prompt_mode = Some(PromptMode::ZSetAddMember);
+            } else if keymap.matches("edit", key) {
+                if let Some(entry) = entries.get(self.zset_cursor) {
+                    let mut prompt = InputWidget::new(format!("Score for '{}'", entry.member));
+                    prompt.value = entry.score.to_string();
+                    prompt.cursor = entry.score.to_string().len();
+                    self.list_prompt = Some(prompt);
+                    self.prompt_mode = Some(PromptMode::ZSetEditScore(entry.member.clone(), self.zset_cursor));
+                }
+            } else if keymap.matches("delete", key)
+                && let Some(entry) = entries.get(self.zset_cursor)
+            {
+                return Some(InspectorAction::ZRem {
+                    key: self.key.clone().unwrap_or_default(),
+                    member: entry.member.clone(),
+                });
+            } else if keymap.matches("cycle_sort", key) {
+                self.zset_sort_score_asc = !self.zset_sort_score_asc;
+            } else if keymap.matches("copy", key)
+                && let Some(entry) = entries.get(self.zset_cursor)
+            {
+                return Some(InspectorAction::CopyValue(entry.member.clone()));
             }
         }
 
@@ -535,32 +523,28 @@ impl ValueInspector {
                 KeyCode::Down | KeyCode::Char('j') => {
                     if self.stream_cursor + 1 < entries.len() { self.stream_cursor += 1; }
                 }
-                KeyCode::Char('a') => {
-                    self.list_prompt = Some(InputWidget::new("Entry ID (Enter=auto)"));
-                    self.prompt_mode = Some(PromptMode::StreamAddId);
-                }
-                KeyCode::Char('D') => {
-                    if let Some(entry) = entries.get(self.stream_cursor) {
-                        return Some(InspectorAction::StreamRem {
-                            key: self.key.clone().unwrap_or_default(),
-                            entry_id: entry.id.clone(),
-                        });
-                    }
-                }
-                KeyCode::Char('f') | KeyCode::Char('F') => {
-                    self.stream_compact = !self.stream_compact;
-                }
-                KeyCode::Char('g') | KeyCode::Char('G') => {
-                    if !entries.is_empty() {
-                        self.stream_cursor = entries.len() - 1;
-                    }
-                }
-                KeyCode::Char('y') => {
-                    if let Some(entry) = entries.get(self.stream_cursor) {
-                        return Some(InspectorAction::CopyValue(entry.id.clone()));
-                    }
-                }
                 _ => {}
+            }
+            if keymap.matches("inspector_stream_add", key) {
+                self.list_prompt = Some(InputWidget::new("Entry ID (Enter=auto)"));
+                self.prompt_mode = Some(PromptMode::StreamAddId);
+            } else if keymap.matches("delete", key)
+                && let Some(entry) = entries.get(self.stream_cursor)
+            {
+                return Some(InspectorAction::StreamRem {
+                    key: self.key.clone().unwrap_or_default(),
+                    entry_id: entry.id.clone(),
+                });
+            } else if keymap.matches("inspector_toggle_view", key) {
+                self.stream_compact = !self.stream_compact;
+            } else if keymap.matches("inspector_goto_end", key) {
+                if !entries.is_empty() {
+                    self.stream_cursor = entries.len() - 1;
+                }
+            } else if keymap.matches("copy", key)
+                && let Some(entry) = entries.get(self.stream_cursor)
+            {
+                return Some(InspectorAction::CopyValue(entry.id.clone()));
             }
         }
 

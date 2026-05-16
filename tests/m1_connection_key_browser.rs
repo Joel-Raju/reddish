@@ -881,13 +881,13 @@ fn test_key_browser_e_expire_returns_action() {
 }
 
 #[test]
-fn test_key_browser_c_copy_returns_action() {
+fn test_key_browser_y_copy_returns_action() {
     let mut browser = KeyBrowser::new(':', 500_000);
     browser.apply_scan_batch(vec![
         KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
     ]);
 
-    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('c'))));
+    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('y'))));
     assert_eq!(action, Some(BrowserAction::CopyKeyName("mykey".to_string())));
 }
 

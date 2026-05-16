@@ -348,35 +348,31 @@ impl App {
 
     async fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) {
         if self.mode() == &AppMode::Confirm {
-            match key.code {
-                KeyCode::Char('y') | KeyCode::Enter => {
-                    let key_name = self.pending_delete_key.take();
-                    self.mode_stack.pop();
-                    if let Some(name) = key_name {
-                        if self.key_browser.tree.remove(&name) {
-                            self.status_bar.key_count = self.key_browser.tree.total_keys();
+            if self.keymap.matches("confirm_yes", &key) || matches!(key.code, KeyCode::Enter) {
+                let key_name = self.pending_delete_key.take();
+                self.mode_stack.pop();
+                if let Some(name) = key_name {
+                    if self.key_browser.tree.remove(&name) {
+                        self.status_bar.key_count = self.key_browser.tree.total_keys();
+                    }
+                    if let Some(client) = &self.client {
+                        if let Err(err) = client.delete(&name).await {
+                            self.error_message =
+                                Some(format!("Failed to delete key '{name}': {err}"));
                         }
-                        if let Some(client) = &self.client {
-                            if let Err(err) = client.delete(&name).await {
-                                self.error_message =
-                                    Some(format!("Failed to delete key '{name}': {err}"));
-                            }
-                        } else {
-                            self.error_message = Some("Not connected".to_string());
-                        }
+                    } else {
+                        self.error_message = Some("Not connected".to_string());
                     }
                 }
-                KeyCode::Char('n') | KeyCode::Esc => {
-                    self.pending_delete_key = None;
-                    self.mode_stack.pop();
-                }
-                _ => {}
+            } else if self.keymap.matches("confirm_no", &key) || matches!(key.code, KeyCode::Esc) {
+                self.pending_delete_key = None;
+                self.mode_stack.pop();
             }
             return;
         }
 
         if self.mode() == &AppMode::Search {
-            if let Some(action) = self.search.handle_event(&Event::Key(key)) {
+            if let Some(action) = self.search.handle_event_with_keymap(&Event::Key(key), &self.keymap) {
                 match action {
                     SearchAction::Execute(key_name) => {
                         if self.key_browser.jump_to_key(&key_name) {
@@ -460,24 +456,18 @@ impl App {
         }
 
         if self.mode() == &AppMode::ReplOverlay {
-            match key.code {
-                KeyCode::Esc => {
-                    self.overlay_input = None;
-                    self.mode_stack.pop();
+            if self.keymap.matches("cancel", &key) {
+                self.overlay_input = None;
+                self.mode_stack.pop();
+            } else if self.keymap.matches("confirm", &key) {
+                let cmd = self.overlay_input.as_ref().map(|o| o.value.clone()).unwrap_or_default();
+                self.overlay_input = None;
+                self.mode_stack.pop();
+                if !cmd.is_empty() {
+                    self.execute_repl_command(cmd).await;
                 }
-                KeyCode::Enter => {
-                    let cmd = self.overlay_input.as_ref().map(|o| o.value.clone()).unwrap_or_default();
-                    self.overlay_input = None;
-                    self.mode_stack.pop();
-                    if !cmd.is_empty() {
-                        self.execute_repl_command(cmd).await;
-                    }
-                }
-                _ => {
-                    if let Some(ref mut overlay) = self.overlay_input {
-                        overlay.handle_event(&Event::Key(key));
-                    }
-                }
+            } else if let Some(ref mut overlay) = self.overlay_input {
+                overlay.handle_event(&Event::Key(key));
             }
             return;
         }
@@ -546,6 +536,12 @@ impl App {
             return;
         }
 
+        if self.keymap.matches("repl_overlay", &key) {
+            self.mode_stack.push(AppMode::ReplOverlay);
+            self.overlay_input = Some(crate::ui::widgets::input::InputWidget::new(""));
+            return;
+        }
+
         match key.code {
             KeyCode::Char('\\')
                 if key
@@ -563,17 +559,12 @@ impl App {
                 self.reconnect_active_connection().await;
                 return;
             }
-            KeyCode::Char(':') => {
-                self.mode_stack.push(AppMode::ReplOverlay);
-                self.overlay_input = Some(crate::ui::widgets::input::InputWidget::new(""));
-                return;
-            }
             _ => {}
         }
 
         match self.active_tab {
             Tab::Keys => {
-                let inspector_action = self.value_inspector.handle_event(&Event::Key(key));
+                let inspector_action = self.value_inspector.handle_event_with_keymap(&Event::Key(key), &self.keymap);
                 if self.value_inspector.edit_mode {
                     if let Some(action) = inspector_action {
                         self.handle_inspector_action(action).await;

@@ -195,7 +195,7 @@ impl KeyBrowser {
                     let path: Vec<&str> = row.path.iter().map(|s| s.as_str()).collect();
                     self.tree.collapse(&path);
                 }
-            } else if key.code == KeyCode::Backspace {
+            } else if keymap.matches("go_up", key) || matches!(key.code, KeyCode::Backspace) {
                     if !self.current_path.is_empty() {
                         self.current_path.pop();
                         self.cursor = 0;
@@ -214,10 +214,10 @@ impl KeyBrowser {
                     }
             } else if keymap.matches("refresh", key) {
                 return Some(BrowserAction::RefreshRequested);
-            } else if key.code == KeyCode::Char('n') {
+            } else if keymap.matches("new_key", key) {
                     self.prompt = Some(InputWidget::new("New key name:"));
                     self.prompt_mode = Some(BrowserPrompt::NewKeyName);
-            } else if key.code == KeyCode::Char('r') {
+            } else if keymap.matches("rename_key", key) {
                     let rows = self.sorted_rows();
                     if let Some(row) = rows.get(self.cursor)
                         && let Some(ref key) = row.key
@@ -228,14 +228,14 @@ impl KeyBrowser {
                         self.prompt = Some(prompt);
                         self.prompt_mode = Some(BrowserPrompt::RenameKey(key.full_name.clone()));
                     }
-            } else if key.code == KeyCode::Char('e') {
+            } else if keymap.matches("expire", key) {
                     let rows = self.sorted_rows();
                     if let Some(row) = rows.get(self.cursor)
                         && let Some(ref key) = row.key
                     {
                         return Some(BrowserAction::ExpireKey(key.full_name.clone()));
                     }
-            } else if key.code == KeyCode::Char('t') {
+            } else if keymap.matches("set_ttl", key) {
                     let rows = self.sorted_rows();
                     if let Some(row) = rows.get(self.cursor)
                         && let Some(ref key) = row.key
@@ -243,14 +243,14 @@ impl KeyBrowser {
                         self.prompt = Some(InputWidget::new("TTL in seconds:"));
                         self.prompt_mode = Some(BrowserPrompt::SetTtl(key.full_name.clone()));
                     }
-            } else if key.code == KeyCode::Char('c') {
+            } else if keymap.matches("copy", key) {
                     let rows = self.sorted_rows();
                     if let Some(row) = rows.get(self.cursor)
                         && let Some(ref key) = row.key
                     {
                         return Some(BrowserAction::CopyKeyName(key.full_name.clone()));
                     }
-            } else if key.code == KeyCode::Char(' ') {
+            } else if keymap.matches("toggle_select", key) {
                     let rows = self.sorted_rows();
                     if let Some(row) = rows.get(self.cursor)
                         && let Some(ref key) = row.key
@@ -260,11 +260,9 @@ impl KeyBrowser {
                             self.selected.insert(name);
                         }
                     }
-            } else if key.code == KeyCode::Char('s') {
+            } else if keymap.matches("cycle_sort", key) {
                     self.sort_mode = self.sort_mode.next();
-            } else if key.code == KeyCode::Char('a')
-                && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
-            {
+            } else if keymap.matches("select_all", key) {
                     for row in self.sorted_rows() {
                         if let Some(ref key) = row.key {
                             self.selected.insert(key.full_name.clone());

@@ -39,6 +39,48 @@ pub struct Keymap {
     pub tab_info: KeyDef,
     #[serde(default = "default_tab_pubsub")]
     pub tab_pubsub: KeyDef,
+    #[serde(default = "default_new_key")]
+    pub new_key: KeyDef,
+    #[serde(default = "default_rename_key")]
+    pub rename_key: KeyDef,
+    #[serde(default = "default_set_ttl")]
+    pub set_ttl: KeyDef,
+    #[serde(default = "default_expire")]
+    pub expire: KeyDef,
+    #[serde(default = "default_select_all")]
+    pub select_all: KeyDef,
+    #[serde(default = "default_toggle_select")]
+    pub toggle_select: KeyDef,
+    #[serde(default = "default_cycle_sort")]
+    pub cycle_sort: KeyDef,
+    #[serde(default = "default_go_up")]
+    pub go_up: KeyDef,
+    #[serde(default = "default_repl_overlay")]
+    pub repl_overlay: KeyDef,
+    #[serde(default = "default_confirm_yes")]
+    pub confirm_yes: KeyDef,
+    #[serde(default = "default_confirm_no")]
+    pub confirm_no: KeyDef,
+    #[serde(default = "default_inspector_list_push")]
+    pub inspector_list_push: KeyDef,
+    #[serde(default = "default_inspector_list_prepend")]
+    pub inspector_list_prepend: KeyDef,
+    #[serde(default = "default_inspector_hash_add")]
+    pub inspector_hash_add: KeyDef,
+    #[serde(default = "default_inspector_set_add")]
+    pub inspector_set_add: KeyDef,
+    #[serde(default = "default_inspector_zset_add")]
+    pub inspector_zset_add: KeyDef,
+    #[serde(default = "default_inspector_stream_add")]
+    pub inspector_stream_add: KeyDef,
+    #[serde(default = "default_inspector_toggle_view")]
+    pub inspector_toggle_view: KeyDef,
+    #[serde(default = "default_inspector_goto_end")]
+    pub inspector_goto_end: KeyDef,
+    #[serde(default = "default_search_execute")]
+    pub search_execute: KeyDef,
+    #[serde(default = "default_search_close")]
+    pub search_close: KeyDef,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -55,120 +97,89 @@ impl Default for Keymap {
 impl Keymap {
     pub fn vim() -> Self {
         Self {
-            nav_up: KeyDef {
-                key: "k".to_string(),
-            },
-            nav_down: KeyDef {
-                key: "j".to_string(),
-            },
-            nav_left: KeyDef {
-                key: "h".to_string(),
-            },
-            nav_right: KeyDef {
-                key: "l".to_string(),
-            },
-            confirm: KeyDef {
-                key: "Enter".to_string(),
-            },
-            cancel: KeyDef {
-                key: "Esc".to_string(),
-            },
-            delete: KeyDef {
-                key: "d".to_string(),
-            },
-            refresh: KeyDef {
-                key: "R".to_string(),
-            },
-            filter: KeyDef {
-                key: "/".to_string(),
-            },
-            // ... vim preset
-            edit: KeyDef {
-                key: "e".to_string(),
-            },
-            quit: KeyDef {
-                key: "q".to_string(),
-            },
-            copy: KeyDef {
-                key: "y".to_string(),
-            },
-            help: KeyDef {
-                key: "?".to_string(),
-            },
-            palette: KeyDef {
-                key: "ctrl+p".to_string(),
-            },
-            tab_keys: KeyDef {
-                key: "1".to_string(),
-            },
-            tab_repl: KeyDef {
-                key: "2".to_string(),
-            },
-            tab_info: KeyDef {
-                key: "3".to_string(),
-            },
-            tab_pubsub: KeyDef {
-                key: "4".to_string(),
-            },
+            nav_up: KeyDef { key: "k".to_string() },
+            nav_down: KeyDef { key: "j".to_string() },
+            nav_left: KeyDef { key: "h".to_string() },
+            nav_right: KeyDef { key: "l".to_string() },
+            confirm: KeyDef { key: "Enter".to_string() },
+            cancel: KeyDef { key: "Esc".to_string() },
+            delete: KeyDef { key: "D".to_string() },
+            refresh: KeyDef { key: "R".to_string() },
+            filter: KeyDef { key: "/".to_string() },
+            edit: KeyDef { key: "e".to_string() },
+            quit: KeyDef { key: "q".to_string() },
+            copy: KeyDef { key: "y".to_string() },
+            help: KeyDef { key: "?".to_string() },
+            palette: KeyDef { key: "ctrl+p".to_string() },
+            tab_keys: KeyDef { key: "1".to_string() },
+            tab_repl: KeyDef { key: "2".to_string() },
+            tab_info: KeyDef { key: "3".to_string() },
+            tab_pubsub: KeyDef { key: "4".to_string() },
+            new_key: KeyDef { key: "n".to_string() },
+            rename_key: KeyDef { key: "r".to_string() },
+            set_ttl: KeyDef { key: "t".to_string() },
+            expire: KeyDef { key: "e".to_string() },
+            select_all: KeyDef { key: "ctrl+a".to_string() },
+            toggle_select: KeyDef { key: "Space".to_string() },
+            cycle_sort: KeyDef { key: "s".to_string() },
+            go_up: KeyDef { key: "Backspace".to_string() },
+            repl_overlay: KeyDef { key: ":".to_string() },
+            confirm_yes: KeyDef { key: "y".to_string() },
+            confirm_no: KeyDef { key: "n".to_string() },
+            inspector_list_push: KeyDef { key: "a".to_string() },
+            inspector_list_prepend: KeyDef { key: "p".to_string() },
+            inspector_hash_add: KeyDef { key: "a".to_string() },
+            inspector_set_add: KeyDef { key: "a".to_string() },
+            inspector_zset_add: KeyDef { key: "a".to_string() },
+            inspector_stream_add: KeyDef { key: "a".to_string() },
+            inspector_toggle_view: KeyDef { key: "f".to_string() },
+            inspector_goto_end: KeyDef { key: "g".to_string() },
+            search_execute: KeyDef { key: "Enter".to_string() },
+            search_close: KeyDef { key: "Esc".to_string() },
         }
     }
 
     pub fn emacs() -> Self {
         Self {
-            nav_up: KeyDef {
-                key: "ctrl+p".to_string(),
-            },
-            nav_down: KeyDef {
-                key: "ctrl+n".to_string(),
-            },
-            nav_left: KeyDef {
-                key: "ctrl+b".to_string(),
-            },
-            nav_right: KeyDef {
-                key: "ctrl+f".to_string(),
-            },
-            confirm: KeyDef {
-                key: "Enter".to_string(),
-            },
-            cancel: KeyDef {
-                key: "ctrl+g".to_string(),
-            },
-            delete: KeyDef {
-                key: "ctrl+d".to_string(),
-            },
-            refresh: KeyDef {
-                key: "ctrl+l".to_string(),
-            },
-            filter: KeyDef {
-                key: "ctrl+s".to_string(),
-            },
-            edit: KeyDef {
-                key: "ctrl+e".to_string(),
-            },
-            quit: KeyDef {
-                key: "ctrl+c".to_string(),
-            },
-            copy: KeyDef {
-                key: "ctrl+w".to_string(),
-            },
-            help: KeyDef {
-                key: "?".to_string(),
-            },
-            palette: KeyDef {
-                key: "ctrl+x".to_string(),
-            },
-            tab_keys: KeyDef {
-                key: "alt+1".to_string(),
-            },
-            tab_repl: KeyDef {
-                key: "alt+2".to_string(),
-            },
-            tab_info: KeyDef {
-                key: "alt+3".to_string(),
-            },
-            tab_pubsub: KeyDef {
-                key: "alt+4".to_string(),
-            },
+            nav_up: KeyDef { key: "ctrl+p".to_string() },
+            nav_down: KeyDef { key: "ctrl+n".to_string() },
+            nav_left: KeyDef { key: "ctrl+b".to_string() },
+            nav_right: KeyDef { key: "ctrl+f".to_string() },
+            confirm: KeyDef { key: "Enter".to_string() },
+            cancel: KeyDef { key: "ctrl+g".to_string() },
+            delete: KeyDef { key: "ctrl+d".to_string() },
+            refresh: KeyDef { key: "ctrl+l".to_string() },
+            filter: KeyDef { key: "ctrl+s".to_string() },
+            edit: KeyDef { key: "ctrl+e".to_string() },
+            quit: KeyDef { key: "ctrl+c".to_string() },
+            copy: KeyDef { key: "ctrl+w".to_string() },
+            help: KeyDef { key: "?".to_string() },
+            palette: KeyDef { key: "ctrl+x".to_string() },
+            tab_keys: KeyDef { key: "alt+1".to_string() },
+            tab_repl: KeyDef { key: "alt+2".to_string() },
+            tab_info: KeyDef { key: "alt+3".to_string() },
+            tab_pubsub: KeyDef { key: "alt+4".to_string() },
+            new_key: KeyDef { key: "n".to_string() },
+            rename_key: KeyDef { key: "ctrl+r".to_string() },
+            set_ttl: KeyDef { key: "ctrl+t".to_string() },
+            expire: KeyDef { key: "ctrl+e".to_string() },
+            select_all: KeyDef { key: "ctrl+a".to_string() },
+            toggle_select: KeyDef { key: "Space".to_string() },
+            cycle_sort: KeyDef { key: "ctrl+o".to_string() },
+            go_up: KeyDef { key: "ctrl+b".to_string() },
+            repl_overlay: KeyDef { key: "alt+;".to_string() },
+            confirm_yes: KeyDef { key: "y".to_string() },
+            confirm_no: KeyDef { key: "n".to_string() },
+            inspector_list_push: KeyDef { key: "ctrl+shift+a".to_string() },
+            inspector_list_prepend: KeyDef { key: "ctrl+shift+p".to_string() },
+            inspector_hash_add: KeyDef { key: "ctrl+shift+h".to_string() },
+            inspector_set_add: KeyDef { key: "ctrl+shift+s".to_string() },
+            inspector_zset_add: KeyDef { key: "ctrl+shift+z".to_string() },
+            inspector_stream_add: KeyDef { key: "ctrl+shift+x".to_string() },
+            inspector_toggle_view: KeyDef { key: "ctrl+shift+f".to_string() },
+            inspector_goto_end: KeyDef { key: "ctrl+shift+g".to_string() },
+            search_execute: KeyDef { key: "Enter".to_string() },
+            search_close: KeyDef { key: "ctrl+g".to_string() },
         }
     }
 
@@ -192,6 +203,27 @@ impl Keymap {
             "tab_repl" => &self.tab_repl,
             "tab_info" => &self.tab_info,
             "tab_pubsub" => &self.tab_pubsub,
+            "new_key" => &self.new_key,
+            "rename_key" => &self.rename_key,
+            "set_ttl" => &self.set_ttl,
+            "expire" => &self.expire,
+            "select_all" => &self.select_all,
+            "toggle_select" => &self.toggle_select,
+            "cycle_sort" => &self.cycle_sort,
+            "go_up" => &self.go_up,
+            "repl_overlay" => &self.repl_overlay,
+            "confirm_yes" => &self.confirm_yes,
+            "confirm_no" => &self.confirm_no,
+            "inspector_list_push" => &self.inspector_list_push,
+            "inspector_list_prepend" => &self.inspector_list_prepend,
+            "inspector_hash_add" => &self.inspector_hash_add,
+            "inspector_set_add" => &self.inspector_set_add,
+            "inspector_zset_add" => &self.inspector_zset_add,
+            "inspector_stream_add" => &self.inspector_stream_add,
+            "inspector_toggle_view" => &self.inspector_toggle_view,
+            "inspector_goto_end" => &self.inspector_goto_end,
+            "search_execute" => &self.search_execute,
+            "search_close" => &self.search_close,
             _ => return false,
         };
         let (expected_code, expected_mods) = parse_keydef(&def.key);
@@ -310,4 +342,67 @@ fn default_tab_pubsub() -> KeyDef {
     KeyDef {
         key: "4".to_string(),
     }
+}
+fn default_new_key() -> KeyDef {
+    KeyDef { key: "n".to_string() }
+}
+fn default_rename_key() -> KeyDef {
+    KeyDef { key: "r".to_string() }
+}
+fn default_set_ttl() -> KeyDef {
+    KeyDef { key: "t".to_string() }
+}
+fn default_expire() -> KeyDef {
+    KeyDef { key: "e".to_string() }
+}
+fn default_select_all() -> KeyDef {
+    KeyDef { key: "ctrl+a".to_string() }
+}
+fn default_toggle_select() -> KeyDef {
+    KeyDef { key: "Space".to_string() }
+}
+fn default_cycle_sort() -> KeyDef {
+    KeyDef { key: "s".to_string() }
+}
+fn default_go_up() -> KeyDef {
+    KeyDef { key: "Backspace".to_string() }
+}
+fn default_repl_overlay() -> KeyDef {
+    KeyDef { key: ":".to_string() }
+}
+fn default_confirm_yes() -> KeyDef {
+    KeyDef { key: "y".to_string() }
+}
+fn default_confirm_no() -> KeyDef {
+    KeyDef { key: "n".to_string() }
+}
+fn default_inspector_list_push() -> KeyDef {
+    KeyDef { key: "a".to_string() }
+}
+fn default_inspector_list_prepend() -> KeyDef {
+    KeyDef { key: "p".to_string() }
+}
+fn default_inspector_hash_add() -> KeyDef {
+    KeyDef { key: "a".to_string() }
+}
+fn default_inspector_set_add() -> KeyDef {
+    KeyDef { key: "a".to_string() }
+}
+fn default_inspector_zset_add() -> KeyDef {
+    KeyDef { key: "a".to_string() }
+}
+fn default_inspector_stream_add() -> KeyDef {
+    KeyDef { key: "a".to_string() }
+}
+fn default_inspector_toggle_view() -> KeyDef {
+    KeyDef { key: "f".to_string() }
+}
+fn default_inspector_goto_end() -> KeyDef {
+    KeyDef { key: "g".to_string() }
+}
+fn default_search_execute() -> KeyDef {
+    KeyDef { key: "Enter".to_string() }
+}
+fn default_search_close() -> KeyDef {
+    KeyDef { key: "Esc".to_string() }
 }

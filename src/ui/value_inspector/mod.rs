@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::events::Event;
 use crate::redis::client::Ttl;
-use crate::redis::types::RedisValue;
+use crate::redis::types::{RedisValue, ZSetEntry};
 use crate::ui::widgets::input::InputWidget;
 use crate::ui::widgets::text_area_editor::TextAreaEditor;
 
@@ -74,6 +74,8 @@ pub enum InspectorAction {
     HashDel { key: String, field: String },
     SetAdd { key: String, member: String },
     SetRem { key: String, member: String },
+    ZAdd { key: String, score: f64, member: String },
+    ZRem { key: String, member: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -85,6 +87,9 @@ pub enum PromptMode {
     HashAddValue(String),
     HashEdit(String, usize),
     SetAddMember,
+    ZSetAddMember,
+    ZSetAddScore(String),
+    ZSetEditScore(String, usize),
 }
 
 pub struct ValueInspector {
@@ -101,6 +106,8 @@ pub struct ValueInspector {
     pub list_cursor: usize,
     pub hash_cursor: usize,
     pub set_cursor: usize,
+    pub zset_cursor: usize,
+    pub zset_sort_score_asc: bool,
     pub list_prompt: Option<InputWidget>,
     pub prompt_mode: Option<PromptMode>,
 }
@@ -127,6 +134,8 @@ impl ValueInspector {
             list_cursor: 0,
             hash_cursor: 0,
             set_cursor: 0,
+            zset_cursor: 0,
+            zset_sort_score_asc: true,
             list_prompt: None,
             prompt_mode: None,
         }
@@ -145,6 +154,8 @@ impl ValueInspector {
         self.list_cursor = 0;
         self.hash_cursor = 0;
         self.set_cursor = 0;
+        self.zset_cursor = 0;
+        self.zset_sort_score_asc = true;
         self.list_prompt = None;
         self.prompt_mode = None;
     }
@@ -162,6 +173,8 @@ impl ValueInspector {
         self.list_cursor = 0;
         self.hash_cursor = 0;
         self.set_cursor = 0;
+        self.zset_cursor = 0;
+        self.zset_sort_score_asc = true;
         self.list_prompt = None;
         self.prompt_mode = None;
     }
@@ -176,6 +189,8 @@ impl ValueInspector {
         self.list_cursor = 0;
         self.hash_cursor = 0;
         self.set_cursor = 0;
+        self.zset_cursor = 0;
+        self.zset_sort_score_asc = true;
         self.list_prompt = None;
         self.prompt_mode = None;
     }
@@ -260,6 +275,19 @@ impl ValueInspector {
                         key,
                         member: val,
                     }),
+                    Some(PromptMode::ZSetAddMember) => {
+                        self.list_prompt = Some(InputWidget::new("Score for member"));
+                        self.prompt_mode = Some(PromptMode::ZSetAddScore(val));
+                        None
+                    }
+                    Some(PromptMode::ZSetAddScore(member)) => {
+                        let score = val.parse::<f64>().ok()?;
+                        Some(InspectorAction::ZAdd { key, score, member })
+                    }
+                    Some(PromptMode::ZSetEditScore(member, _)) => {
+                        let score = val.parse::<f64>().ok()?;
+                        Some(InspectorAction::ZAdd { key, score, member })
+                    }
                     None => None,
                 };
             }
@@ -390,6 +418,43 @@ impl ValueInspector {
             }
         }
 
+        // ZSet-specific key handling
+        if let Some(RedisValue::ZSet(ref entries)) = self.value {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if self.zset_cursor > 0 { self.zset_cursor -= 1; }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if self.zset_cursor + 1 < entries.len() { self.zset_cursor += 1; }
+                }
+                KeyCode::Char('a') => {
+                    self.list_prompt = Some(InputWidget::new("Member to ZADD"));
+                    self.prompt_mode = Some(PromptMode::ZSetAddMember);
+                }
+                KeyCode::Char('e') | KeyCode::Char('E') => {
+                    if let Some(entry) = entries.get(self.zset_cursor) {
+                        let mut prompt = InputWidget::new(format!("Score for '{}'", entry.member));
+                        prompt.value = entry.score.to_string();
+                        prompt.cursor = entry.score.to_string().len();
+                        self.list_prompt = Some(prompt);
+                        self.prompt_mode = Some(PromptMode::ZSetEditScore(entry.member.clone(), self.zset_cursor));
+                    }
+                }
+                KeyCode::Char('D') => {
+                    if let Some(entry) = entries.get(self.zset_cursor) {
+                        return Some(InspectorAction::ZRem {
+                            key: self.key.clone().unwrap_or_default(),
+                            member: entry.member.clone(),
+                        });
+                    }
+                }
+                KeyCode::Char('s') => {
+                    self.zset_sort_score_asc = !self.zset_sort_score_asc;
+                }
+                _ => {}
+            }
+        }
+
         None
     }
 
@@ -414,6 +479,12 @@ impl ValueInspector {
         // Set-specific render
         if let Some(RedisValue::Set(ref members)) = self.value {
             self.render_set(frame, area, members);
+            return;
+        }
+
+        // ZSet-specific render
+        if let Some(RedisValue::ZSet(ref entries)) = self.value {
+            self.render_zset(frame, area, entries);
             return;
         }
 
@@ -588,6 +659,51 @@ impl ValueInspector {
                 "\nMember: {}{}",
                 prompt.value,
                 if prompt.cursor >= prompt.value.len() { "_" } else { "" }
+            ));
+        }
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title);
+        let paragraph = Paragraph::new(text)
+            .block(block)
+            .wrap(Wrap { trim: false });
+        frame.render_widget(paragraph, area);
+    }
+
+    fn render_zset(&self, frame: &mut Frame, area: Rect, entries: &[ZSetEntry]) {
+        let mode_label = if self.zset_sort_score_asc { "asc" } else { "desc" };
+        let title = self
+            .key
+            .as_deref()
+            .map(|k| format!("ZSet [{}] (len={}, score:{})", k, entries.len(), mode_label))
+            .unwrap_or_else(|| format!("ZSet (len={})", entries.len()));
+
+        let mut items: Vec<&ZSetEntry> = entries.iter().collect();
+        if self.zset_sort_score_asc {
+            items.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+        } else {
+            items.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        }
+
+        let mut text = String::new();
+        for (i, entry) in items.iter().enumerate() {
+            let marker = if i == self.zset_cursor { ">" } else { " " };
+            text.push_str(&format!("{}[{}] {} {}\n", marker, i, entry.score, entry.member));
+        }
+
+        if let Some(ref prompt) = self.list_prompt {
+            let prompt_label = match self.prompt_mode {
+                Some(PromptMode::ZSetAddMember) => "Member to ZADD: ",
+                Some(PromptMode::ZSetAddScore(ref m)) => &format!("Score for '{}': ", m),
+                Some(PromptMode::ZSetEditScore(ref m, _)) => &format!("Score for '{}': ", m),
+                _ => "Input: ",
+            };
+            text.push_str(&format!(
+                "\n{}{}{}",
+                prompt_label,
+                prompt.value,
+                if prompt.cursor >= prompt.value.len() { "_" } else { " " }
             ));
         }
 

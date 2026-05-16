@@ -946,6 +946,32 @@ impl App {
                     self.reload_inspector_value(&key).await;
                 }
             }
+            InspectorAction::ZAdd { key, score, member } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    if let Err(err) = client.zadd(&key, score, &member).await {
+                        self.error_message = Some(format!("Failed to add zset member: {err}"));
+                        return;
+                    }
+                    self.reload_inspector_value(&key).await;
+                }
+            }
+            InspectorAction::ZRem { key, member } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    if let Err(err) = client.zrem(&key, &member).await {
+                        self.error_message = Some(format!("Failed to remove zset member: {err}"));
+                        return;
+                    }
+                    self.reload_inspector_value(&key).await;
+                }
+            }
         }
     }
 

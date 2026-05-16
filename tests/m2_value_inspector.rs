@@ -457,6 +457,139 @@ fn test_set_editor_renders_without_panic() {
     let _ = terminal.draw(|f| inspector.render(f, f.area()));
 }
 
+#[test]
+fn test_zset_editor_navigation() {
+    use reddish_tui::redis::types::{RedisValue, ZSetEntry};
+    use reddish_tui::ui::value_inspector::ValueInspector;
+
+    let entries = vec![
+        ZSetEntry { member: "a".into(), score: 1.0 },
+        ZSetEntry { member: "b".into(), score: 2.0 },
+        ZSetEntry { member: "c".into(), score: 3.0 },
+    ];
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("myzset".to_string(), RedisValue::ZSet(entries));
+
+    assert_eq!(inspector.zset_cursor, 0);
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
+    assert_eq!(inspector.zset_cursor, 1);
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Up)));
+    assert_eq!(inspector.zset_cursor, 0);
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Down)));
+    assert_eq!(inspector.zset_cursor, 1);
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('k'))));
+    assert_eq!(inspector.zset_cursor, 0);
+}
+
+#[test]
+fn test_zset_editor_a_add() {
+    use reddish_tui::redis::types::{RedisValue, ZSetEntry};
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("myzset".to_string(), RedisValue::ZSet(vec![
+        ZSetEntry { member: "a".into(), score: 1.0 },
+    ]));
+
+    // First step: enter member name
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
+    for c in "new_member".chars() {
+        inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+    // Submit member → score prompt
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    assert!(action.is_none()); // should transition to score prompt
+
+    // Second step: enter score
+    for c in "2.5".chars() {
+        inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    match action {
+        Some(InspectorAction::ZAdd { key, score, member }) => {
+            assert_eq!(key, "myzset");
+            assert_eq!(member, "new_member");
+            assert!((score - 2.5).abs() < 1e-9);
+        }
+        other => panic!("Expected ZAdd, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_zset_editor_e_edit_score() {
+    use reddish_tui::redis::types::{RedisValue, ZSetEntry};
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("myzset".to_string(), RedisValue::ZSet(vec![
+        ZSetEntry { member: "a".into(), score: 1.0 },
+    ]));
+
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
+    for c in "3".chars() {
+        // Clear existing via Ctrl+U then type new
+        inspector.handle_event(&Event::Key(KeyEvent::new(
+            KeyCode::Char('u'),
+            crossterm::event::KeyModifiers::CONTROL,
+        )));
+        inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    match action {
+        Some(InspectorAction::ZAdd { key, score, member }) => {
+            assert_eq!(key, "myzset");
+            assert_eq!(member, "a");
+            assert!((score - 3.0).abs() < 1e-9);
+        }
+        other => panic!("Expected ZAdd, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_zset_editor_d_remove() {
+    use reddish_tui::redis::types::{RedisValue, ZSetEntry};
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("myzset".to_string(), RedisValue::ZSet(vec![
+        ZSetEntry { member: "a".into(), score: 1.0 },
+        ZSetEntry { member: "b".into(), score: 2.0 },
+    ]));
+
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+
+    match action {
+        Some(InspectorAction::ZRem { key, member }) => {
+            assert_eq!(key, "myzset");
+            assert_eq!(member, "b");
+        }
+        other => panic!("Expected ZRem, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_zset_editor_renders_without_panic() {
+    use ratatui::backend::TestBackend;
+    use reddish_tui::redis::types::{RedisValue, ZSetEntry};
+    use reddish_tui::ui::value_inspector::ValueInspector;
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("myzset".to_string(), RedisValue::ZSet(vec![
+        ZSetEntry { member: "a".into(), score: 1.0 },
+        ZSetEntry { member: "b".into(), score: 2.0 },
+    ]));
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let _ = terminal.draw(|f| inspector.render(f, f.area()));
+
+    // Render with prompt open
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
+    let _ = terminal.draw(|f| inspector.render(f, f.area()));
+}
+
 #[tokio::test]
 async fn test_redis_get_set_string() {
     let profile = reddish_tui::config::connections::ConnectionProfile {

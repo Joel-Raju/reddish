@@ -9,6 +9,7 @@ use ratatui::{
 use crate::events::Event;
 use crate::redis::client::Ttl;
 use crate::redis::types::RedisValue;
+use crate::ui::widgets::input::InputWidget;
 use crate::ui::widgets::text_area_editor::TextAreaEditor;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -66,6 +67,16 @@ impl StringViewMode {
 pub enum InspectorAction {
     WriteString { key: String, value: String },
     SetTtl { key: String, seconds: i64 },
+    ListPush { key: String, value: String, head: bool },
+    ListSet { key: String, index: i64, value: String },
+    ListRemove { key: String, value: String },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PromptMode {
+    Rpush,
+    Lpush,
+    Lset(usize),
 }
 
 pub struct ValueInspector {
@@ -79,6 +90,9 @@ pub struct ValueInspector {
     pub memory_bytes: Option<u64>,
     pub ttl: Option<Ttl>,
     pub text_editor: Option<TextAreaEditor>,
+    pub list_cursor: usize,
+    pub list_prompt: Option<InputWidget>,
+    pub prompt_mode: Option<PromptMode>,
 }
 
 impl Default for ValueInspector {
@@ -100,6 +114,9 @@ impl ValueInspector {
             memory_bytes: None,
             ttl: None,
             text_editor: None,
+            list_cursor: 0,
+            list_prompt: None,
+            prompt_mode: None,
         }
     }
 
@@ -113,6 +130,9 @@ impl ValueInspector {
         self.ttl = None;
         self.edit_mode = false;
         self.text_editor = None;
+        self.list_cursor = 0;
+        self.list_prompt = None;
+        self.prompt_mode = None;
     }
 
     pub fn set_error(&mut self, key: Option<String>, error: String) {
@@ -125,6 +145,9 @@ impl ValueInspector {
         self.ttl = None;
         self.edit_mode = false;
         self.text_editor = None;
+        self.list_cursor = 0;
+        self.list_prompt = None;
+        self.prompt_mode = None;
     }
 
     pub fn set_value(&mut self, key: String, value: RedisValue) {
@@ -134,6 +157,9 @@ impl ValueInspector {
         self.error = None;
         self.edit_mode = false;
         self.text_editor = None;
+        self.list_cursor = 0;
+        self.list_prompt = None;
+        self.prompt_mode = None;
     }
 
     pub fn set_metadata(&mut self, encoding: Option<String>, memory_bytes: Option<u64>, ttl: Option<Ttl>) {
@@ -172,6 +198,40 @@ impl ValueInspector {
             return None;
         }
 
+        // Handle inline input prompts (for list a/p/e operations)
+        if let Some(ref mut prompt) = self.list_prompt {
+            prompt.handle_event(event);
+            if prompt.submitted.is_some() {
+                let val = prompt.submitted.take().unwrap_or_default();
+                let mode = self.prompt_mode.take();
+                self.list_prompt = None;
+                let key = self.key.clone().unwrap_or_default();
+                return match mode {
+                    Some(PromptMode::Rpush) => Some(InspectorAction::ListPush {
+                        key,
+                        value: val,
+                        head: false,
+                    }),
+                    Some(PromptMode::Lpush) => Some(InspectorAction::ListPush {
+                        key,
+                        value: val,
+                        head: true,
+                    }),
+                    Some(PromptMode::Lset(idx)) => Some(InspectorAction::ListSet {
+                        key,
+                        index: idx as i64,
+                        value: val,
+                    }),
+                    None => None,
+                };
+            }
+            if prompt.cancelled {
+                self.list_prompt = None;
+                self.prompt_mode = None;
+            }
+            return None;
+        }
+
         match key.code {
             KeyCode::Tab => {
                 self.string_view = self.string_view.next();
@@ -184,12 +244,61 @@ impl ValueInspector {
             }
             _ => {}
         }
+
+        // List-specific key handling
+        if let Some(RedisValue::List(ref items)) = self.value {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if self.list_cursor > 0 {
+                        self.list_cursor -= 1;
+                    }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if self.list_cursor + 1 < items.len() {
+                        self.list_cursor += 1;
+                    }
+                }
+                KeyCode::Char('a') => {
+                    self.list_prompt = Some(InputWidget::new("Value to RPUSH"));
+                    self.prompt_mode = Some(PromptMode::Rpush);
+                }
+                KeyCode::Char('p') => {
+                    self.list_prompt = Some(InputWidget::new("Value to LPUSH"));
+                    self.prompt_mode = Some(PromptMode::Lpush);
+                }
+                KeyCode::Char('D') => {
+                    if let Some(val) = items.get(self.list_cursor) {
+                        return Some(InspectorAction::ListRemove {
+                            key: self.key.clone().unwrap_or_default(),
+                            value: val.clone(),
+                        });
+                    }
+                }
+                KeyCode::Char('e') | KeyCode::Char('E') => {
+                    if let Some(val) = items.get(self.list_cursor) {
+                        let mut prompt = InputWidget::new(format!("Edit [{}]", self.list_cursor));
+                        prompt.value = val.clone();
+                        prompt.cursor = val.len();
+                        self.list_prompt = Some(prompt);
+                        self.prompt_mode = Some(PromptMode::Lset(self.list_cursor));
+                    }
+                }
+                _ => {}
+            }
+        }
+
         None
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
         if self.edit_mode && let Some(ref editor) = self.text_editor {
             editor.render(frame, area);
+            return;
+        }
+
+        // List-specific render
+        if let Some(RedisValue::List(ref items)) = self.value {
+            self.render_list(frame, area, items);
             return;
         }
 
@@ -259,6 +368,48 @@ impl ValueInspector {
             .block(Block::default().borders(Borders::ALL).title(title))
             .wrap(Wrap { trim: false });
         frame.render_widget(widget, area);
+    }
+
+    fn render_list(&self, frame: &mut Frame, area: Rect, items: &[String]) {
+        let title = self
+            .key
+            .as_deref()
+            .map(|k| format!("List [{}] (len={})", k, items.len()))
+            .unwrap_or_else(|| format!("List (len={})", items.len()));
+
+        let mut text = String::new();
+        for (i, item) in items.iter().enumerate() {
+            let marker = if i == self.list_cursor { ">" } else { " " };
+            text.push_str(&format!("{}[{}] {}\n", marker, i, item));
+        }
+
+        if let Some(ref prompt) = self.list_prompt {
+            let prompt_label = match self.prompt_mode {
+                Some(PromptMode::Rpush) => "RPUSH value:",
+                Some(PromptMode::Lpush) => "LPUSH value:",
+                Some(PromptMode::Lset(idx)) => &format!("LSET [{}] =", idx),
+                None => "Input:",
+            };
+            let prompt_text = format!(
+                "{} {}{}",
+                prompt_label,
+                prompt.value,
+                if prompt.cursor >= prompt.value.len() {
+                    "_"
+                } else {
+                    " "
+                }
+            );
+            text.push_str(&format!("\n{}", prompt_text));
+        }
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title);
+        let paragraph = Paragraph::new(text)
+            .block(block)
+            .wrap(Wrap { trim: false });
+        frame.render_widget(paragraph, area);
     }
 }
 

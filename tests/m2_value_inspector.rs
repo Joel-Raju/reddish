@@ -242,6 +242,179 @@ fn test_text_area_editor_ctrl_s_does_not_set_cancelled() {
     assert!(!editor.cancelled);
 }
 
+#[test]
+fn test_list_editor_navigation() {
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::ValueInspector;
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value(
+        "mylist".to_string(),
+        RedisValue::List(vec!["a".to_string(), "b".to_string(), "c".to_string()]),
+    );
+
+    assert_eq!(inspector.list_cursor, 0);
+
+    // Down / j
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
+    assert_eq!(inspector.list_cursor, 1);
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Down)));
+    assert_eq!(inspector.list_cursor, 2);
+
+    // Up / k
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('k'))));
+    assert_eq!(inspector.list_cursor, 1);
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Up)));
+    assert_eq!(inspector.list_cursor, 0);
+}
+
+#[test]
+fn test_list_editor_a_rpush() {
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value(
+        "mylist".to_string(),
+        RedisValue::List(vec!["a".to_string()]),
+    );
+
+    // Press a to trigger RPUSH prompt
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
+    assert!(inspector.list_prompt.is_some());
+
+    // Type value
+    for c in "new_item".chars() {
+        inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+
+    // Enter to submit
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+
+    match action {
+        Some(InspectorAction::ListPush { key, value, head }) => {
+            assert_eq!(key, "mylist");
+            assert_eq!(value, "new_item");
+            assert!(!head); // RPUSH
+        }
+        other => panic!("Expected ListPush, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_list_editor_p_lpush() {
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value(
+        "mylist".to_string(),
+        RedisValue::List(vec!["a".to_string()]),
+    );
+
+    // Press p to trigger LPUSH prompt
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('p'))));
+    assert!(inspector.list_prompt.is_some());
+
+    for c in "first".chars() {
+        inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+
+    match action {
+        Some(InspectorAction::ListPush { value, head, .. }) => {
+            assert_eq!(value, "first");
+            assert!(head); // LPUSH
+        }
+        other => panic!("Expected ListPush, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_list_editor_d_remove() {
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value(
+        "mylist".to_string(),
+        RedisValue::List(vec!["a".to_string(), "b".to_string()]),
+    );
+
+    // Move cursor to index 1
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
+    assert_eq!(inspector.list_cursor, 1);
+
+    // D to delete
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+
+    match action {
+        Some(InspectorAction::ListRemove { key, value }) => {
+            assert_eq!(key, "mylist");
+            assert_eq!(value, "b");
+        }
+        other => panic!("Expected ListRemove, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_list_editor_e_edit() {
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value(
+        "mylist".to_string(),
+        RedisValue::List(vec!["hello".to_string()]),
+    );
+
+    // Press e to edit first item
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
+    assert!(inspector.list_prompt.is_some());
+
+    // Clear with Ctrl+U and type new value
+    inspector.handle_event(&Event::Key(KeyEvent::new(
+        KeyCode::Char('u'),
+        crossterm::event::KeyModifiers::CONTROL,
+    )));
+    for c in "world".chars() {
+        inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+
+    match action {
+        Some(InspectorAction::ListSet { key, index, value }) => {
+            assert_eq!(key, "mylist");
+            assert_eq!(index, 0);
+            assert_eq!(value, "world");
+        }
+        other => panic!("Expected ListSet, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_list_editor_renders_without_panic() {
+    use ratatui::backend::TestBackend;
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::ValueInspector;
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value(
+        "mylist".to_string(),
+        RedisValue::List(vec!["a".to_string(), "b".to_string()]),
+    );
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let _ = terminal.draw(|f| inspector.render(f, f.area()));
+
+    // Also test that list prompt renders
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
+    let _ = terminal.draw(|f| inspector.render(f, f.area()));
+}
+
 #[tokio::test]
 async fn test_redis_get_set_string() {
     let profile = reddish_tui::config::connections::ConnectionProfile {

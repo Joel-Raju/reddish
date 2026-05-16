@@ -855,6 +855,45 @@ impl App {
                     self.error_message = Some("Not connected".to_string());
                 }
             }
+            InspectorAction::ListPush { key, value, head } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    if let Err(err) = client.list_push(&key, &value, head).await {
+                        self.error_message = Some(format!("Failed to push: {err}"));
+                        return;
+                    }
+                    self.reload_inspector_value(&key).await;
+                }
+            }
+            InspectorAction::ListSet { key, index, value } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    if let Err(err) = client.list_set(&key, index, &value).await {
+                        self.error_message = Some(format!("Failed to set: {err}"));
+                        return;
+                    }
+                    self.reload_inspector_value(&key).await;
+                }
+            }
+            InspectorAction::ListRemove { key, value } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    if let Err(err) = client.list_remove(&key, &value).await {
+                        self.error_message = Some(format!("Failed to remove: {err}"));
+                        return;
+                    }
+                    self.reload_inspector_value(&key).await;
+                }
+            }
         }
     }
 

@@ -271,6 +271,64 @@ fn test_tree_row_has_badges_when_set() {
 }
 
 #[test]
+fn test_breadcrumb_starts_at_root() {
+    let browser = KeyBrowser::new(':', 500_000);
+    assert!(browser.current_path.is_empty());
+    assert_eq!(browser.cursor, 0);
+}
+
+#[test]
+fn test_breadcrumb_backspace_at_root_does_nothing() {
+    use reddish_tui::events::Event;
+
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Backspace)));
+    assert!(browser.current_path.is_empty());
+}
+
+#[test]
+fn test_breadcrumb_g_at_root_does_nothing() {
+    use reddish_tui::events::Event;
+
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('g'))));
+    assert!(browser.current_path.is_empty());
+}
+
+#[test]
+fn test_breadcrumb_renders_path() {
+    use ratatui::backend::TestBackend;
+
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.current_path = vec!["prod".to_string(), "user".to_string()];
+    browser.apply_scan_batch(vec![
+        KeyEntry {
+            full_name: "prod:user:abc".to_string(),
+            redis_type: Some(RedisType::String),
+            ttl: None,
+        },
+    ]);
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let _ = terminal.draw(|f| browser.render(f, f.area()));
+    // No panic means breadcrumb rendered without error
+}
+
+#[test]
+fn test_breadcrumb_renders_at_root() {
+    use ratatui::backend::TestBackend;
+
+    let browser = KeyBrowser::new(':', 500_000);
+    assert!(browser.current_path.is_empty());
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let _ = terminal.draw(|f| browser.render(f, f.area()));
+    // No panic means breadcrumb rendered without error
+}
+
+#[test]
 fn test_key_browser_delete_returns_action() {
     use reddish_tui::events::Event;
 

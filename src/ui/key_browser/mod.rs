@@ -32,6 +32,7 @@ pub struct KeyBrowser {
     pub cursor: usize,
     pub filter: Option<String>,
     pub state: BrowserState,
+    pub current_path: Vec<String>,
 }
 
 impl KeyBrowser {
@@ -41,6 +42,7 @@ impl KeyBrowser {
             cursor: 0,
             filter: None,
             state: BrowserState::Scanning { keys_loaded: 0 },
+            current_path: Vec::new(),
         }
     }
 
@@ -95,6 +97,16 @@ impl KeyBrowser {
                     let path: Vec<&str> = row.path.iter().map(|s| s.as_str()).collect();
                     self.tree.collapse(&path);
                 }
+            } else if key.code == KeyCode::Backspace {
+                    if !self.current_path.is_empty() {
+                        self.current_path.pop();
+                        self.cursor = 0;
+                    }
+            } else if key.code == KeyCode::Char('g') {
+                    if !self.current_path.is_empty() {
+                        self.current_path.clear();
+                        self.cursor = 0;
+                    }
             } else if keymap.matches("delete", key) || matches!(key.code, KeyCode::Char('D')) {
                     let rows = self.tree.visible_rows();
                     if let Some(row) = rows.get(self.cursor)
@@ -110,6 +122,32 @@ impl KeyBrowser {
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
+        use ratatui::layout::{Constraint, Direction, Layout};
+
+        // Split area into breadcrumb (1 line) and key list (remaining)
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(0)])
+            .split(area);
+
+        // Breadcrumb
+        let breadcrumb_text = if self.current_path.is_empty() {
+            " > root".to_string()
+        } else {
+            let path = self
+                .current_path
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(" > ");
+            format!(" > {}", path)
+        };
+        let breadcrumb_style = Style::default().fg(Color::Cyan).bg(Color::Black);
+        let breadcrumb = ratatui::widgets::Paragraph::new(breadcrumb_text)
+            .style(breadcrumb_style);
+        frame.render_widget(breadcrumb, chunks[0]);
+
+        // Key list
         let rows = self.tree.visible_rows();
         let items: Vec<ListItem> = rows
             .iter()
@@ -133,7 +171,7 @@ impl KeyBrowser {
             .borders(Borders::ALL)
             .title(format!("Keys ({}) ", self.tree.total_keys()));
         let list = List::new(items).block(block);
-        frame.render_stateful_widget(list, area, &mut state);
+        frame.render_stateful_widget(list, chunks[1], &mut state);
     }
 
     pub fn apply_scan_batch(&mut self, batch: Vec<KeyEntry>) {

@@ -780,3 +780,53 @@ fn test_connection_screen_renders_without_panic() {
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     let _ = terminal.draw(|f| screen.render(f, f.area()));
 }
+
+#[test]
+fn test_key_browser_n_new_key_starts_prompt() {
+    let mut browser = KeyBrowser::new(':', 500_000);
+    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('n'))));
+    assert!(action.is_none());
+    assert!(browser.prompt.is_some());
+    assert_eq!(browser.prompt_mode, Some(reddish_tui::ui::key_browser::BrowserPrompt::NewKeyName));
+}
+
+#[test]
+fn test_key_browser_n_new_key_full_flow() {
+    use reddish_tui::ui::key_browser::BrowserPrompt;
+
+    let mut browser = KeyBrowser::new(':', 500_000);
+
+    // Press n → prompt for key name
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('n'))));
+    for c in "mynewkey".chars() {
+        browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+
+    // Submit name → should transition to type prompt
+    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    assert!(action.is_none());
+    assert_eq!(browser.prompt_mode, Some(BrowserPrompt::NewKeyType("mynewkey".to_string())));
+
+    // Enter type 's' for string
+    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
+    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    match action {
+        Some(BrowserAction::NewKey { name, key_type }) => {
+            assert_eq!(name, "mynewkey");
+            assert_eq!(key_type, RedisType::String);
+        }
+        other => panic!("Expected NewKey action, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_key_browser_n_new_key_esc_cancels() {
+    let mut browser = KeyBrowser::new(':', 500_000);
+
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('n'))));
+    assert!(browser.prompt.is_some());
+
+    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Esc)));
+    assert!(action.is_none());
+    assert!(browser.prompt.is_none());
+}

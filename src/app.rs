@@ -19,7 +19,7 @@ use crate::config::Config;
 use crate::config::connections::{ConnectionMode, ConnectionProfile, ConnectionStore};
 use crate::config::keybindings::Keymap;
 use crate::events::{Event, EventHandler};
-use crate::redis::client::{RedisClient, RedisClientHandle};
+use crate::redis::client::{RedisClient, RedisClientHandle, RedisType};
 use crate::redis::server::slowlog_get;
 use crate::ui::command_palette::{CommandPalette, PaletteAction};
 use crate::ui::connection_screen::{ConnectionScreen, ConnectionScreenAction};
@@ -823,6 +823,31 @@ impl App {
             BrowserAction::RefreshRequested => {
                 self.error_message =
                     Some("Refresh requested but scanner wiring is not initialized".to_string());
+            }
+            BrowserAction::NewKey { name, key_type } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked (press Esc)".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    let result = match key_type {
+                        RedisType::String => client.set_string(&name, "").await,
+                        RedisType::List => client.list_push(&name, "", false).await,
+                        RedisType::Hash => client.hash_set(&name, "", "").await,
+                        RedisType::Set => client.set_add(&name, "").await,
+                        RedisType::ZSet => client.zadd(&name, 0.0, "").await,
+                        RedisType::Stream => {
+                            client.xadd(&name, "*", &[]).await.map(|_| ())
+                        }
+                        RedisType::Unknown => {
+                            self.error_message = Some("Unknown key type".to_string());
+                            return;
+                        }
+                    };
+                    if let Err(err) = result {
+                        self.error_message = Some(format!("Failed to create key: {err}"));
+                    }
+                }
             }
         }
     }

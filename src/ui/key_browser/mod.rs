@@ -12,6 +12,13 @@ use crate::config::keybindings::Keymap;
 use crate::events::Event;
 use crate::redis::client::RedisType;
 use crate::ui::key_browser::tree::{KeyEntry, NamespaceTree};
+use crate::ui::widgets::input::InputWidget;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BrowserPrompt {
+    NewKeyName,
+    NewKeyType(String),
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BrowserState {
@@ -24,6 +31,7 @@ pub enum BrowserState {
 pub enum BrowserAction {
     SelectKey(String, RedisType),
     DeleteKey(String),
+    NewKey { name: String, key_type: RedisType },
     RefreshRequested,
 }
 
@@ -33,6 +41,8 @@ pub struct KeyBrowser {
     pub filter: Option<String>,
     pub state: BrowserState,
     pub current_path: Vec<String>,
+    pub prompt: Option<InputWidget>,
+    pub prompt_mode: Option<BrowserPrompt>,
 }
 
 impl KeyBrowser {
@@ -43,6 +53,8 @@ impl KeyBrowser {
             filter: None,
             state: BrowserState::Scanning { keys_loaded: 0 },
             current_path: Vec::new(),
+            prompt: None,
+            prompt_mode: None,
         }
     }
 
@@ -56,6 +68,47 @@ impl KeyBrowser {
         keymap: &Keymap,
     ) -> Option<BrowserAction> {
         use crossterm::event::KeyCode;
+
+        // Handle inline prompts
+        if let Some(ref mut prompt) = self.prompt {
+            prompt.handle_event(event);
+            if prompt.submitted.is_some() {
+                let val = prompt.submitted.take().unwrap_or_default();
+                let mode = self.prompt_mode.take();
+                self.prompt = None;
+                return match mode {
+                    Some(BrowserPrompt::NewKeyName) => {
+                        if val.is_empty() {
+                            return None;
+                        }
+                        self.prompt = Some(InputWidget::new(
+                            "Key type? (s=String, l=List, h=Hash, z=ZSet, t=Set, x=Stream)"
+                        ));
+                        self.prompt_mode = Some(BrowserPrompt::NewKeyType(val));
+                        None
+                    }
+                    Some(BrowserPrompt::NewKeyType(name)) => {
+                        let r#type = match val.to_lowercase().as_str() {
+                            "s" => Some(RedisType::String),
+                            "l" => Some(RedisType::List),
+                            "h" => Some(RedisType::Hash),
+                            "z" => Some(RedisType::ZSet),
+                            "t" => Some(RedisType::Set),
+                            "x" => Some(RedisType::Stream),
+                            _ => None,
+                        };
+                        r#type.map(|key_type| BrowserAction::NewKey { name, key_type })
+                    }
+                    None => None,
+                };
+            }
+            if prompt.cancelled {
+                self.prompt = None;
+                self.prompt_mode = None;
+            }
+            return None;
+        }
+
         if let Event::Key(key) = event {
             if keymap.matches("nav_down", key) || matches!(key.code, KeyCode::Down) {
                 let rows = self.tree.visible_rows();
@@ -116,6 +169,9 @@ impl KeyBrowser {
                     }
             } else if keymap.matches("refresh", key) {
                 return Some(BrowserAction::RefreshRequested);
+            } else if key.code == KeyCode::Char('n') {
+                    self.prompt = Some(InputWidget::new("New key name:"));
+                    self.prompt_mode = Some(BrowserPrompt::NewKeyName);
             }
         }
         None
@@ -172,6 +228,24 @@ impl KeyBrowser {
             .title(format!("Keys ({}) ", self.tree.total_keys()));
         let list = List::new(items).block(block);
         frame.render_stateful_widget(list, chunks[1], &mut state);
+
+        // Render prompt overlay
+        if let Some(ref prompt) = self.prompt {
+            let prompt_label = match self.prompt_mode {
+                Some(BrowserPrompt::NewKeyName) => "Key name: ",
+                Some(BrowserPrompt::NewKeyType(_)) => "Type (s/l/h/z/t/x): ",
+                None => "Input: ",
+            };
+            let prompt_text = format!(
+                "{}{}{}",
+                prompt_label,
+                prompt.value,
+                if prompt.cursor >= prompt.value.len() { "_" } else { " " }
+            );
+            let overlay = ratatui::widgets::Paragraph::new(prompt_text)
+                .style(Style::default().fg(Color::White).bg(Color::Black));
+            frame.render_widget(overlay, chunks[1]);
+        }
     }
 
     pub fn apply_scan_batch(&mut self, batch: Vec<KeyEntry>) {

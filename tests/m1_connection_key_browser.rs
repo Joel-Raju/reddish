@@ -979,3 +979,61 @@ fn test_key_browser_ctrl_a_selects_all() {
     assert!(browser.selected.contains("key2"));
     assert!(browser.selected.contains("key3"));
 }
+
+#[test]
+fn test_key_browser_s_cycles_sort_mode() {
+    let mut browser = KeyBrowser::new(':', 500_000);
+    assert_eq!(browser.sort_mode, reddish_tui::ui::key_browser::SortMode::Alpha);
+
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
+    assert_eq!(browser.sort_mode, reddish_tui::ui::key_browser::SortMode::ByType);
+
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
+    assert_eq!(browser.sort_mode, reddish_tui::ui::key_browser::SortMode::ByTtl);
+
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
+    assert_eq!(browser.sort_mode, reddish_tui::ui::key_browser::SortMode::Alpha);
+}
+
+#[test]
+fn test_key_browser_sort_mode_label() {
+    assert_eq!(reddish_tui::ui::key_browser::SortMode::Alpha.label(), "alpha");
+    assert_eq!(reddish_tui::ui::key_browser::SortMode::ByType.label(), "type");
+    assert_eq!(reddish_tui::ui::key_browser::SortMode::ByTtl.label(), "ttl");
+}
+
+#[test]
+fn test_key_browser_sorted_rows_alpha() {
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.apply_scan_batch(vec![
+        KeyEntry { full_name: "zeta".to_string(), redis_type: None, ttl: None },
+        KeyEntry { full_name: "alpha".to_string(), redis_type: None, ttl: None },
+        KeyEntry { full_name: "beta".to_string(), redis_type: None, ttl: None },
+    ]);
+
+    let rows: Vec<String> = browser.sorted_rows().iter().map(|r| r.label.clone()).collect();
+    assert_eq!(browser.sort_mode, reddish_tui::ui::key_browser::SortMode::Alpha);
+    // Alpha sort preserves tree insertion order (zeta, alpha, beta)
+    assert_eq!(rows[0], "zeta");
+    assert_eq!(rows[1], "alpha");
+    assert_eq!(rows[2], "beta");
+}
+
+#[test]
+fn test_key_browser_sorted_rows_by_type() {
+    use reddish_tui::redis::client::RedisType;
+
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.apply_scan_batch(vec![
+        KeyEntry { full_name: "list1".to_string(), redis_type: Some(RedisType::List), ttl: None },
+        KeyEntry { full_name: "str1".to_string(), redis_type: Some(RedisType::String), ttl: None },
+    ]);
+
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
+    assert_eq!(browser.sort_mode, reddish_tui::ui::key_browser::SortMode::ByType);
+
+    let rows: Vec<String> = browser.sorted_rows().iter().map(|r| r.label.clone()).collect();
+    // String (type_order=1) before List (type_order=2)
+    assert_eq!(rows[0], "[S] str1");
+    assert_eq!(rows[1], "[L] list1");
+}

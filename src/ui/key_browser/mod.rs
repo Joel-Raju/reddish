@@ -11,8 +11,33 @@ use ratatui::{
 use crate::config::keybindings::Keymap;
 use crate::events::Event;
 use crate::redis::client::RedisType;
-use crate::ui::key_browser::tree::{KeyEntry, NamespaceTree};
+use crate::ui::key_browser::tree::{KeyEntry, NamespaceTree, TreeRow};
 use crate::ui::widgets::input::InputWidget;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortMode {
+    Alpha,
+    ByType,
+    ByTtl,
+}
+
+impl SortMode {
+    pub fn next(self) -> Self {
+        match self {
+            SortMode::Alpha => SortMode::ByType,
+            SortMode::ByType => SortMode::ByTtl,
+            SortMode::ByTtl => SortMode::Alpha,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SortMode::Alpha => "alpha",
+            SortMode::ByType => "type",
+            SortMode::ByTtl => "ttl",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BrowserPrompt {
@@ -50,6 +75,7 @@ pub struct KeyBrowser {
     pub prompt: Option<InputWidget>,
     pub prompt_mode: Option<BrowserPrompt>,
     pub selected: std::collections::HashSet<String>,
+    pub sort_mode: SortMode,
 }
 
 impl KeyBrowser {
@@ -63,6 +89,7 @@ impl KeyBrowser {
             prompt: None,
             prompt_mode: None,
             selected: std::collections::HashSet::new(),
+            sort_mode: SortMode::Alpha,
         }
     }
 
@@ -129,7 +156,7 @@ impl KeyBrowser {
 
         if let Event::Key(key) = event {
             if keymap.matches("nav_down", key) || matches!(key.code, KeyCode::Down) {
-                let rows = self.tree.visible_rows();
+                let rows = self.sorted_rows();
                 if self.cursor + 1 < rows.len() {
                     self.cursor += 1;
                 }
@@ -138,7 +165,7 @@ impl KeyBrowser {
                     self.cursor -= 1;
                 }
             } else if keymap.matches("confirm", key) || matches!(key.code, KeyCode::Enter) {
-                let rows = self.tree.visible_rows();
+                let rows = self.sorted_rows();
                 if let Some(row) = rows.get(self.cursor)
                     && !row.is_namespace
                     && let Some(ref key) = row.key
@@ -151,7 +178,7 @@ impl KeyBrowser {
             } else if keymap.matches("nav_right", key)
                 || matches!(key.code, KeyCode::Right | KeyCode::Char('l'))
             {
-                let rows = self.tree.visible_rows();
+                let rows = self.sorted_rows();
                 if let Some(row) = rows.get(self.cursor)
                     && row.is_namespace
                 {
@@ -161,7 +188,7 @@ impl KeyBrowser {
             } else if keymap.matches("nav_left", key)
                 || matches!(key.code, KeyCode::Left | KeyCode::Char('h'))
             {
-                let rows = self.tree.visible_rows();
+                let rows = self.sorted_rows();
                 if let Some(row) = rows.get(self.cursor)
                     && row.is_namespace
                 {
@@ -179,7 +206,7 @@ impl KeyBrowser {
                         self.cursor = 0;
                     }
             } else if keymap.matches("delete", key) || matches!(key.code, KeyCode::Char('D')) {
-                    let rows = self.tree.visible_rows();
+                    let rows = self.sorted_rows();
                     if let Some(row) = rows.get(self.cursor)
                         && let Some(ref key) = row.key
                     {
@@ -191,7 +218,7 @@ impl KeyBrowser {
                     self.prompt = Some(InputWidget::new("New key name:"));
                     self.prompt_mode = Some(BrowserPrompt::NewKeyName);
             } else if key.code == KeyCode::Char('r') {
-                    let rows = self.tree.visible_rows();
+                    let rows = self.sorted_rows();
                     if let Some(row) = rows.get(self.cursor)
                         && let Some(ref key) = row.key
                     {
@@ -202,14 +229,14 @@ impl KeyBrowser {
                         self.prompt_mode = Some(BrowserPrompt::RenameKey(key.full_name.clone()));
                     }
             } else if key.code == KeyCode::Char('e') {
-                    let rows = self.tree.visible_rows();
+                    let rows = self.sorted_rows();
                     if let Some(row) = rows.get(self.cursor)
                         && let Some(ref key) = row.key
                     {
                         return Some(BrowserAction::ExpireKey(key.full_name.clone()));
                     }
             } else if key.code == KeyCode::Char('t') {
-                    let rows = self.tree.visible_rows();
+                    let rows = self.sorted_rows();
                     if let Some(row) = rows.get(self.cursor)
                         && let Some(ref key) = row.key
                     {
@@ -217,14 +244,14 @@ impl KeyBrowser {
                         self.prompt_mode = Some(BrowserPrompt::SetTtl(key.full_name.clone()));
                     }
             } else if key.code == KeyCode::Char('c') {
-                    let rows = self.tree.visible_rows();
+                    let rows = self.sorted_rows();
                     if let Some(row) = rows.get(self.cursor)
                         && let Some(ref key) = row.key
                     {
                         return Some(BrowserAction::CopyKeyName(key.full_name.clone()));
                     }
             } else if key.code == KeyCode::Char(' ') {
-                    let rows = self.tree.visible_rows();
+                    let rows = self.sorted_rows();
                     if let Some(row) = rows.get(self.cursor)
                         && let Some(ref key) = row.key
                     {
@@ -233,10 +260,12 @@ impl KeyBrowser {
                             self.selected.insert(name);
                         }
                     }
+            } else if key.code == KeyCode::Char('s') {
+                    self.sort_mode = self.sort_mode.next();
             } else if key.code == KeyCode::Char('a')
                 && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
             {
-                    for row in self.tree.visible_rows() {
+                    for row in self.sorted_rows() {
                         if let Some(ref key) = row.key {
                             self.selected.insert(key.full_name.clone());
                         }
@@ -244,6 +273,67 @@ impl KeyBrowser {
             }
         }
         None
+    }
+
+    pub fn sorted_rows(&self) -> Vec<TreeRow> {
+        let mut rows = self.tree.visible_rows().to_vec();
+        if self.sort_mode != SortMode::Alpha {
+            rows.sort_by(|a, b| {
+                match (a.is_namespace, b.is_namespace) {
+                    (true, false) => return std::cmp::Ordering::Less,
+                    (false, true) => return std::cmp::Ordering::Greater,
+                    (true, true) => return a.label.cmp(&b.label),
+                    (false, false) => {}
+                }
+                match self.sort_mode {
+                    SortMode::Alpha => a.label.cmp(&b.label),
+                    SortMode::ByType => {
+                        fn type_order(t: &Option<crate::redis::client::RedisType>) -> u8 {
+                            match t {
+                                None => 0,
+                                Some(crate::redis::client::RedisType::String) => 1,
+                                Some(crate::redis::client::RedisType::List) => 2,
+                                Some(crate::redis::client::RedisType::Hash) => 3,
+                                Some(crate::redis::client::RedisType::Set) => 4,
+                                Some(crate::redis::client::RedisType::ZSet) => 5,
+                                Some(crate::redis::client::RedisType::Stream) => 6,
+                                Some(crate::redis::client::RedisType::Unknown) => 7,
+                            }
+                        }
+                        let a_type = a.key.as_ref().and_then(|k| k.redis_type.clone());
+                        let b_type = b.key.as_ref().and_then(|k| k.redis_type.clone());
+                        type_order(&a_type).cmp(&type_order(&b_type))
+                            .then(a.label.cmp(&b.label))
+                    }
+                    SortMode::ByTtl => {
+                        fn ttl_order(ttl: &Option<crate::redis::client::Ttl>) -> u8 {
+                            match ttl {
+                                None => 3,
+                                Some(crate::redis::client::Ttl::KeyNotFound) => 4,
+                                Some(crate::redis::client::Ttl::NoExpiry) => 2,
+                                Some(crate::redis::client::Ttl::Expires(_)) => 1,
+                            }
+                        }
+                        let a_ttl = a.key.as_ref().and_then(|k| k.ttl.clone());
+                        let b_ttl = b.key.as_ref().and_then(|k| k.ttl.clone());
+                        ttl_order(&a_ttl).cmp(&ttl_order(&b_ttl))
+                            .then_with(|| {
+                                let a_secs: u64 = a_ttl.and_then(|t| match t {
+                                    crate::redis::client::Ttl::Expires(d) => Some(d.as_secs()),
+                                    _ => None,
+                                }).unwrap_or(0);
+                                let b_secs: u64 = b_ttl.and_then(|t| match t {
+                                    crate::redis::client::Ttl::Expires(d) => Some(d.as_secs()),
+                                    _ => None,
+                                }).unwrap_or(0);
+                                a_secs.cmp(&b_secs)
+                            })
+                            .then(a.label.cmp(&b.label))
+                    }
+                }
+            });
+        }
+        rows
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
@@ -273,7 +363,7 @@ impl KeyBrowser {
         frame.render_widget(breadcrumb, chunks[0]);
 
         // Key list
-        let rows = self.tree.visible_rows();
+        let rows = self.sorted_rows();
         let items: Vec<ListItem> = rows
             .iter()
             .enumerate()
@@ -305,7 +395,7 @@ impl KeyBrowser {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(format!("Keys ({}) ", self.tree.total_keys()));
+            .title(format!("Keys ({}) [sort: {}] ", self.tree.total_keys(), self.sort_mode.label()));
         let list = List::new(items).block(block);
         frame.render_stateful_widget(list, chunks[1], &mut state);
 

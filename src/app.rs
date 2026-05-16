@@ -1067,6 +1067,13 @@ impl App {
                     self.reload_inspector_value(&key).await;
                 }
             }
+            InspectorAction::CopyValue(val) => {
+                #[cfg(not(test))]
+                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                    let _ = clipboard.set_text(val.clone());
+                }
+                self.error_message = Some(format!("Copied: {}", val));
+            }
         }
     }
 

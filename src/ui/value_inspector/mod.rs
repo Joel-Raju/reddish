@@ -78,6 +78,7 @@ pub enum InspectorAction {
     ZRem { key: String, member: String },
     StreamAdd { key: String, entry_id: String, fields: Vec<(String, String)> },
     StreamRem { key: String, entry_id: String },
+    CopyValue(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -94,6 +95,7 @@ pub enum PromptMode {
     ZSetEditScore(String, usize),
     StreamAddId,
     StreamAddFields(String),
+    SetTtlSeconds,
 }
 
 pub struct ValueInspector {
@@ -319,6 +321,15 @@ impl ValueInspector {
                         }
                         Some(InspectorAction::StreamAdd { key, entry_id, fields })
                     }
+                    Some(PromptMode::SetTtlSeconds) => {
+                        if val.trim().is_empty() {
+                            // Persist key: set TTL to -1 so handle_inspector_action knows
+                            Some(InspectorAction::SetTtl { key, seconds: -1 })
+                        } else {
+                            let seconds = val.parse::<i64>().ok()?;
+                            Some(InspectorAction::SetTtl { key, seconds })
+                        }
+                    }
                     None => None,
                 };
             }
@@ -337,6 +348,15 @@ impl ValueInspector {
                 if let Some(RedisValue::String(ref s)) = self.value {
                     self.edit_mode = true;
                     self.text_editor = Some(TextAreaEditor::new(s.clone()));
+                }
+            }
+            KeyCode::Char('t') => {
+                self.list_prompt = Some(InputWidget::new("TTL in seconds (blank=persist)"));
+                self.prompt_mode = Some(PromptMode::SetTtlSeconds);
+            }
+            KeyCode::Char('y') => {
+                if let Some(RedisValue::String(ref s)) = self.value {
+                    return Some(InspectorAction::CopyValue(s.clone()));
                 }
             }
             _ => {}
@@ -380,6 +400,11 @@ impl ValueInspector {
                         self.prompt_mode = Some(PromptMode::Lset(self.list_cursor));
                     }
                 }
+                KeyCode::Char('y') => {
+                    if let Some(val) = items.get(self.list_cursor) {
+                        return Some(InspectorAction::CopyValue(val.clone()));
+                    }
+                }
                 _ => {}
             }
         }
@@ -419,6 +444,11 @@ impl ValueInspector {
                         self.prompt_mode = Some(PromptMode::HashEdit((*field).clone(), self.hash_cursor));
                     }
                 }
+                KeyCode::Char('y') => {
+                    if let Some((_, val)) = fields.get(self.hash_cursor) {
+                        return Some(InspectorAction::CopyValue((*val).clone()));
+                    }
+                }
                 _ => {}
             }
         }
@@ -443,6 +473,11 @@ impl ValueInspector {
                             key: self.key.clone().unwrap_or_default(),
                             member: (*member).clone(),
                         });
+                    }
+                }
+                KeyCode::Char('y') => {
+                    if let Some(member) = items.get(self.set_cursor) {
+                        return Some(InspectorAction::CopyValue((*member).clone()));
                     }
                 }
                 _ => {}
@@ -482,6 +517,11 @@ impl ValueInspector {
                 KeyCode::Char('s') => {
                     self.zset_sort_score_asc = !self.zset_sort_score_asc;
                 }
+                KeyCode::Char('y') => {
+                    if let Some(entry) = entries.get(self.zset_cursor) {
+                        return Some(InspectorAction::CopyValue(entry.member.clone()));
+                    }
+                }
                 _ => {}
             }
         }
@@ -513,6 +553,11 @@ impl ValueInspector {
                 KeyCode::Char('g') | KeyCode::Char('G') => {
                     if !entries.is_empty() {
                         self.stream_cursor = entries.len() - 1;
+                    }
+                }
+                KeyCode::Char('y') => {
+                    if let Some(entry) = entries.get(self.stream_cursor) {
+                        return Some(InspectorAction::CopyValue(entry.id.clone()));
                     }
                 }
                 _ => {}

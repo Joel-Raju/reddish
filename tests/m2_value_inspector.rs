@@ -1055,3 +1055,169 @@ async fn test_redis_zrange_withscores() {
         .await
         .unwrap();
 }
+
+#[test]
+fn test_inspector_t_ttl_opens_prompt() {
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::ValueInspector;
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("mykey".to_string(), RedisValue::String("hello".to_string()));
+
+    assert!(inspector.list_prompt.is_none());
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('t'))));
+    assert!(action.is_none());
+    assert!(inspector.list_prompt.is_some());
+}
+
+#[test]
+fn test_inspector_t_ttl_submit() {
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("mykey".to_string(), RedisValue::String("hello".to_string()));
+
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('t'))));
+    for c in "3600".chars() {
+        inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    match action {
+        Some(InspectorAction::SetTtl { key, seconds }) => {
+            assert_eq!(key, "mykey");
+            assert_eq!(seconds, 3600);
+        }
+        other => panic!("Expected SetTtl, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_inspector_t_ttl_blank_persists() {
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("mykey".to_string(), RedisValue::String("hello".to_string()));
+
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('t'))));
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    match action {
+        Some(InspectorAction::SetTtl { key, seconds }) => {
+            assert_eq!(key, "mykey");
+            assert_eq!(seconds, -1);
+        }
+        other => panic!("Expected SetTtl(-1), got {:?}", other),
+    }
+}
+
+#[test]
+fn test_inspector_y_copy_string() {
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("mykey".to_string(), RedisValue::String("hello".to_string()));
+
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('y'))));
+    match action {
+        Some(InspectorAction::CopyValue(val)) => {
+            assert_eq!(val, "hello");
+        }
+        other => panic!("Expected CopyValue, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_inspector_y_copy_list() {
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("mylist".to_string(), RedisValue::List(vec!["a".to_string(), "b".to_string()]));
+
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('y'))));
+    match action {
+        Some(InspectorAction::CopyValue(val)) => {
+            assert_eq!(val, "a");
+        }
+        other => panic!("Expected CopyValue, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_inspector_y_copy_hash() {
+    use indexmap::IndexMap;
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut entries = IndexMap::new();
+    entries.insert("name".to_string(), "alice".to_string());
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("myhash".to_string(), RedisValue::Hash(entries));
+
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('y'))));
+    match action {
+        Some(InspectorAction::CopyValue(val)) => {
+            assert_eq!(val, "alice");
+        }
+        other => panic!("Expected CopyValue, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_inspector_y_copy_set() {
+    use std::collections::BTreeSet;
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut members = BTreeSet::new();
+    members.insert("member1".to_string());
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("myset".to_string(), RedisValue::Set(members));
+
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('y'))));
+    match action {
+        Some(InspectorAction::CopyValue(val)) => {
+            assert_eq!(val, "member1");
+        }
+        other => panic!("Expected CopyValue, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_inspector_y_copy_zset() {
+    use reddish_tui::redis::types::{RedisValue, ZSetEntry};
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let entries = vec![ZSetEntry { member: "zmember".to_string(), score: 1.0 }];
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("myzset".to_string(), RedisValue::ZSet(entries));
+
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('y'))));
+    match action {
+        Some(InspectorAction::CopyValue(val)) => {
+            assert_eq!(val, "zmember");
+        }
+        other => panic!("Expected CopyValue, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_inspector_y_copy_stream() {
+    use indexmap::IndexMap;
+    use reddish_tui::redis::types::{RedisValue, StreamEntry};
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let entries = vec![StreamEntry { id: "123-0".to_string(), fields: IndexMap::new() }];
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("mystream".to_string(), RedisValue::Stream(entries));
+
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('y'))));
+    match action {
+        Some(InspectorAction::CopyValue(val)) => {
+            assert_eq!(val, "123-0");
+        }
+        other => panic!("Expected CopyValue, got {:?}", other),
+    }
+}

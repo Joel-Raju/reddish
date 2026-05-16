@@ -418,7 +418,23 @@ impl App {
                             self.mode_stack.pop();
                         }
                     }
-                    ConnectionScreenAction::Save(_) | ConnectionScreenAction::Delete(_) => {}
+                    ConnectionScreenAction::Save(profile) => {
+                        let screen = self.connection_screen.as_mut().unwrap();
+                        screen.store.add(profile);
+                        if let Err(err) = screen.store.save() {
+                            screen.error = Some(format!("Failed to save: {err}"));
+                        }
+                    }
+                    ConnectionScreenAction::Delete(name) => {
+                        let screen = self.connection_screen.as_mut().unwrap();
+                        screen.store.remove(&name);
+                        if let Err(err) = screen.store.save() {
+                            screen.error = Some(format!("Failed to save: {err}"));
+                        }
+                        screen.cursor = screen.cursor.min(
+                            screen.store.profiles.len().saturating_sub(1),
+                        );
+                    }
                 }
             }
             return;

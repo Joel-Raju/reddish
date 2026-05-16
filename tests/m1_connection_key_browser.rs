@@ -521,3 +521,262 @@ fn test_scan_batch_updates_browser() {
         reddish_tui::ui::key_browser::BrowserState::Scanning { keys_loaded: 50 }
     ));
 }
+
+#[test]
+fn test_connection_screen_new_profile_creates_action() {
+    use reddish_tui::ui::connection_screen::{ConnectionScreen, ConnectionScreenAction};
+
+    let store = ConnectionStore {
+        path: std::path::PathBuf::from("/tmp/test_connections.toml"),
+        profiles: vec![
+            ConnectionProfile {
+                name: "local".to_string(),
+                host: "127.0.0.1".to_string(),
+                port: 6379,
+                db: 0,
+                ..Default::default()
+            },
+        ],
+    };
+    let mut screen = ConnectionScreen::new(store);
+
+    // Press n for new profile
+    let action = screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('n'))));
+    assert!(action.is_none()); // No action yet, switches to form mode
+
+    // Fill in form fields via Tab and Char
+    // Name field is active, type "prod"
+    for c in "prod".chars() {
+        screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+    // Tab to Host
+    screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+    for c in "10.0.0.1".chars() {
+        screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+    // Tab to Port
+    screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+    for c in "6380".chars() {
+        screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+    // Tab to DB
+    screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+    for c in "1".chars() {
+        screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+    // Tab to Username
+    screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+    // Tab to Password
+    screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+    // Submit
+    let action = screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+
+    match action {
+        Some(ConnectionScreenAction::Save(profile)) => {
+            assert_eq!(profile.name, "prod");
+            assert_eq!(profile.host, "10.0.0.1");
+            assert_eq!(profile.port, 6380);
+            assert_eq!(profile.db, 1);
+        }
+        other => panic!("Expected Save action, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_connection_screen_delete_profile() {
+    use reddish_tui::ui::connection_screen::{ConnectionScreen, ConnectionScreenAction};
+
+    let store = ConnectionStore {
+        path: std::path::PathBuf::from("/tmp/test_connections.toml"),
+        profiles: vec![
+            ConnectionProfile {
+                name: "local".to_string(),
+                host: "127.0.0.1".to_string(),
+                port: 6379,
+                db: 0,
+                ..Default::default()
+            },
+        ],
+    };
+    let mut screen = ConnectionScreen::new(store);
+
+    // Press d for delete
+    let action = screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('d'))));
+    assert!(action.is_none()); // Enters confirm mode
+
+    // Press y to confirm
+    let action = screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('y'))));
+    assert_eq!(action, Some(ConnectionScreenAction::Delete("local".to_string())));
+}
+
+#[test]
+fn test_connection_screen_delete_cancelled() {
+    use reddish_tui::ui::connection_screen::ConnectionScreen;
+
+    let store = ConnectionStore {
+        path: std::path::PathBuf::from("/tmp/test_connections.toml"),
+        profiles: vec![
+            ConnectionProfile {
+                name: "local".to_string(),
+                host: "127.0.0.1".to_string(),
+                port: 6379,
+                db: 0,
+                ..Default::default()
+            },
+        ],
+    };
+    let mut screen = ConnectionScreen::new(store);
+
+    // Press d for delete
+    screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('d'))));
+
+    // Press n to cancel
+    let action = screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('n'))));
+    assert!(action.is_none());
+}
+
+#[test]
+fn test_connection_screen_edit_profile() {
+    use reddish_tui::ui::connection_screen::{ConnectionScreen, ConnectionScreenAction};
+
+    let store = ConnectionStore {
+        path: std::path::PathBuf::from("/tmp/test_connections.toml"),
+        profiles: vec![
+            ConnectionProfile {
+                name: "local".to_string(),
+                host: "127.0.0.1".to_string(),
+                port: 6379,
+                db: 0,
+                ..Default::default()
+            },
+        ],
+    };
+    let mut screen = ConnectionScreen::new(store);
+
+    // Press e for edit
+    let action = screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
+    assert!(action.is_none()); // Enters form mode
+
+    // Clear name field with Ctrl+U and type new name
+    screen.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char('u'), crossterm::event::KeyModifiers::CONTROL)));
+    for c in "staging".chars() {
+        screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+
+    // Submit
+    let action = screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+
+    match action {
+        Some(ConnectionScreenAction::Save(profile)) => {
+            assert_eq!(profile.name, "staging");
+            assert_eq!(profile.host, "127.0.0.1"); // unchanged
+            assert_eq!(profile.port, 6379); // unchanged
+        }
+        other => panic!("Expected Save action, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_connection_screen_edit_cancelled() {
+    use reddish_tui::ui::connection_screen::ConnectionScreen;
+
+    let store = ConnectionStore {
+        path: std::path::PathBuf::from("/tmp/test_connections.toml"),
+        profiles: vec![
+            ConnectionProfile {
+                name: "local".to_string(),
+                host: "127.0.0.1".to_string(),
+                port: 6379,
+                db: 0,
+                ..Default::default()
+            },
+        ],
+    };
+    let mut screen = ConnectionScreen::new(store);
+
+    // Press e for edit
+    screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
+
+    // Press Esc to cancel
+    let action = screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Esc)));
+    assert!(action.is_none());
+}
+
+#[test]
+fn test_connection_screen_connect_from_list() {
+    use reddish_tui::ui::connection_screen::{ConnectionScreen, ConnectionScreenAction};
+
+    let store = ConnectionStore {
+        path: std::path::PathBuf::from("/tmp/test_connections.toml"),
+        profiles: vec![
+            ConnectionProfile {
+                name: "local".to_string(),
+                host: "127.0.0.1".to_string(),
+                port: 6379,
+                db: 0,
+                ..Default::default()
+            },
+        ],
+    };
+    let mut screen = ConnectionScreen::new(store);
+
+    // Press Enter to connect
+    let action = screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    assert_eq!(
+        action,
+        Some(ConnectionScreenAction::Connect(ConnectionProfile {
+            name: "local".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 6379,
+            db: 0,
+            ..Default::default()
+        }))
+    );
+}
+
+#[test]
+fn test_connection_screen_cancel() {
+    use reddish_tui::ui::connection_screen::{ConnectionScreen, ConnectionScreenAction};
+
+    let store = ConnectionStore {
+        path: std::path::PathBuf::from("/tmp/test_connections.toml"),
+        profiles: vec![
+            ConnectionProfile {
+                name: "local".to_string(),
+                host: "127.0.0.1".to_string(),
+                port: 6379,
+                db: 0,
+                ..Default::default()
+            },
+        ],
+    };
+    let mut screen = ConnectionScreen::new(store);
+
+    // Press Esc to cancel
+    let action = screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Esc)));
+    assert_eq!(action, Some(ConnectionScreenAction::Cancel));
+}
+
+#[test]
+fn test_connection_screen_renders_without_panic() {
+    use ratatui::backend::TestBackend;
+    use reddish_tui::ui::connection_screen::ConnectionScreen;
+
+    let store = ConnectionStore {
+        path: std::path::PathBuf::from("/tmp/test_connections.toml"),
+        profiles: vec![
+            ConnectionProfile {
+                name: "local".to_string(),
+                host: "127.0.0.1".to_string(),
+                port: 6379,
+                db: 0,
+                ..Default::default()
+            },
+        ],
+    };
+    let screen = ConnectionScreen::new(store);
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let _ = terminal.draw(|f| screen.render(f, f.area()));
+}

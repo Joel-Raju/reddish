@@ -821,8 +821,11 @@ impl App {
                 self.mode_stack.push(AppMode::Confirm);
             }
             BrowserAction::RefreshRequested => {
-                self.error_message =
-                    Some("Refresh requested but scanner wiring is not initialized".to_string());
+                if let Some(ref profile) = self.last_profile {
+                    self.start_scan_for_profile(&profile.clone()).await;
+                } else {
+                    self.error_message = Some("No connection to refresh".to_string());
+                }
             }
             BrowserAction::NewKey { name, key_type } => {
                 if self.readonly {

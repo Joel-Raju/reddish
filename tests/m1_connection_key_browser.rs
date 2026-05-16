@@ -924,3 +924,58 @@ fn test_key_browser_t_ttl_submit() {
         other => panic!("Expected SetTtl, got {:?}", other),
     }
 }
+
+#[test]
+fn test_key_browser_space_selects_key() {
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.apply_scan_batch(vec![
+        KeyEntry { full_name: "key1".to_string(), redis_type: None, ttl: None },
+        KeyEntry { full_name: "key2".to_string(), redis_type: None, ttl: None },
+    ]);
+
+    assert!(browser.selected.is_empty());
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(' '))));
+    assert_eq!(browser.selected.len(), 1);
+    assert!(browser.selected.contains("key1"));
+
+    // Toggle off
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(' '))));
+    assert!(browser.selected.is_empty());
+}
+
+#[test]
+fn test_key_browser_space_on_different_keys() {
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.apply_scan_batch(vec![
+        KeyEntry { full_name: "key1".to_string(), redis_type: None, ttl: None },
+        KeyEntry { full_name: "key2".to_string(), redis_type: None, ttl: None },
+    ]);
+
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(' '))));
+    assert!(browser.selected.contains("key1"));
+
+    // Navigate down and select key2
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(' '))));
+    assert_eq!(browser.selected.len(), 2);
+    assert!(browser.selected.contains("key1"));
+    assert!(browser.selected.contains("key2"));
+}
+
+#[test]
+fn test_key_browser_ctrl_a_selects_all() {
+    use crossterm::event::KeyModifiers;
+
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.apply_scan_batch(vec![
+        KeyEntry { full_name: "key1".to_string(), redis_type: None, ttl: None },
+        KeyEntry { full_name: "key2".to_string(), redis_type: None, ttl: None },
+        KeyEntry { full_name: "key3".to_string(), redis_type: None, ttl: None },
+    ]);
+
+    browser.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)));
+    assert_eq!(browser.selected.len(), 3);
+    assert!(browser.selected.contains("key1"));
+    assert!(browser.selected.contains("key2"));
+    assert!(browser.selected.contains("key3"));
+}

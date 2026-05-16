@@ -49,6 +49,7 @@ pub struct KeyBrowser {
     pub current_path: Vec<String>,
     pub prompt: Option<InputWidget>,
     pub prompt_mode: Option<BrowserPrompt>,
+    pub selected: std::collections::HashSet<String>,
 }
 
 impl KeyBrowser {
@@ -61,6 +62,7 @@ impl KeyBrowser {
             current_path: Vec::new(),
             prompt: None,
             prompt_mode: None,
+            selected: std::collections::HashSet::new(),
         }
     }
 
@@ -221,6 +223,24 @@ impl KeyBrowser {
                     {
                         return Some(BrowserAction::CopyKeyName(key.full_name.clone()));
                     }
+            } else if key.code == KeyCode::Char(' ') {
+                    let rows = self.tree.visible_rows();
+                    if let Some(row) = rows.get(self.cursor)
+                        && let Some(ref key) = row.key
+                    {
+                        let name = key.full_name.clone();
+                        if !self.selected.remove(&name) {
+                            self.selected.insert(name);
+                        }
+                    }
+            } else if key.code == KeyCode::Char('a')
+                && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL)
+            {
+                    for row in self.tree.visible_rows() {
+                        if let Some(ref key) = row.key {
+                            self.selected.insert(key.full_name.clone());
+                        }
+                    }
             }
         }
         None
@@ -259,9 +279,20 @@ impl KeyBrowser {
             .enumerate()
             .map(|(i, row)| {
                 let indent = "  ".repeat(row.depth);
-                let text = format!("{}{}", indent, row.label);
+                let sel = if let Some(ref key) = row.key
+                    && self.selected.contains(&key.full_name)
+                {
+                    "*"
+                } else {
+                    " "
+                };
+                let text = format!("{}{}{}", indent, sel, row.label);
                 let style = if i == self.cursor {
                     Style::default().bg(Color::Blue).fg(Color::White)
+                } else if let Some(ref key) = row.key
+                    && self.selected.contains(&key.full_name)
+                {
+                    Style::default().bg(Color::DarkGray).fg(Color::White)
                 } else {
                     Style::default()
                 };

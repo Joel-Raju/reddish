@@ -56,6 +56,62 @@ fn test_value_viewer_renders_without_panic() {
     let _ = terminal.draw(|f| viewer.render(f, f.area()));
 }
 
+#[test]
+fn test_value_inspector_metadata_starts_empty() {
+    let inspector = reddish_tui::ui::value_inspector::ValueInspector::new();
+    assert!(inspector.encoding.is_none());
+    assert!(inspector.memory_bytes.is_none());
+    assert!(inspector.ttl.is_none());
+}
+
+#[test]
+fn test_value_inspector_set_metadata() {
+    use reddish_tui::redis::client::Ttl;
+    use std::time::Duration;
+
+    let mut inspector = reddish_tui::ui::value_inspector::ValueInspector::new();
+    inspector.set_metadata(
+        Some("embstr".to_string()),
+        Some(1024),
+        Some(Ttl::Expires(Duration::from_secs(300))),
+    );
+    assert_eq!(inspector.encoding.as_deref(), Some("embstr"));
+    assert_eq!(inspector.memory_bytes, Some(1024));
+    assert_eq!(inspector.ttl, Some(Ttl::Expires(Duration::from_secs(300))));
+}
+
+#[test]
+fn test_value_inspector_metadata_cleared_on_set_loading() {
+    use reddish_tui::redis::client::Ttl;
+
+    let mut inspector = reddish_tui::ui::value_inspector::ValueInspector::new();
+    inspector.set_metadata(Some("embstr".to_string()), Some(1024), Some(Ttl::NoExpiry));
+    inspector.set_loading("test_key".to_string());
+    assert!(inspector.encoding.is_none());
+    assert!(inspector.memory_bytes.is_none());
+    assert!(inspector.ttl.is_none());
+}
+
+#[test]
+fn test_value_inspector_renders_with_metadata() {
+    use ratatui::backend::TestBackend;
+    use reddish_tui::redis::client::Ttl;
+    use reddish_tui::redis::types::RedisValue;
+    use std::time::Duration;
+
+    let mut inspector = reddish_tui::ui::value_inspector::ValueInspector::new();
+    inspector.set_value("testkey".to_string(), RedisValue::String("hello".to_string()));
+    inspector.set_metadata(
+        Some("embstr".to_string()),
+        Some(512),
+        Some(Ttl::Expires(Duration::from_secs(60))),
+    );
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let _ = terminal.draw(|f| inspector.render(f, f.area()));
+}
+
 #[tokio::test]
 async fn test_redis_get_set_string() {
     let profile = reddish_tui::config::connections::ConnectionProfile {

@@ -760,8 +760,26 @@ impl App {
             BrowserAction::SelectKey(name, r_type) => {
                 self.value_inspector.set_loading(name.clone());
                 if let Some(client) = &self.client {
-                    match client.get_value(&name, r_type).await {
-                        Ok(value) => self.value_inspector.set_value(name, value),
+                    let value_fut = client.get_value(&name, r_type);
+                    let ttl_fut = client.ttl(&name);
+                    let encoding_fut = client.object_encoding(&name);
+                    let memory_fut = client.memory_usage(&name);
+
+                    let (value_res, ttl_res, encoding_res, memory_res) = tokio::join!(
+                        value_fut,
+                        ttl_fut,
+                        encoding_fut,
+                        memory_fut,
+                    );
+
+                    match value_res {
+                        Ok(value) => {
+                            self.value_inspector.set_value(name, value);
+                            let encoding = encoding_res.ok();
+                            let memory_bytes = memory_res.ok();
+                            let ttl = ttl_res.ok();
+                            self.value_inspector.set_metadata(encoding, memory_bytes, ttl);
+                        }
                         Err(err) => {
                             self.value_inspector
                                 .set_error(Some(name), format!("Failed to load value: {err}"));

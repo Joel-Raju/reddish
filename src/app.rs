@@ -7,6 +7,7 @@ use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
+    style::{Color, Style},
     widgets::{Block, Borders, Paragraph},
 };
 use std::io::Stdout;
@@ -42,6 +43,7 @@ pub enum AppMode {
     Search,
     Confirm,
     ConnectionScreen,
+    ReplOverlay,
 }
 
 fn redis_value_to_string(value: &redis::Value) -> String {
@@ -132,6 +134,7 @@ pub struct App {
     tick_count: u64,
     reconnect_attempt: u32,
     pub pending_delete_key: Option<String>,
+    pub overlay_input: Option<crate::ui::widgets::input::InputWidget>,
 }
 
 impl App {
@@ -164,6 +167,7 @@ impl App {
             tick_count: 0,
             reconnect_attempt: 0,
             pending_delete_key: None,
+            overlay_input: None,
         }
     }
 
@@ -445,6 +449,29 @@ impl App {
             return;
         }
 
+        if self.mode() == &AppMode::ReplOverlay {
+            match key.code {
+                KeyCode::Esc => {
+                    self.overlay_input = None;
+                    self.mode_stack.pop();
+                }
+                KeyCode::Enter => {
+                    let cmd = self.overlay_input.as_ref().map(|o| o.value.clone()).unwrap_or_default();
+                    self.overlay_input = None;
+                    self.mode_stack.pop();
+                    if !cmd.is_empty() {
+                        self.execute_repl_command(cmd).await;
+                    }
+                }
+                _ => {
+                    if let Some(ref mut overlay) = self.overlay_input {
+                        overlay.handle_event(&Event::Key(key));
+                    }
+                }
+            }
+            return;
+        }
+
         if let Some(ref mut palette) = self.command_palette {
             if let Some(action) = palette.handle_event(&Event::Key(key)) {
                 match action {
@@ -530,6 +557,11 @@ impl App {
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
                 self.reconnect_active_connection().await;
+                return;
+            }
+            KeyCode::Char(':') => {
+                self.mode_stack.push(AppMode::ReplOverlay);
+                self.overlay_input = Some(crate::ui::widgets::input::InputWidget::new(""));
                 return;
             }
             _ => {}
@@ -1215,6 +1247,21 @@ impl App {
             let dialog = ConfirmDialog::new(format!("Delete key '{}'?", key_name));
             let area = centered_rect(60, 20, frame.area());
             dialog.render(frame, area);
+        }
+
+        if self.mode() == &AppMode::ReplOverlay {
+            let area = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(0), Constraint::Length(1)])
+                .split(frame.area())[1];
+            let prompt_text = if let Some(ref overlay) = self.overlay_input {
+                format!(":{}", overlay.value)
+            } else {
+                String::new()
+            };
+            let paragraph = Paragraph::new(prompt_text)
+                .style(Style::default().fg(Color::Yellow));
+            frame.render_widget(paragraph, area);
         }
 
         if self.mode() == &AppMode::Help {

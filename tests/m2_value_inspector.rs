@@ -590,6 +590,138 @@ fn test_zset_editor_renders_without_panic() {
     let _ = terminal.draw(|f| inspector.render(f, f.area()));
 }
 
+#[test]
+fn test_stream_editor_navigation() {
+    use reddish_tui::redis::types::{RedisValue, StreamEntry};
+    use reddish_tui::ui::value_inspector::ValueInspector;
+    use indexmap::IndexMap;
+
+    let entries = vec![
+        StreamEntry { id: "1-0".into(), fields: IndexMap::new() },
+        StreamEntry { id: "2-0".into(), fields: IndexMap::new() },
+        StreamEntry { id: "3-0".into(), fields: IndexMap::new() },
+    ];
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("mystream".to_string(), RedisValue::Stream(entries));
+
+    assert_eq!(inspector.stream_cursor, 0);
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
+    assert_eq!(inspector.stream_cursor, 1);
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Up)));
+    assert_eq!(inspector.stream_cursor, 0);
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Down)));
+    assert_eq!(inspector.stream_cursor, 1);
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('k'))));
+    assert_eq!(inspector.stream_cursor, 0);
+}
+
+#[test]
+fn test_stream_editor_a_add() {
+    use reddish_tui::redis::types::{RedisValue, StreamEntry};
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+    use indexmap::IndexMap;
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("mystream".to_string(), RedisValue::Stream(vec![
+        StreamEntry { id: "1-0".into(), fields: IndexMap::new() },
+    ]));
+
+    // First step: Entry ID (empty = auto *)
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    assert!(action.is_none()); // transitions to fields prompt
+
+    // Second step: fields
+    for c in "temp=25".chars() {
+        inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    match action {
+        Some(InspectorAction::StreamAdd { key, entry_id, fields }) => {
+            assert_eq!(key, "mystream");
+            assert_eq!(entry_id, "*");
+            assert_eq!(fields, vec![("temp".to_string(), "25".to_string())]);
+        }
+        other => panic!("Expected StreamAdd, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_stream_editor_d_remove() {
+    use reddish_tui::redis::types::{RedisValue, StreamEntry};
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+    use indexmap::IndexMap;
+
+    let mut fields = IndexMap::new();
+    fields.insert("temp".to_string(), "25".to_string());
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("mystream".to_string(), RedisValue::Stream(vec![
+        StreamEntry { id: "1-0".into(), fields: fields.clone() },
+        StreamEntry { id: "2-0".into(), fields },
+    ]));
+
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+
+    match action {
+        Some(InspectorAction::StreamRem { key, entry_id }) => {
+            assert_eq!(key, "mystream");
+            assert_eq!(entry_id, "2-0");
+        }
+        other => panic!("Expected StreamRem, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_stream_editor_g_jumps_to_end() {
+    use reddish_tui::redis::types::{RedisValue, StreamEntry};
+    use reddish_tui::ui::value_inspector::ValueInspector;
+    use indexmap::IndexMap;
+
+    let entries = vec![
+        StreamEntry { id: "1-0".into(), fields: IndexMap::new() },
+        StreamEntry { id: "2-0".into(), fields: IndexMap::new() },
+        StreamEntry { id: "3-0".into(), fields: IndexMap::new() },
+    ];
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("mystream".to_string(), RedisValue::Stream(entries));
+
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('g'))));
+    assert_eq!(inspector.stream_cursor, 2);
+}
+
+#[test]
+fn test_stream_editor_renders_without_panic() {
+    use indexmap::IndexMap;
+    use ratatui::backend::TestBackend;
+    use reddish_tui::redis::types::{RedisValue, StreamEntry};
+    use reddish_tui::ui::value_inspector::ValueInspector;
+
+    let mut fields = IndexMap::new();
+    fields.insert("temp".to_string(), "25".to_string());
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("mystream".to_string(), RedisValue::Stream(vec![
+        StreamEntry { id: "1-0".into(), fields: fields.clone() },
+        StreamEntry { id: "2-0".into(), fields },
+    ]));
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let _ = terminal.draw(|f| inspector.render(f, f.area()));
+
+    // Toggle full view
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('f'))));
+    let _ = terminal.draw(|f| inspector.render(f, f.area()));
+
+    // Render with prompt open
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
+    let _ = terminal.draw(|f| inspector.render(f, f.area()));
+}
+
 #[tokio::test]
 async fn test_redis_get_set_string() {
     let profile = reddish_tui::config::connections::ConnectionProfile {

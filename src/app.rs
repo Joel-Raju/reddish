@@ -972,6 +972,33 @@ impl App {
                     self.reload_inspector_value(&key).await;
                 }
             }
+            InspectorAction::StreamAdd { key, entry_id, fields } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    let field_refs: Vec<(&str, &str)> = fields.iter().map(|(f, v)| (f.as_str(), v.as_str())).collect();
+                    if let Err(err) = client.xadd(&key, &entry_id, &field_refs).await {
+                        self.error_message = Some(format!("Failed to add stream entry: {err}"));
+                        return;
+                    }
+                    self.reload_inspector_value(&key).await;
+                }
+            }
+            InspectorAction::StreamRem { key, entry_id } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    if let Err(err) = client.xdel(&key, &entry_id).await {
+                        self.error_message = Some(format!("Failed to delete stream entry: {err}"));
+                        return;
+                    }
+                    self.reload_inspector_value(&key).await;
+                }
+            }
         }
     }
 

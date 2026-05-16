@@ -661,12 +661,12 @@ impl RedisClientHandle {
         self.zadd(key, score, member).await
     }
 
-    pub async fn xadd(&self, key: &str, fields: &[(&str, &str)]) -> Result<String> {
+    pub async fn xadd(&self, key: &str, entry_id: &str, fields: &[(&str, &str)]) -> Result<String> {
         match &self.client {
             RedisClient::Standalone(conn) => {
                 let mut c = conn.clone();
                 let mut cmd = redis::cmd("XADD");
-                cmd.arg(key).arg("*");
+                cmd.arg(key).arg(entry_id);
                 for (field, value) in fields {
                     cmd.arg(field).arg(value);
                 }

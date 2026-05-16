@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::events::Event;
 use crate::redis::client::Ttl;
-use crate::redis::types::{RedisValue, ZSetEntry};
+use crate::redis::types::{RedisValue, StreamEntry, ZSetEntry};
 use crate::ui::widgets::input::InputWidget;
 use crate::ui::widgets::text_area_editor::TextAreaEditor;
 
@@ -76,6 +76,8 @@ pub enum InspectorAction {
     SetRem { key: String, member: String },
     ZAdd { key: String, score: f64, member: String },
     ZRem { key: String, member: String },
+    StreamAdd { key: String, entry_id: String, fields: Vec<(String, String)> },
+    StreamRem { key: String, entry_id: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,6 +92,8 @@ pub enum PromptMode {
     ZSetAddMember,
     ZSetAddScore(String),
     ZSetEditScore(String, usize),
+    StreamAddId,
+    StreamAddFields(String),
 }
 
 pub struct ValueInspector {
@@ -108,6 +112,8 @@ pub struct ValueInspector {
     pub set_cursor: usize,
     pub zset_cursor: usize,
     pub zset_sort_score_asc: bool,
+    pub stream_cursor: usize,
+    pub stream_compact: bool,
     pub list_prompt: Option<InputWidget>,
     pub prompt_mode: Option<PromptMode>,
 }
@@ -136,6 +142,8 @@ impl ValueInspector {
             set_cursor: 0,
             zset_cursor: 0,
             zset_sort_score_asc: true,
+            stream_cursor: 0,
+            stream_compact: true,
             list_prompt: None,
             prompt_mode: None,
         }
@@ -156,6 +164,8 @@ impl ValueInspector {
         self.set_cursor = 0;
         self.zset_cursor = 0;
         self.zset_sort_score_asc = true;
+        self.stream_cursor = 0;
+        self.stream_compact = true;
         self.list_prompt = None;
         self.prompt_mode = None;
     }
@@ -175,6 +185,8 @@ impl ValueInspector {
         self.set_cursor = 0;
         self.zset_cursor = 0;
         self.zset_sort_score_asc = true;
+        self.stream_cursor = 0;
+        self.stream_compact = true;
         self.list_prompt = None;
         self.prompt_mode = None;
     }
@@ -191,6 +203,8 @@ impl ValueInspector {
         self.set_cursor = 0;
         self.zset_cursor = 0;
         self.zset_sort_score_asc = true;
+        self.stream_cursor = 0;
+        self.stream_compact = true;
         self.list_prompt = None;
         self.prompt_mode = None;
     }
@@ -287,6 +301,23 @@ impl ValueInspector {
                     Some(PromptMode::ZSetEditScore(member, _)) => {
                         let score = val.parse::<f64>().ok()?;
                         Some(InspectorAction::ZAdd { key, score, member })
+                    }
+                    Some(PromptMode::StreamAddId) => {
+                        let entry_id = if val.is_empty() { "*".to_string() } else { val };
+                        self.list_prompt = Some(InputWidget::new("Fields (key=val key=val ...)"));
+                        self.prompt_mode = Some(PromptMode::StreamAddFields(entry_id));
+                        None
+                    }
+                    Some(PromptMode::StreamAddFields(entry_id)) => {
+                        let mut fields = Vec::new();
+                        for part in val.split_whitespace() {
+                            if let Some(eq_pos) = part.find('=') {
+                                let f = part[..eq_pos].to_string();
+                                let v = part[eq_pos + 1..].to_string();
+                                fields.push((f, v));
+                            }
+                        }
+                        Some(InspectorAction::StreamAdd { key, entry_id, fields })
                     }
                     None => None,
                 };
@@ -455,6 +486,39 @@ impl ValueInspector {
             }
         }
 
+        // Stream-specific key handling
+        if let Some(RedisValue::Stream(ref entries)) = self.value {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if self.stream_cursor > 0 { self.stream_cursor -= 1; }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if self.stream_cursor + 1 < entries.len() { self.stream_cursor += 1; }
+                }
+                KeyCode::Char('a') => {
+                    self.list_prompt = Some(InputWidget::new("Entry ID (Enter=auto)"));
+                    self.prompt_mode = Some(PromptMode::StreamAddId);
+                }
+                KeyCode::Char('D') => {
+                    if let Some(entry) = entries.get(self.stream_cursor) {
+                        return Some(InspectorAction::StreamRem {
+                            key: self.key.clone().unwrap_or_default(),
+                            entry_id: entry.id.clone(),
+                        });
+                    }
+                }
+                KeyCode::Char('f') | KeyCode::Char('F') => {
+                    self.stream_compact = !self.stream_compact;
+                }
+                KeyCode::Char('g') | KeyCode::Char('G') => {
+                    if !entries.is_empty() {
+                        self.stream_cursor = entries.len() - 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+
         None
     }
 
@@ -485,6 +549,12 @@ impl ValueInspector {
         // ZSet-specific render
         if let Some(RedisValue::ZSet(ref entries)) = self.value {
             self.render_zset(frame, area, entries);
+            return;
+        }
+
+        // Stream-specific render
+        if let Some(RedisValue::Stream(ref entries)) = self.value {
+            self.render_stream(frame, area, entries);
             return;
         }
 
@@ -697,6 +767,50 @@ impl ValueInspector {
                 Some(PromptMode::ZSetAddMember) => "Member to ZADD: ",
                 Some(PromptMode::ZSetAddScore(ref m)) => &format!("Score for '{}': ", m),
                 Some(PromptMode::ZSetEditScore(ref m, _)) => &format!("Score for '{}': ", m),
+                _ => "Input: ",
+            };
+            text.push_str(&format!(
+                "\n{}{}{}",
+                prompt_label,
+                prompt.value,
+                if prompt.cursor >= prompt.value.len() { "_" } else { " " }
+            ));
+        }
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title);
+        let paragraph = Paragraph::new(text)
+            .block(block)
+            .wrap(Wrap { trim: false });
+        frame.render_widget(paragraph, area);
+    }
+
+    fn render_stream(&self, frame: &mut Frame, area: Rect, entries: &[StreamEntry]) {
+        let mode = if self.stream_compact { "compact" } else { "full" };
+        let title = self
+            .key
+            .as_deref()
+            .map(|k| format!("Stream [{}] (len={}, {})", k, entries.len(), mode))
+            .unwrap_or_else(|| format!("Stream (len={})", entries.len()));
+
+        let mut text = String::new();
+        for (i, entry) in entries.iter().enumerate() {
+            let marker = if i == self.stream_cursor { ">" } else { " " };
+            if self.stream_compact {
+                text.push_str(&format!("{}[{}] {} ({} fields)\n", marker, i, entry.id, entry.fields.len()));
+            } else {
+                text.push_str(&format!("{}[{}] {}\n", marker, i, entry.id));
+                for (field, val) in &entry.fields {
+                    text.push_str(&format!("  {}: {}\n", field, val));
+                }
+            }
+        }
+
+        if let Some(ref prompt) = self.list_prompt {
+            let prompt_label = match self.prompt_mode {
+                Some(PromptMode::StreamAddId) => "Entry ID: ",
+                Some(PromptMode::StreamAddFields(_)) => "Fields: ",
                 _ => "Input: ",
             };
             text.push_str(&format!(

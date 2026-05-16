@@ -187,6 +187,10 @@ impl App {
                     }
                 }
             }
+            PubSubAction::Unsubscribe(channel) => {
+                self.pubsub_rx = None;
+                self.error_message = Some(format!("Unsubscribed from '{channel}'"));
+            }
             PubSubAction::Publish { channel, message } => {
                 if let Some(client) = &self.client {
                     match client.publish(&channel, &message).await {
@@ -1192,7 +1196,11 @@ impl App {
                 ("Ctrl+P".to_string(), "palette".to_string()),
             ],
             Tab::Info => vec![("3".to_string(), "info".to_string())],
-            Tab::PubSub => vec![("4".to_string(), "pubsub".to_string())],
+            Tab::PubSub => vec![
+                ("Tab".to_string(), "mode".to_string()),
+                ("Enter".to_string(), "send".to_string()),
+                ("D".to_string(), "unsub".to_string()),
+            ],
         };
     }
 

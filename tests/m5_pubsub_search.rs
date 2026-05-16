@@ -1,10 +1,10 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use futures::StreamExt;
 use ratatui::backend::TestBackend;
 use reddish_tui::config::connections::ConnectionProfile;
 use reddish_tui::events::Event;
 use reddish_tui::redis::client::RedisClientHandle;
-use reddish_tui::ui::pubsub::{PubSubMessage, PubSubWidget};
+use reddish_tui::ui::pubsub::{PubSubAction, PubSubMessage, PubSubWidget, PubSubInputMode};
 use reddish_tui::ui::search::{GlobalSearch, SearchAction};
 
 fn test_profile() -> ConnectionProfile {
@@ -173,4 +173,145 @@ fn test_global_search_render_shows_scanning() {
     let backend = TestBackend::new(80, 24);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     let _ = terminal.draw(|f| search.render(f, f.area()));
+}
+
+#[test]
+fn test_pubsub_subscribe_action() {
+    let mut widget = PubSubWidget::new();
+    widget.input = "test_channel".to_string();
+    widget.cursor = 12;
+
+    let action = widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    assert_eq!(action, Some(PubSubAction::Subscribe("test_channel".to_string())));
+    assert!(widget.channels.contains(&"test_channel".to_string()));
+    assert_eq!(widget.active_channel, Some("test_channel".to_string()));
+}
+
+#[test]
+fn test_pubsub_publish_action() {
+    let mut widget = PubSubWidget::new();
+    widget.active_channel = Some("ch1".to_string());
+    widget.input_mode = PubSubInputMode::Message;
+    widget.input = "hello".to_string();
+    widget.cursor = 5;
+
+    let action = widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    assert_eq!(
+        action,
+        Some(PubSubAction::Publish {
+            channel: "ch1".to_string(),
+            message: "hello".to_string(),
+        })
+    );
+}
+
+#[test]
+fn test_pubsub_unsubscribe_action() {
+    let mut widget = PubSubWidget::new();
+    widget.channels.push("ch1".to_string());
+    widget.channels.push("ch2".to_string());
+    widget.active_channel = Some("ch1".to_string());
+
+    let action = widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+    assert_eq!(action, Some(PubSubAction::Unsubscribe("ch1".to_string())));
+    assert_eq!(widget.channels.len(), 1);
+    assert_eq!(widget.channels[0], "ch2");
+}
+
+#[test]
+fn test_pubsub_unsubscribe_second_channel() {
+    let mut widget = PubSubWidget::new();
+    widget.channels.push("ch1".to_string());
+    widget.channels.push("ch2".to_string());
+    widget.channel_cursor = 1;
+    widget.active_channel = Some("ch2".to_string());
+
+    let action = widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+    assert_eq!(action, Some(PubSubAction::Unsubscribe("ch2".to_string())));
+    assert_eq!(widget.channels.len(), 1);
+    assert_eq!(widget.channels[0], "ch1");
+}
+
+#[test]
+fn test_pubsub_clear_messages() {
+    let mut widget = PubSubWidget::new();
+    widget.push_message(PubSubMessage {
+        channel: "ch".to_string(),
+        pattern: None,
+        payload: "msg1".to_string(),
+        timestamp: std::time::Instant::now(),
+    });
+    widget.push_message(PubSubMessage {
+        channel: "ch".to_string(),
+        pattern: None,
+        payload: "msg2".to_string(),
+        timestamp: std::time::Instant::now(),
+    });
+    assert_eq!(widget.messages.len(), 2);
+
+    let key = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL);
+    widget.handle_event(&Event::Key(key));
+    assert!(widget.messages.is_empty());
+}
+
+#[test]
+fn test_pubsub_channel_navigation() {
+    let mut widget = PubSubWidget::new();
+    widget.channels.push("ch1".to_string());
+    widget.channels.push("ch2".to_string());
+    widget.channels.push("ch3".to_string());
+
+    widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Down)));
+    assert_eq!(widget.channel_cursor, 1);
+
+    widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Down)));
+    assert_eq!(widget.channel_cursor, 2);
+
+    widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Down)));
+    assert_eq!(widget.channel_cursor, 2);
+
+    widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Up)));
+    assert_eq!(widget.channel_cursor, 1);
+
+    widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Up)));
+    assert_eq!(widget.channel_cursor, 0);
+
+    widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Up)));
+    assert_eq!(widget.channel_cursor, 0);
+}
+
+#[test]
+fn test_pubsub_render_with_messages() {
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let mut widget = PubSubWidget::new();
+    widget.channels.push("test".to_string());
+    widget.active_channel = Some("test".to_string());
+    widget.push_message(PubSubMessage {
+        channel: "test".to_string(),
+        pattern: None,
+        payload: "hello world".to_string(),
+        timestamp: std::time::Instant::now(),
+    });
+    let _ = terminal.draw(|f| widget.render(f, f.area()));
+}
+
+#[test]
+fn test_pubsub_render_empty() {
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let widget = PubSubWidget::new();
+    let _ = terminal.draw(|f| widget.render(f, f.area()));
+}
+
+#[test]
+fn test_pubsub_tab_toggles_mode() {
+    let mut widget = PubSubWidget::new();
+    assert_eq!(widget.input_mode, PubSubInputMode::Channel);
+
+    widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+    assert_eq!(widget.input_mode, PubSubInputMode::Message);
+
+    widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+    assert_eq!(widget.input_mode, PubSubInputMode::Channel);
 }

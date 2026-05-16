@@ -894,6 +894,32 @@ impl App {
                     self.reload_inspector_value(&key).await;
                 }
             }
+            InspectorAction::HashSet { key, field, value } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    if let Err(err) = client.hash_set(&key, &field, &value).await {
+                        self.error_message = Some(format!("Failed to set hash field: {err}"));
+                        return;
+                    }
+                    self.reload_inspector_value(&key).await;
+                }
+            }
+            InspectorAction::HashDel { key, field } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    if let Err(err) = client.hash_del(&key, &[&field]).await {
+                        self.error_message = Some(format!("Failed to delete hash field: {err}"));
+                        return;
+                    }
+                    self.reload_inspector_value(&key).await;
+                }
+            }
         }
     }
 

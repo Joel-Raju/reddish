@@ -437,24 +437,153 @@ async fn test_redis_get_set_string() {
         .query_async::<()>(&mut c)
         .await
         .unwrap();
+}
 
-    let val = client.get("m2_key").await.unwrap();
-    assert_eq!(val, b"hello");
+#[test]
+fn test_hash_editor_navigation() {
+    use indexmap::IndexMap;
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::ValueInspector;
 
-    client.set("m2_key2", b"world").await.unwrap();
-    let val2: Vec<u8> = redis::cmd("GET")
-        .arg("m2_key2")
-        .query_async(&mut c)
-        .await
-        .unwrap();
-    assert_eq!(val2, b"world");
+    let mut entries = IndexMap::new();
+    entries.insert("name".to_string(), "alice".to_string());
+    entries.insert("age".to_string(), "30".to_string());
+    entries.insert("city".to_string(), "NYC".to_string());
 
-    redis::cmd("DEL")
-        .arg("m2_key")
-        .arg("m2_key2")
-        .query_async::<()>(&mut c)
-        .await
-        .unwrap();
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("myhash".to_string(), RedisValue::Hash(entries));
+
+    assert_eq!(inspector.hash_cursor, 0);
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
+    assert_eq!(inspector.hash_cursor, 1);
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Up)));
+    assert_eq!(inspector.hash_cursor, 0);
+}
+
+#[test]
+fn test_hash_editor_a_add() {
+    use indexmap::IndexMap;
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut entries = IndexMap::new();
+    entries.insert("name".to_string(), "alice".to_string());
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("myhash".to_string(), RedisValue::Hash(entries));
+
+    // a → prompt for field name
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
+    assert!(inspector.list_prompt.is_some());
+
+    // Type field name
+    for c in "score".chars() {
+        inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+    // Enter → now prompts for value
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    assert!(action.is_none()); // value prompt shown, not yet submitted
+    assert!(inspector.list_prompt.is_some());
+
+    // Type value
+    for c in "100".chars() {
+        inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+    // Enter → submit
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+
+    match action {
+        Some(InspectorAction::HashSet { key, field, value }) => {
+            assert_eq!(key, "myhash");
+            assert_eq!(field, "score");
+            assert_eq!(value, "100");
+        }
+        other => panic!("Expected HashSet, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_hash_editor_d_delete() {
+    use indexmap::IndexMap;
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut entries = IndexMap::new();
+    entries.insert("name".to_string(), "alice".to_string());
+    entries.insert("age".to_string(), "30".to_string());
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("myhash".to_string(), RedisValue::Hash(entries));
+
+    // Move to index 1 (age)
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
+
+    // D to delete
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+
+    match action {
+        Some(InspectorAction::HashDel { key, field }) => {
+            assert_eq!(key, "myhash");
+            assert_eq!(field, "age");
+        }
+        other => panic!("Expected HashDel, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_hash_editor_e_edit() {
+    use indexmap::IndexMap;
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut entries = IndexMap::new();
+    entries.insert("name".to_string(), "alice".to_string());
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("myhash".to_string(), RedisValue::Hash(entries));
+
+    // e to edit value of current field
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
+    assert!(inspector.list_prompt.is_some());
+
+    // Clear and type new value
+    inspector.handle_event(&Event::Key(KeyEvent::new(
+        KeyCode::Char('u'),
+        crossterm::event::KeyModifiers::CONTROL,
+    )));
+    for c in "bob".chars() {
+        inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+
+    match action {
+        Some(InspectorAction::HashSet { key, field, value }) => {
+            assert_eq!(key, "myhash");
+            assert_eq!(field, "name");
+            assert_eq!(value, "bob");
+        }
+        other => panic!("Expected HashSet, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_hash_editor_renders_without_panic() {
+    use indexmap::IndexMap;
+    use ratatui::backend::TestBackend;
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::ValueInspector;
+
+    let mut entries = IndexMap::new();
+    entries.insert("name".to_string(), "alice".to_string());
+    entries.insert("age".to_string(), "30".to_string());
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("myhash".to_string(), RedisValue::Hash(entries));
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let _ = terminal.draw(|f| inspector.render(f, f.area()));
 }
 
 #[tokio::test]

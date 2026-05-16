@@ -70,6 +70,8 @@ pub enum InspectorAction {
     ListPush { key: String, value: String, head: bool },
     ListSet { key: String, index: i64, value: String },
     ListRemove { key: String, value: String },
+    HashSet { key: String, field: String, value: String },
+    HashDel { key: String, field: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -77,6 +79,9 @@ pub enum PromptMode {
     Rpush,
     Lpush,
     Lset(usize),
+    HashAddField,
+    HashAddValue(String),
+    HashEdit(String, usize),
 }
 
 pub struct ValueInspector {
@@ -91,6 +96,7 @@ pub struct ValueInspector {
     pub ttl: Option<Ttl>,
     pub text_editor: Option<TextAreaEditor>,
     pub list_cursor: usize,
+    pub hash_cursor: usize,
     pub list_prompt: Option<InputWidget>,
     pub prompt_mode: Option<PromptMode>,
 }
@@ -115,6 +121,7 @@ impl ValueInspector {
             ttl: None,
             text_editor: None,
             list_cursor: 0,
+            hash_cursor: 0,
             list_prompt: None,
             prompt_mode: None,
         }
@@ -131,6 +138,7 @@ impl ValueInspector {
         self.edit_mode = false;
         self.text_editor = None;
         self.list_cursor = 0;
+        self.hash_cursor = 0;
         self.list_prompt = None;
         self.prompt_mode = None;
     }
@@ -146,6 +154,7 @@ impl ValueInspector {
         self.edit_mode = false;
         self.text_editor = None;
         self.list_cursor = 0;
+        self.hash_cursor = 0;
         self.list_prompt = None;
         self.prompt_mode = None;
     }
@@ -158,6 +167,7 @@ impl ValueInspector {
         self.edit_mode = false;
         self.text_editor = None;
         self.list_cursor = 0;
+        self.hash_cursor = 0;
         self.list_prompt = None;
         self.prompt_mode = None;
     }
@@ -198,7 +208,7 @@ impl ValueInspector {
             return None;
         }
 
-        // Handle inline input prompts (for list a/p/e operations)
+        // Handle inline input prompts (for list/hash a/p/e operations)
         if let Some(ref mut prompt) = self.list_prompt {
             prompt.handle_event(event);
             if prompt.submitted.is_some() {
@@ -220,6 +230,22 @@ impl ValueInspector {
                     Some(PromptMode::Lset(idx)) => Some(InspectorAction::ListSet {
                         key,
                         index: idx as i64,
+                        value: val,
+                    }),
+                    Some(PromptMode::HashAddField) => {
+                        // First step done, now prompt for value
+                        self.list_prompt = Some(InputWidget::new(format!("Value for '{}'", val)));
+                        self.prompt_mode = Some(PromptMode::HashAddValue(val));
+                        None
+                    }
+                    Some(PromptMode::HashAddValue(field)) => Some(InspectorAction::HashSet {
+                        key,
+                        field,
+                        value: val,
+                    }),
+                    Some(PromptMode::HashEdit(field, _)) => Some(InspectorAction::HashSet {
+                        key,
+                        field,
                         value: val,
                     }),
                     None => None,
@@ -287,6 +313,45 @@ impl ValueInspector {
             }
         }
 
+        // Hash-specific key handling
+        if let Some(RedisValue::Hash(ref entries)) = self.value {
+            let fields: Vec<(&String, &String)> = entries.iter().collect();
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if self.hash_cursor > 0 {
+                        self.hash_cursor -= 1;
+                    }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if self.hash_cursor + 1 < fields.len() {
+                        self.hash_cursor += 1;
+                    }
+                }
+                KeyCode::Char('a') => {
+                    self.list_prompt = Some(InputWidget::new("Field name"));
+                    self.prompt_mode = Some(PromptMode::HashAddField);
+                }
+                KeyCode::Char('D') => {
+                    if let Some((field, _)) = fields.get(self.hash_cursor) {
+                        return Some(InspectorAction::HashDel {
+                            key: self.key.clone().unwrap_or_default(),
+                            field: (*field).clone(),
+                        });
+                    }
+                }
+                KeyCode::Char('e') | KeyCode::Char('E') => {
+                    if let Some((field, val)) = fields.get(self.hash_cursor) {
+                        let mut prompt = InputWidget::new(format!("Value for '{}'", field));
+                        prompt.value = (*val).clone();
+                        prompt.cursor = val.len();
+                        self.list_prompt = Some(prompt);
+                        self.prompt_mode = Some(PromptMode::HashEdit((*field).clone(), self.hash_cursor));
+                    }
+                }
+                _ => {}
+            }
+        }
+
         None
     }
 
@@ -299,6 +364,12 @@ impl ValueInspector {
         // List-specific render
         if let Some(RedisValue::List(ref items)) = self.value {
             self.render_list(frame, area, items);
+            return;
+        }
+
+        // Hash-specific render
+        if let Some(RedisValue::Hash(ref entries)) = self.value {
+            self.render_hash(frame, area, entries);
             return;
         }
 
@@ -388,7 +459,7 @@ impl ValueInspector {
                 Some(PromptMode::Rpush) => "RPUSH value:",
                 Some(PromptMode::Lpush) => "LPUSH value:",
                 Some(PromptMode::Lset(idx)) => &format!("LSET [{}] =", idx),
-                None => "Input:",
+                _ => "Input:",
             };
             let prompt_text = format!(
                 "{} {}{}",
@@ -401,6 +472,48 @@ impl ValueInspector {
                 }
             );
             text.push_str(&format!("\n{}", prompt_text));
+        }
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title);
+        let paragraph = Paragraph::new(text)
+            .block(block)
+            .wrap(Wrap { trim: false });
+        frame.render_widget(paragraph, area);
+    }
+
+    fn render_hash(&self, frame: &mut Frame, area: Rect, entries: &indexmap::IndexMap<String, String>) {
+        let title = self
+            .key
+            .as_deref()
+            .map(|k| format!("Hash [{}] (fields={})", k, entries.len()))
+            .unwrap_or_else(|| format!("Hash (fields={})", entries.len()));
+
+        let mut text = String::new();
+        for (i, (field, val)) in entries.iter().enumerate() {
+            let marker = if i == self.hash_cursor { ">" } else { " " };
+            text.push_str(&format!("{}{}: {}\n", marker, field, val));
+        }
+
+        if let Some(ref prompt) = self.list_prompt {
+            let prompt_label = match self.prompt_mode {
+                Some(PromptMode::HashAddField) => "Field name: ",
+                Some(PromptMode::HashAddValue(ref f)) => &format!("Value for '{}': ", f),
+                Some(PromptMode::HashEdit(ref f, _)) => &format!("Value for '{}': ", f),
+                _ => "Input: ",
+            };
+            text.push_str(&format!(
+                "\n{}{}",
+                prompt_label,
+                if prompt.cursor >= prompt.value.len() {
+                    format!("{}_", prompt.value)
+                } else {
+                    let before = &prompt.value[..prompt.cursor];
+                    let after = &prompt.value[prompt.cursor + 1..];
+                    format!("{}_{}{}", before, prompt.value.chars().nth(prompt.cursor).unwrap_or(' '), after)
+                }
+            ));
         }
 
         let block = Block::default()

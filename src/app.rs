@@ -920,6 +920,32 @@ impl App {
                     self.reload_inspector_value(&key).await;
                 }
             }
+            InspectorAction::SetAdd { key, member } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    if let Err(err) = client.set_add(&key, &member).await {
+                        self.error_message = Some(format!("Failed to add set member: {err}"));
+                        return;
+                    }
+                    self.reload_inspector_value(&key).await;
+                }
+            }
+            InspectorAction::SetRem { key, member } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    if let Err(err) = client.set_rem(&key, &member).await {
+                        self.error_message = Some(format!("Failed to remove set member: {err}"));
+                        return;
+                    }
+                    self.reload_inspector_value(&key).await;
+                }
+            }
         }
     }
 

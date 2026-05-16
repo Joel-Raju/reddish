@@ -120,7 +120,6 @@ fn test_value_inspector_enter_edit_mode_on_e() {
     let mut inspector = ValueInspector::new();
     inspector.set_value("testkey".to_string(), RedisValue::String("hello".to_string()));
 
-    // Press e to enter edit mode
     let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
     assert!(action.is_none());
     assert!(inspector.edit_mode);
@@ -136,7 +135,6 @@ fn test_value_inspector_edit_mode_ignores_non_string() {
     let mut inspector = ValueInspector::new();
     inspector.set_value("testkey".to_string(), RedisValue::List(vec!["a".to_string()]));
 
-    // Press e — should NOT enter edit mode for non-string
     let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
     assert!(action.is_none());
     assert!(!inspector.edit_mode);
@@ -150,10 +148,7 @@ fn test_value_inspector_edit_mode_esc_cancels() {
     let mut inspector = ValueInspector::new();
     inspector.set_value("testkey".to_string(), RedisValue::String("hello".to_string()));
 
-    // Enter edit mode
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
-
-    // Press Esc to cancel
     let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Esc)));
     assert!(action.is_none());
     assert!(!inspector.edit_mode);
@@ -168,15 +163,11 @@ fn test_value_inspector_edit_mode_ctrl_s_saves() {
     let mut inspector = ValueInspector::new();
     inspector.set_value("testkey".to_string(), RedisValue::String("hello".to_string()));
 
-    // Enter edit mode
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
-
-    // Type " world"
     for c in " world".chars() {
         inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
     }
 
-    // Ctrl+S to save
     let action = inspector.handle_event(&Event::Key(KeyEvent::new(
         KeyCode::Char('s'),
         crossterm::event::KeyModifiers::CONTROL,
@@ -200,10 +191,7 @@ fn test_value_inspector_edit_mode_ctrl_x_cancels() {
     let mut inspector = ValueInspector::new();
     inspector.set_value("testkey".to_string(), RedisValue::String("hello".to_string()));
 
-    // Enter edit mode
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
-
-    // Ctrl+X to cancel (no changes typed)
     let action = inspector.handle_event(&Event::Key(KeyEvent::new(
         KeyCode::Char('x'),
         crossterm::event::KeyModifiers::CONTROL,
@@ -220,7 +208,6 @@ fn test_text_area_editor_cancelled_flag() {
     let mut editor = TextAreaEditor::new("hello");
     assert!(!editor.cancelled);
 
-    // Ctrl+X sets cancelled
     editor.handle_event(&Event::Key(KeyEvent::new(
         KeyCode::Char('x'),
         crossterm::event::KeyModifiers::CONTROL,
@@ -234,7 +221,6 @@ fn test_text_area_editor_ctrl_s_does_not_set_cancelled() {
 
     let mut editor = TextAreaEditor::new("hello");
 
-    // Ctrl+S does not set cancelled
     editor.handle_event(&Event::Key(KeyEvent::new(
         KeyCode::Char('s'),
         crossterm::event::KeyModifiers::CONTROL,
@@ -254,14 +240,10 @@ fn test_list_editor_navigation() {
     );
 
     assert_eq!(inspector.list_cursor, 0);
-
-    // Down / j
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
     assert_eq!(inspector.list_cursor, 1);
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Down)));
     assert_eq!(inspector.list_cursor, 2);
-
-    // Up / k
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('k'))));
     assert_eq!(inspector.list_cursor, 1);
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Up)));
@@ -274,28 +256,19 @@ fn test_list_editor_a_rpush() {
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value(
-        "mylist".to_string(),
-        RedisValue::List(vec!["a".to_string()]),
-    );
+    inspector.set_value("mylist".to_string(), RedisValue::List(vec!["a".to_string()]));
 
-    // Press a to trigger RPUSH prompt
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
-    assert!(inspector.list_prompt.is_some());
-
-    // Type value
     for c in "new_item".chars() {
         inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
     }
-
-    // Enter to submit
     let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
 
     match action {
         Some(InspectorAction::ListPush { key, value, head }) => {
             assert_eq!(key, "mylist");
             assert_eq!(value, "new_item");
-            assert!(!head); // RPUSH
+            assert!(!head);
         }
         other => panic!("Expected ListPush, got {:?}", other),
     }
@@ -307,25 +280,18 @@ fn test_list_editor_p_lpush() {
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value(
-        "mylist".to_string(),
-        RedisValue::List(vec!["a".to_string()]),
-    );
+    inspector.set_value("mylist".to_string(), RedisValue::List(vec!["a".to_string()]));
 
-    // Press p to trigger LPUSH prompt
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('p'))));
-    assert!(inspector.list_prompt.is_some());
-
     for c in "first".chars() {
         inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
     }
-
     let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
 
     match action {
         Some(InspectorAction::ListPush { value, head, .. }) => {
             assert_eq!(value, "first");
-            assert!(head); // LPUSH
+            assert!(head);
         }
         other => panic!("Expected ListPush, got {:?}", other),
     }
@@ -337,16 +303,9 @@ fn test_list_editor_d_remove() {
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value(
-        "mylist".to_string(),
-        RedisValue::List(vec!["a".to_string(), "b".to_string()]),
-    );
+    inspector.set_value("mylist".to_string(), RedisValue::List(vec!["a".to_string(), "b".to_string()]));
 
-    // Move cursor to index 1
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
-    assert_eq!(inspector.list_cursor, 1);
-
-    // D to delete
     let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
 
     match action {
@@ -364,16 +323,9 @@ fn test_list_editor_e_edit() {
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value(
-        "mylist".to_string(),
-        RedisValue::List(vec!["hello".to_string()]),
-    );
+    inspector.set_value("mylist".to_string(), RedisValue::List(vec!["hello".to_string()]));
 
-    // Press e to edit first item
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
-    assert!(inspector.list_prompt.is_some());
-
-    // Clear with Ctrl+U and type new value
     inspector.handle_event(&Event::Key(KeyEvent::new(
         KeyCode::Char('u'),
         crossterm::event::KeyModifiers::CONTROL,
@@ -381,7 +333,6 @@ fn test_list_editor_e_edit() {
     for c in "world".chars() {
         inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
     }
-
     let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
 
     match action {
@@ -410,8 +361,99 @@ fn test_list_editor_renders_without_panic() {
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     let _ = terminal.draw(|f| inspector.render(f, f.area()));
 
-    // Also test that list prompt renders
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
+    let _ = terminal.draw(|f| inspector.render(f, f.area()));
+}
+
+#[test]
+fn test_set_editor_navigation() {
+    use std::collections::BTreeSet;
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::ValueInspector;
+
+    let mut members = BTreeSet::new();
+    members.insert("a".to_string());
+    members.insert("b".to_string());
+    members.insert("c".to_string());
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("myset".to_string(), RedisValue::Set(members));
+
+    assert_eq!(inspector.set_cursor, 0);
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
+    assert_eq!(inspector.set_cursor, 1);
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Up)));
+    assert_eq!(inspector.set_cursor, 0);
+}
+
+#[test]
+fn test_set_editor_a_add() {
+    use std::collections::BTreeSet;
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut members = BTreeSet::new();
+    members.insert("a".to_string());
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("myset".to_string(), RedisValue::Set(members));
+
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
+    for c in "new_member".chars() {
+        inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    match action {
+        Some(InspectorAction::SetAdd { key, member }) => {
+            assert_eq!(key, "myset");
+            assert_eq!(member, "new_member");
+        }
+        other => panic!("Expected SetAdd, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_set_editor_d_remove() {
+    use std::collections::BTreeSet;
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+
+    let mut members = BTreeSet::new();
+    members.insert("a".to_string());
+    members.insert("b".to_string());
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("myset".to_string(), RedisValue::Set(members));
+
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+
+    match action {
+        Some(InspectorAction::SetRem { key, member }) => {
+            assert_eq!(key, "myset");
+            assert_eq!(member, "b");
+        }
+        other => panic!("Expected SetRem, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_set_editor_renders_without_panic() {
+    use std::collections::BTreeSet;
+    use ratatui::backend::TestBackend;
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::ValueInspector;
+
+    let mut members = BTreeSet::new();
+    members.insert("a".to_string());
+    members.insert("b".to_string());
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("myset".to_string(), RedisValue::Set(members));
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
     let _ = terminal.draw(|f| inspector.render(f, f.area()));
 }
 

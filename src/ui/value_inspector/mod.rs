@@ -72,6 +72,8 @@ pub enum InspectorAction {
     ListRemove { key: String, value: String },
     HashSet { key: String, field: String, value: String },
     HashDel { key: String, field: String },
+    SetAdd { key: String, member: String },
+    SetRem { key: String, member: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -82,6 +84,7 @@ pub enum PromptMode {
     HashAddField,
     HashAddValue(String),
     HashEdit(String, usize),
+    SetAddMember,
 }
 
 pub struct ValueInspector {
@@ -97,6 +100,7 @@ pub struct ValueInspector {
     pub text_editor: Option<TextAreaEditor>,
     pub list_cursor: usize,
     pub hash_cursor: usize,
+    pub set_cursor: usize,
     pub list_prompt: Option<InputWidget>,
     pub prompt_mode: Option<PromptMode>,
 }
@@ -122,6 +126,7 @@ impl ValueInspector {
             text_editor: None,
             list_cursor: 0,
             hash_cursor: 0,
+            set_cursor: 0,
             list_prompt: None,
             prompt_mode: None,
         }
@@ -139,6 +144,7 @@ impl ValueInspector {
         self.text_editor = None;
         self.list_cursor = 0;
         self.hash_cursor = 0;
+        self.set_cursor = 0;
         self.list_prompt = None;
         self.prompt_mode = None;
     }
@@ -155,6 +161,7 @@ impl ValueInspector {
         self.text_editor = None;
         self.list_cursor = 0;
         self.hash_cursor = 0;
+        self.set_cursor = 0;
         self.list_prompt = None;
         self.prompt_mode = None;
     }
@@ -168,6 +175,7 @@ impl ValueInspector {
         self.text_editor = None;
         self.list_cursor = 0;
         self.hash_cursor = 0;
+        self.set_cursor = 0;
         self.list_prompt = None;
         self.prompt_mode = None;
     }
@@ -247,6 +255,10 @@ impl ValueInspector {
                         key,
                         field,
                         value: val,
+                    }),
+                    Some(PromptMode::SetAddMember) => Some(InspectorAction::SetAdd {
+                        key,
+                        member: val,
                     }),
                     None => None,
                 };
@@ -352,6 +364,32 @@ impl ValueInspector {
             }
         }
 
+        // Set-specific key handling
+        if let Some(RedisValue::Set(ref members)) = self.value {
+            let items: Vec<&String> = members.iter().collect();
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if self.set_cursor > 0 { self.set_cursor -= 1; }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if self.set_cursor + 1 < items.len() { self.set_cursor += 1; }
+                }
+                KeyCode::Char('a') => {
+                    self.list_prompt = Some(InputWidget::new("Member to SADD"));
+                    self.prompt_mode = Some(PromptMode::SetAddMember);
+                }
+                KeyCode::Char('D') => {
+                    if let Some(member) = items.get(self.set_cursor) {
+                        return Some(InspectorAction::SetRem {
+                            key: self.key.clone().unwrap_or_default(),
+                            member: (*member).clone(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+
         None
     }
 
@@ -370,6 +408,12 @@ impl ValueInspector {
         // Hash-specific render
         if let Some(RedisValue::Hash(ref entries)) = self.value {
             self.render_hash(frame, area, entries);
+            return;
+        }
+
+        // Set-specific render
+        if let Some(RedisValue::Set(ref members)) = self.value {
+            self.render_set(frame, area, members);
             return;
         }
 
@@ -513,6 +557,37 @@ impl ValueInspector {
                     let after = &prompt.value[prompt.cursor + 1..];
                     format!("{}_{}{}", before, prompt.value.chars().nth(prompt.cursor).unwrap_or(' '), after)
                 }
+            ));
+        }
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title);
+        let paragraph = Paragraph::new(text)
+            .block(block)
+            .wrap(Wrap { trim: false });
+        frame.render_widget(paragraph, area);
+    }
+
+    fn render_set(&self, frame: &mut Frame, area: Rect, members: &std::collections::BTreeSet<String>) {
+        let title = self
+            .key
+            .as_deref()
+            .map(|k| format!("Set [{}] (len={})", k, members.len()))
+            .unwrap_or_else(|| format!("Set (len={})", members.len()));
+
+        let mut text = String::new();
+        let items: Vec<&String> = members.iter().collect();
+        for (i, member) in items.iter().enumerate() {
+            let marker = if i == self.set_cursor { ">" } else { " " };
+            text.push_str(&format!("{}{}\n", marker, member));
+        }
+
+        if let Some(ref prompt) = self.list_prompt {
+            text.push_str(&format!(
+                "\nMember: {}{}",
+                prompt.value,
+                if prompt.cursor >= prompt.value.len() { "_" } else { "" }
             ));
         }
 

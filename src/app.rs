@@ -582,7 +582,9 @@ impl App {
                     self.execute_repl_command(cmd).await;
                 }
             }
-            Tab::Info => {}
+            Tab::Info => {
+                self.info_dashboard.handle_event(&Event::Key(key));
+            }
             Tab::PubSub => {
                 if let Some(action) = self.pubsub_widget.handle_event(&Event::Key(key)) {
                     self.handle_pubsub_action(action).await;

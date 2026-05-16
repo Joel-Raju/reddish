@@ -77,11 +77,12 @@ impl Keymap {
                 key: "d".to_string(),
             },
             refresh: KeyDef {
-                key: "r".to_string(),
+                key: "R".to_string(),
             },
             filter: KeyDef {
                 key: "/".to_string(),
             },
+            // ... vim preset
             edit: KeyDef {
                 key: "e".to_string(),
             },
@@ -257,7 +258,7 @@ fn default_delete() -> KeyDef {
 }
 fn default_refresh() -> KeyDef {
     KeyDef {
-        key: "r".to_string(),
+        key: "R".to_string(),
     }
 }
 fn default_filter() -> KeyDef {

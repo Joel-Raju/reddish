@@ -808,7 +808,7 @@ fn test_key_browser_n_new_key_full_flow() {
     assert_eq!(browser.prompt_mode, Some(BrowserPrompt::NewKeyType("mynewkey".to_string())));
 
     // Enter type 's' for string
-    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
+    let _ = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
     let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
     match action {
         Some(BrowserAction::NewKey { name, key_type }) => {
@@ -829,4 +829,98 @@ fn test_key_browser_n_new_key_esc_cancels() {
     let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Esc)));
     assert!(action.is_none());
     assert!(browser.prompt.is_none());
+}
+
+#[test]
+fn test_key_browser_r_rename_starts_prompt() {
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.apply_scan_batch(vec![
+        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
+    ]);
+
+    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('r'))));
+    assert!(action.is_none());
+    assert!(browser.prompt.is_some());
+    assert_eq!(browser.prompt_mode, Some(reddish_tui::ui::key_browser::BrowserPrompt::RenameKey("mykey".to_string())));
+}
+
+#[test]
+fn test_key_browser_r_rename_submit() {
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.apply_scan_batch(vec![
+        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
+    ]);
+
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('r'))));
+    // Clear pre-filled "mykey" and type new name
+    for _ in 0..5 {
+        browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Backspace)));
+    }
+    for c in "newkey".chars() {
+        browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    match action {
+        Some(BrowserAction::RenameKey { old_name, new_name }) => {
+            assert_eq!(old_name, "mykey");
+            assert_eq!(new_name, "newkey");
+        }
+        other => panic!("Expected RenameKey, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_key_browser_e_expire_returns_action() {
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.apply_scan_batch(vec![
+        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
+    ]);
+
+    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
+    assert_eq!(action, Some(BrowserAction::ExpireKey("mykey".to_string())));
+}
+
+#[test]
+fn test_key_browser_c_copy_returns_action() {
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.apply_scan_batch(vec![
+        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
+    ]);
+
+    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('c'))));
+    assert_eq!(action, Some(BrowserAction::CopyKeyName("mykey".to_string())));
+}
+
+#[test]
+fn test_key_browser_t_ttl_starts_prompt() {
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.apply_scan_batch(vec![
+        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
+    ]);
+
+    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('t'))));
+    assert!(action.is_none());
+    assert!(browser.prompt.is_some());
+    assert_eq!(browser.prompt_mode, Some(reddish_tui::ui::key_browser::BrowserPrompt::SetTtl("mykey".to_string())));
+}
+
+#[test]
+fn test_key_browser_t_ttl_submit() {
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.apply_scan_batch(vec![
+        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
+    ]);
+
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('t'))));
+    for c in "3600".chars() {
+        browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    match action {
+        Some(BrowserAction::SetTtl { key, seconds }) => {
+            assert_eq!(key, "mykey");
+            assert_eq!(seconds, 3600);
+        }
+        other => panic!("Expected SetTtl, got {:?}", other),
+    }
 }

@@ -18,6 +18,8 @@ use crate::ui::widgets::input::InputWidget;
 pub enum BrowserPrompt {
     NewKeyName,
     NewKeyType(String),
+    RenameKey(String),
+    SetTtl(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -32,6 +34,10 @@ pub enum BrowserAction {
     SelectKey(String, RedisType),
     DeleteKey(String),
     NewKey { name: String, key_type: RedisType },
+    RenameKey { old_name: String, new_name: String },
+    ExpireKey(String),
+    SetTtl { key: String, seconds: i64 },
+    CopyKeyName(String),
     RefreshRequested,
 }
 
@@ -98,6 +104,16 @@ impl KeyBrowser {
                             _ => None,
                         };
                         r#type.map(|key_type| BrowserAction::NewKey { name, key_type })
+                    }
+                    Some(BrowserPrompt::RenameKey(old_name)) => {
+                        if val.is_empty() || val == old_name {
+                            return None;
+                        }
+                        Some(BrowserAction::RenameKey { old_name, new_name: val })
+                    }
+                    Some(BrowserPrompt::SetTtl(key)) => {
+                        let seconds = val.parse::<i64>().ok();
+                        seconds.map(|s| BrowserAction::SetTtl { key, seconds: s })
                     }
                     None => None,
                 };
@@ -172,6 +188,39 @@ impl KeyBrowser {
             } else if key.code == KeyCode::Char('n') {
                     self.prompt = Some(InputWidget::new("New key name:"));
                     self.prompt_mode = Some(BrowserPrompt::NewKeyName);
+            } else if key.code == KeyCode::Char('r') {
+                    let rows = self.tree.visible_rows();
+                    if let Some(row) = rows.get(self.cursor)
+                        && let Some(ref key) = row.key
+                    {
+                        let mut prompt = InputWidget::new("New name:");
+                        prompt.value = key.full_name.clone();
+                        prompt.cursor = key.full_name.len();
+                        self.prompt = Some(prompt);
+                        self.prompt_mode = Some(BrowserPrompt::RenameKey(key.full_name.clone()));
+                    }
+            } else if key.code == KeyCode::Char('e') {
+                    let rows = self.tree.visible_rows();
+                    if let Some(row) = rows.get(self.cursor)
+                        && let Some(ref key) = row.key
+                    {
+                        return Some(BrowserAction::ExpireKey(key.full_name.clone()));
+                    }
+            } else if key.code == KeyCode::Char('t') {
+                    let rows = self.tree.visible_rows();
+                    if let Some(row) = rows.get(self.cursor)
+                        && let Some(ref key) = row.key
+                    {
+                        self.prompt = Some(InputWidget::new("TTL in seconds:"));
+                        self.prompt_mode = Some(BrowserPrompt::SetTtl(key.full_name.clone()));
+                    }
+            } else if key.code == KeyCode::Char('c') {
+                    let rows = self.tree.visible_rows();
+                    if let Some(row) = rows.get(self.cursor)
+                        && let Some(ref key) = row.key
+                    {
+                        return Some(BrowserAction::CopyKeyName(key.full_name.clone()));
+                    }
             }
         }
         None
@@ -234,6 +283,8 @@ impl KeyBrowser {
             let prompt_label = match self.prompt_mode {
                 Some(BrowserPrompt::NewKeyName) => "Key name: ",
                 Some(BrowserPrompt::NewKeyType(_)) => "Type (s/l/h/z/t/x): ",
+                Some(BrowserPrompt::RenameKey(_)) => "New name: ",
+                Some(BrowserPrompt::SetTtl(_)) => "TTL seconds: ",
                 None => "Input: ",
             };
             let prompt_text = format!(

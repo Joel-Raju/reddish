@@ -849,6 +849,46 @@ impl App {
                     }
                 }
             }
+            BrowserAction::RenameKey { old_name, new_name } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked (press Esc)".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client
+                    && let Err(err) = client.rename(&old_name, &new_name).await
+                {
+                    self.error_message = Some(format!("Failed to rename key: {err}"));
+                }
+            }
+            BrowserAction::ExpireKey(name) => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked (press Esc)".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client
+                    && let Err(err) = client.set_ttl(&name, 1).await
+                {
+                    self.error_message = Some(format!("Failed to expire key: {err}"));
+                }
+            }
+            BrowserAction::SetTtl { key, seconds } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked (press Esc)".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client
+                    && let Err(err) = client.set_ttl(&key, seconds).await
+                {
+                    self.error_message = Some(format!("Failed to set TTL: {err}"));
+                }
+            }
+            BrowserAction::CopyKeyName(name) => {
+                #[cfg(not(test))]
+                if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                    let _ = clipboard.set_text(name.clone());
+                }
+                self.error_message = Some(format!("Copied: {}", name));
+            }
         }
     }
 

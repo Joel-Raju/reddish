@@ -31,7 +31,7 @@ use crate::ui::repl::{ReplAction, ReplLineStatus, ReplWidget, parse_pipeline};
 use crate::ui::search::{GlobalSearch, SearchAction};
 use crate::ui::status_bar::{ConnectionState, StatusBar};
 use crate::ui::tab_bar;
-use crate::ui::value_inspector::ValueInspector;
+use crate::ui::value_inspector::{InspectorAction, ValueInspector};
 use crate::ui::widgets::confirm::ConfirmDialog;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -537,9 +537,15 @@ impl App {
 
         match self.active_tab {
             Tab::Keys => {
-                if let Some(action) = self
-                    .key_browser
-                    .handle_event_with_keymap(&Event::Key(key), &self.keymap)
+                let inspector_action = self.value_inspector.handle_event(&Event::Key(key));
+                if self.value_inspector.edit_mode {
+                    if let Some(action) = inspector_action {
+                        self.handle_inspector_action(action).await;
+                    }
+                } else if inspector_action.is_none()
+                    && let Some(action) = self
+                        .key_browser
+                        .handle_event_with_keymap(&Event::Key(key), &self.keymap)
                 {
                     self.handle_browser_action(action).await;
                 }
@@ -818,6 +824,67 @@ impl App {
                 self.error_message =
                     Some("Refresh requested but scanner wiring is not initialized".to_string());
             }
+        }
+    }
+
+    async fn handle_inspector_action(&mut self, action: InspectorAction) {
+        match action {
+            InspectorAction::WriteString { key, value } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked (press Esc)".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    if let Err(err) = client.set_string(&key, &value).await {
+                        self.error_message = Some(format!("Failed to write: {err}"));
+                        return;
+                    }
+                    self.reload_inspector_value(&key).await;
+                } else {
+                    self.error_message = Some("Not connected".to_string());
+                }
+            }
+            InspectorAction::SetTtl { key, seconds } => {
+                if let Some(ref client) = self.client {
+                    if let Err(err) = client.set_ttl(&key, seconds).await {
+                        self.error_message = Some(format!("Failed to set TTL: {err}"));
+                        return;
+                    }
+                    self.reload_inspector_value(&key).await;
+                } else {
+                    self.error_message = Some("Not connected".to_string());
+                }
+            }
+        }
+    }
+
+    async fn reload_inspector_value(&mut self, key: &str) {
+        let Some(client) = self.client.as_ref() else {
+            return;
+        };
+        let r_type = match client.key_type(key).await {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        let value_fut = client.get_value(key, r_type);
+        let ttl_fut = client.ttl(key);
+        let encoding_fut = client.object_encoding(key);
+        let memory_fut = client.memory_usage(key);
+
+        let (value_res, ttl_res, encoding_res, memory_res) = tokio::join!(
+            value_fut,
+            ttl_fut,
+            encoding_fut,
+            memory_fut,
+        );
+
+        if let Ok(value) = value_res {
+            self.value_inspector.set_value(key.to_string(), value);
+            self.value_inspector.set_metadata(
+                encoding_res.ok(),
+                memory_res.ok(),
+                ttl_res.ok(),
+            );
         }
     }
 

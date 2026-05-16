@@ -112,6 +112,136 @@ fn test_value_inspector_renders_with_metadata() {
     let _ = terminal.draw(|f| inspector.render(f, f.area()));
 }
 
+#[test]
+fn test_value_inspector_enter_edit_mode_on_e() {
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::ValueInspector;
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("testkey".to_string(), RedisValue::String("hello".to_string()));
+
+    // Press e to enter edit mode
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
+    assert!(action.is_none());
+    assert!(inspector.edit_mode);
+    assert!(inspector.text_editor.is_some());
+    assert_eq!(inspector.text_editor.as_ref().unwrap().text, "hello");
+}
+
+#[test]
+fn test_value_inspector_edit_mode_ignores_non_string() {
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::ValueInspector;
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("testkey".to_string(), RedisValue::List(vec!["a".to_string()]));
+
+    // Press e — should NOT enter edit mode for non-string
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
+    assert!(action.is_none());
+    assert!(!inspector.edit_mode);
+}
+
+#[test]
+fn test_value_inspector_edit_mode_esc_cancels() {
+    use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::ValueInspector;
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("testkey".to_string(), RedisValue::String("hello".to_string()));
+
+    // Enter edit mode
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
+
+    // Press Esc to cancel
+    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Esc)));
+    assert!(action.is_none());
+    assert!(!inspector.edit_mode);
+    assert!(inspector.text_editor.is_none());
+}
+
+#[test]
+fn test_value_inspector_edit_mode_ctrl_s_saves() {
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+    use reddish_tui::redis::types::RedisValue;
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("testkey".to_string(), RedisValue::String("hello".to_string()));
+
+    // Enter edit mode
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
+
+    // Type " world"
+    for c in " world".chars() {
+        inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+
+    // Ctrl+S to save
+    let action = inspector.handle_event(&Event::Key(KeyEvent::new(
+        KeyCode::Char('s'),
+        crossterm::event::KeyModifiers::CONTROL,
+    )));
+
+    match action {
+        Some(InspectorAction::WriteString { key, value }) => {
+            assert_eq!(key, "testkey");
+            assert_eq!(value, "hello world");
+        }
+        other => panic!("Expected WriteString action, got {:?}", other),
+    }
+    assert!(!inspector.edit_mode);
+}
+
+#[test]
+fn test_value_inspector_edit_mode_ctrl_x_cancels() {
+    use reddish_tui::ui::value_inspector::ValueInspector;
+    use reddish_tui::redis::types::RedisValue;
+
+    let mut inspector = ValueInspector::new();
+    inspector.set_value("testkey".to_string(), RedisValue::String("hello".to_string()));
+
+    // Enter edit mode
+    inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
+
+    // Ctrl+X to cancel (no changes typed)
+    let action = inspector.handle_event(&Event::Key(KeyEvent::new(
+        KeyCode::Char('x'),
+        crossterm::event::KeyModifiers::CONTROL,
+    )));
+
+    assert!(action.is_none());
+    assert!(!inspector.edit_mode);
+}
+
+#[test]
+fn test_text_area_editor_cancelled_flag() {
+    use reddish_tui::ui::widgets::text_area_editor::TextAreaEditor;
+
+    let mut editor = TextAreaEditor::new("hello");
+    assert!(!editor.cancelled);
+
+    // Ctrl+X sets cancelled
+    editor.handle_event(&Event::Key(KeyEvent::new(
+        KeyCode::Char('x'),
+        crossterm::event::KeyModifiers::CONTROL,
+    )));
+    assert!(editor.cancelled);
+}
+
+#[test]
+fn test_text_area_editor_ctrl_s_does_not_set_cancelled() {
+    use reddish_tui::ui::widgets::text_area_editor::TextAreaEditor;
+
+    let mut editor = TextAreaEditor::new("hello");
+
+    // Ctrl+S does not set cancelled
+    editor.handle_event(&Event::Key(KeyEvent::new(
+        KeyCode::Char('s'),
+        crossterm::event::KeyModifiers::CONTROL,
+    )));
+    assert!(!editor.cancelled);
+}
+
 #[tokio::test]
 async fn test_redis_get_set_string() {
     let profile = reddish_tui::config::connections::ConnectionProfile {

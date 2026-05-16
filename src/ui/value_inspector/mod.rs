@@ -9,6 +9,7 @@ use ratatui::{
 use crate::events::Event;
 use crate::redis::client::Ttl;
 use crate::redis::types::RedisValue;
+use crate::ui::widgets::text_area_editor::TextAreaEditor;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StringViewMode {
@@ -77,6 +78,7 @@ pub struct ValueInspector {
     pub encoding: Option<String>,
     pub memory_bytes: Option<u64>,
     pub ttl: Option<Ttl>,
+    pub text_editor: Option<TextAreaEditor>,
 }
 
 impl Default for ValueInspector {
@@ -97,6 +99,7 @@ impl ValueInspector {
             encoding: None,
             memory_bytes: None,
             ttl: None,
+            text_editor: None,
         }
     }
 
@@ -108,6 +111,8 @@ impl ValueInspector {
         self.encoding = None;
         self.memory_bytes = None;
         self.ttl = None;
+        self.edit_mode = false;
+        self.text_editor = None;
     }
 
     pub fn set_error(&mut self, key: Option<String>, error: String) {
@@ -118,6 +123,8 @@ impl ValueInspector {
         self.encoding = None;
         self.memory_bytes = None;
         self.ttl = None;
+        self.edit_mode = false;
+        self.text_editor = None;
     }
 
     pub fn set_value(&mut self, key: String, value: RedisValue) {
@@ -125,6 +132,8 @@ impl ValueInspector {
         self.value = Some(value);
         self.loading = false;
         self.error = None;
+        self.edit_mode = false;
+        self.text_editor = None;
     }
 
     pub fn set_metadata(&mut self, encoding: Option<String>, memory_bytes: Option<u64>, ttl: Option<Ttl>) {
@@ -135,15 +144,55 @@ impl ValueInspector {
 
     pub fn handle_event(&mut self, event: &Event) -> Option<InspectorAction> {
         use crossterm::event::KeyCode;
-        if let Event::Key(key) = event
-            && key.code == KeyCode::Tab
-        {
-            self.string_view = self.string_view.next();
+        let Event::Key(key) = event else {
+            return None;
+        };
+
+        if self.edit_mode {
+            if let Some(ref mut editor) = self.text_editor {
+                if key.code == KeyCode::Esc {
+                    self.edit_mode = false;
+                    self.text_editor = None;
+                    return None;
+                }
+                if editor.handle_event(event) {
+                    self.edit_mode = false;
+                    let action = if editor.cancelled {
+                        None
+                    } else {
+                        Some(InspectorAction::WriteString {
+                            key: self.key.clone().unwrap_or_default(),
+                            value: editor.text.clone(),
+                        })
+                    };
+                    self.text_editor = None;
+                    return action;
+                }
+            }
+            return None;
+        }
+
+        match key.code {
+            KeyCode::Tab => {
+                self.string_view = self.string_view.next();
+            }
+            KeyCode::Char('e') | KeyCode::Char('E') => {
+                if let Some(RedisValue::String(ref s)) = self.value {
+                    self.edit_mode = true;
+                    self.text_editor = Some(TextAreaEditor::new(s.clone()));
+                }
+            }
+            _ => {}
         }
         None
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
+        if self.edit_mode && let Some(ref editor) = self.text_editor {
+            editor.render(frame, area);
+            return;
+        }
+
         let title = self
             .key
             .as_deref()

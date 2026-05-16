@@ -10,6 +10,7 @@ use crate::events::Event;
 pub struct TextAreaEditor {
     pub text: String,
     pub cursor: (usize, usize),
+    pub cancelled: bool,
 }
 
 impl Default for TextAreaEditor {
@@ -27,7 +28,7 @@ impl TextAreaEditor {
         } else {
             (lines.len() - 1, lines.last().unwrap().len())
         };
-        Self { text, cursor }
+        Self { text, cursor, cancelled: false }
     }
 
     pub fn cursor_line(&self) -> usize {
@@ -50,6 +51,7 @@ impl TextAreaEditor {
                     return true;
                 }
                 KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'x' => {
+                    self.cancelled = true;
                     return true;
                 }
                 KeyCode::Char(c) => {

@@ -1,6 +1,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
+    style::{Color, Style},
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
@@ -10,6 +11,7 @@ use crate::events::Event;
 pub enum SearchAction {
     Execute(String),
     Close,
+    QueryChanged,
 }
 
 pub struct GlobalSearch {
@@ -17,6 +19,8 @@ pub struct GlobalSearch {
     pub results: Vec<String>,
     pub filtered: Vec<String>,
     pub cursor: usize,
+    pub scanning: bool,
+    pub scan_results: Vec<String>,
 }
 
 impl Default for GlobalSearch {
@@ -32,11 +36,14 @@ impl GlobalSearch {
             results: Vec::new(),
             filtered: Vec::new(),
             cursor: 0,
+            scanning: false,
+            scan_results: Vec::new(),
         }
     }
 
     pub fn set_results(&mut self, results: Vec<String>) {
         self.results = results;
+        self.scanning = false;
         self.apply_filter();
     }
 
@@ -56,6 +63,34 @@ impl GlobalSearch {
         }
     }
 
+    /// Drain a batch of scan results into the filtered list.
+    pub fn drain_scan_batch(&mut self, batch: Vec<String>) {
+        if batch.is_empty() {
+            self.scanning = false;
+            return;
+        }
+        for item in batch {
+            if !self.results.contains(&item) {
+                self.results.push(item.clone());
+                let q = self.query.to_lowercase();
+                if q.is_empty() || item.to_lowercase().contains(&q) {
+                    self.filtered.push(item);
+                }
+            }
+        }
+        if self.cursor >= self.filtered.len() {
+            self.cursor = self.filtered.len().saturating_sub(1);
+        }
+    }
+
+    /// Prepare for a new scan: clear old results and mark scanning.
+    pub fn start_scan(&mut self) {
+        self.scanning = true;
+        self.results.clear();
+        self.filtered.clear();
+        self.cursor = 0;
+    }
+
     pub fn handle_event(&mut self, event: &Event) -> Option<SearchAction> {
         use crossterm::event::KeyCode;
         if let Event::Key(key) = event {
@@ -63,12 +98,12 @@ impl GlobalSearch {
                 KeyCode::Char(c) => {
                     self.query.push(c);
                     self.apply_filter();
-                    None
+                    Some(SearchAction::QueryChanged)
                 }
                 KeyCode::Backspace => {
                     self.query.pop();
                     self.apply_filter();
-                    None
+                    Some(SearchAction::QueryChanged)
                 }
                 KeyCode::Down => {
                     if self.cursor + 1 < self.filtered.len() {
@@ -101,9 +136,14 @@ impl GlobalSearch {
         let popup_area = centered_rect(80, 50, area);
         frame.render_widget(Clear, popup_area);
 
+        let title = if self.scanning {
+            "Search (Esc to close) [scanning...]"
+        } else {
+            "Search (Esc to close)"
+        };
         let block = Block::default()
             .borders(Borders::ALL)
-            .title("Global Search (Esc to close)");
+            .title(title);
         let inner = block.inner(popup_area);
         frame.render_widget(block, popup_area);
 
@@ -133,6 +173,16 @@ impl GlobalSearch {
                 height: inner.height.saturating_sub(2),
             };
             frame.render_widget(Paragraph::new(preview), result_area);
+        } else if !self.scanning {
+            let no_results = Paragraph::new("No matches found")
+                .style(Style::default().fg(Color::DarkGray));
+            let result_area = Rect {
+                x: inner.x,
+                y: inner.y.saturating_add(2),
+                width: inner.width,
+                height: inner.height.saturating_sub(2),
+            };
+            frame.render_widget(no_results, result_area);
         }
     }
 }

@@ -89,8 +89,10 @@ fn test_global_search_renders_without_panic() {
 #[test]
 fn test_global_search_typing_and_close() {
     let mut search = GlobalSearch::new();
-    search.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
-    search.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('b'))));
+    let a = search.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
+    assert_eq!(a, Some(SearchAction::QueryChanged));
+    let b = search.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('b'))));
+    assert_eq!(b, Some(SearchAction::QueryChanged));
     assert_eq!(search.query, "ab");
 
     let action = search.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
@@ -98,4 +100,77 @@ fn test_global_search_typing_and_close() {
 
     let action2 = search.handle_event(&Event::Key(KeyEvent::from(KeyCode::Esc)));
     assert!(matches!(action2, Some(SearchAction::Close)));
+}
+
+#[test]
+fn test_global_search_char_triggers_query_changed() {
+    let mut search = GlobalSearch::new();
+    let action = search.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('x'))));
+    assert_eq!(search.query, "x");
+    assert_eq!(action, Some(SearchAction::QueryChanged));
+}
+
+#[test]
+fn test_global_search_backspace_triggers_query_changed() {
+    let mut search = GlobalSearch::new();
+    search.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
+    search.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('b'))));
+    assert_eq!(search.query, "ab");
+
+    let action = search.handle_event(&Event::Key(KeyEvent::from(KeyCode::Backspace)));
+    assert_eq!(search.query, "a");
+    assert_eq!(action, Some(SearchAction::QueryChanged));
+}
+
+#[test]
+fn test_global_search_scan_state() {
+    let mut search = GlobalSearch::new();
+    assert!(!search.scanning);
+    assert!(search.scan_results.is_empty());
+
+    search.start_scan();
+    assert!(search.scanning);
+    assert!(search.results.is_empty());
+    assert!(search.filtered.is_empty());
+}
+
+#[test]
+fn test_global_search_drain_scan_batch() {
+    let mut search = GlobalSearch::new();
+    search.start_scan();
+
+    search.drain_scan_batch(vec!["key1".to_string(), "key2".to_string()]);
+    assert!(search.scanning); // still scanning
+    assert_eq!(search.results.len(), 2);
+    assert_eq!(search.filtered.len(), 2);
+
+    search.drain_scan_batch(vec![]);
+    assert!(!search.scanning); // done
+    assert_eq!(search.results.len(), 2);
+}
+
+#[test]
+fn test_global_search_filter_with_results() {
+    let mut search = GlobalSearch::new();
+    search.set_results(vec!["apple".to_string(), "banana".to_string(), "cherry".to_string()]);
+
+    // After set_results, filter matches all (query is "")
+    assert_eq!(search.filtered.len(), 3);
+
+    // Typing 'a' filters to items containing 'a'
+    search.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
+    assert_eq!(search.filtered, vec!["apple".to_string(), "banana".to_string()]);
+}
+
+#[test]
+fn test_global_search_render_shows_scanning() {
+    use ratatui::backend::TestBackend;
+
+    let mut search = GlobalSearch::new();
+    search.start_scan();
+    search.scanning = true;
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let _ = terminal.draw(|f| search.render(f, f.area()));
 }

@@ -130,6 +130,8 @@ pub struct App {
     last_profile: Option<ConnectionProfile>,
     pub scan_rx: Option<mpsc::Receiver<Vec<crate::ui::key_browser::tree::KeyEntry>>>,
     pub scan_cancel: Option<CancellationToken>,
+    pub search_scan_rx: Option<mpsc::Receiver<Vec<String>>>,
+    pub search_scan_cancel: Option<CancellationToken>,
     pub pubsub_rx: Option<mpsc::UnboundedReceiver<PubSubMessage>>,
     tick_count: u64,
     reconnect_attempt: u32,
@@ -163,6 +165,8 @@ impl App {
             last_profile: None,
             scan_rx: None,
             scan_cancel: None,
+            search_scan_rx: None,
+            search_scan_cancel: None,
             pubsub_rx: None,
             tick_count: 0,
             reconnect_attempt: 0,
@@ -398,6 +402,12 @@ impl App {
                         if self.mode() == &AppMode::Search {
                             self.mode_stack.pop();
                         }
+                        self.cancel_search_scan();
+                    }
+                    SearchAction::QueryChanged => {
+                        self.search.start_scan();
+                        self.cancel_search_scan();
+                        self.start_search_scan();
                     }
                 }
             }
@@ -493,17 +503,11 @@ impl App {
         }
 
         if self.keymap.matches("filter", &key) {
-            let mut keys = self
-                .key_browser
-                .tree
-                .all_keys()
-                .into_iter()
-                .map(|k| k.full_name)
-                .collect::<Vec<_>>();
-            keys.sort();
             self.search.query.clear();
             self.search.cursor = 0;
-            self.search.set_results(keys);
+            self.search.start_scan();
+            self.cancel_search_scan();
+            self.start_search_scan();
             self.mode_stack.push(AppMode::Search);
             return;
         }
@@ -730,6 +734,7 @@ impl App {
     async fn handle_tick(&mut self) {
         self.tick_count = self.tick_count.saturating_add(1);
         self.drain_scan_batches();
+        self.drain_search_scan();
         self.drain_pubsub_messages();
         self.status_bar.key_count = self.key_browser.tree.total_keys();
         if self.active_tab == Tab::Info && self.tick_count.is_multiple_of(4) {
@@ -1198,6 +1203,55 @@ impl App {
         };
     }
 
+    fn start_search_scan(&mut self) {
+        let client = match &self.client {
+            Some(c) => c.clone(),
+            None => return,
+        };
+        let query = self.search.query.clone();
+        let count = self.config.scan_count();
+        let (tx, rx) = mpsc::channel::<Vec<String>>(64);
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+        self.search_scan_rx = Some(rx);
+        self.search_scan_cancel = Some(cancel);
+        spawn_search_scan(client, query, count, tx, cancel_clone);
+    }
+
+    fn cancel_search_scan(&mut self) {
+        if let Some(cancel) = self.search_scan_cancel.take() {
+            cancel.cancel();
+        }
+        self.search_scan_rx = None;
+    }
+
+    fn drain_search_scan(&mut self) {
+        let mut finished = false;
+        if let Some(rx) = self.search_scan_rx.as_mut() {
+            loop {
+                match rx.try_recv() {
+                    Ok(batch) => {
+                        if batch.is_empty() {
+                            finished = true;
+                            break;
+                        }
+                        self.search.drain_scan_batch(batch);
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        finished = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if finished {
+            self.search_scan_rx = None;
+            self.search_scan_cancel = None;
+            self.search.scanning = false;
+        }
+    }
+
     pub fn render(&self, frame: &mut Frame) {
         let main_layout = Layout::default()
             .direction(Direction::Vertical)
@@ -1313,6 +1367,41 @@ fn centered_rect(
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+fn spawn_search_scan(
+    client: crate::redis::client::RedisClientHandle,
+    query: String,
+    count: u32,
+    tx: tokio::sync::mpsc::Sender<Vec<String>>,
+    cancel: tokio_util::sync::CancellationToken,
+) {
+    tokio::spawn(async move {
+        let pattern = if query.is_empty() {
+            "*".to_string()
+        } else {
+            format!("*{}*", query)
+        };
+        let mut cursor: u64 = 0;
+        loop {
+            if cancel.is_cancelled() {
+                break;
+            }
+            match client.scan_keys(cursor, &pattern, count).await {
+                Ok((new_cursor, keys)) => {
+                    if tokio::sync::mpsc::Sender::try_send(&tx, keys).is_err() {
+                        break;
+                    }
+                    cursor = new_cursor;
+                    if cursor == 0 {
+                        let _ = tokio::sync::mpsc::Sender::try_send(&tx, Vec::new());
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
 }
 
 #[cfg(test)]

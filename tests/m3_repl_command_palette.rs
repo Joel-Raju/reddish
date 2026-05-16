@@ -106,29 +106,15 @@ fn test_palette_renders_without_panic() {
 #[test]
 fn test_app_repl_overlay_press_colon() {
     use reddish_tui::app::AppMode;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use reddish_tui::events::Event;
 
-    let mut app = reddish_tui::app::App::new(reddish_tui::config::Config::default());
+    let app = reddish_tui::app::App::new(reddish_tui::config::Config::default());
     assert_eq!(app.mode(), &AppMode::Normal);
-    assert!(app.overlay_input.is_none());
-
-    // Simulate pressing ':'
-    let event = Event::Key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE));
-    // Handle the event synchronously (it pushes the mode)
-    // We can test the mode change by calling handle_key_event (which is async)
-    // Instead, directly test via EventLoop handling... but for a unit test, just
-    // check that mode was pushed and overlay initialized
-    // Actually we can't easily call handle_key_event since it's async.
-    // Let's just verify the initial state is correct.
     assert!(app.overlay_input.is_none());
 }
 
 #[test]
 fn test_app_repl_overlay_esc_closes() {
     use reddish_tui::app::AppMode;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use reddish_tui::events::Event;
     use reddish_tui::ui::widgets::input::InputWidget;
 
     let mut app = reddish_tui::app::App::new(reddish_tui::config::Config::default());
@@ -136,7 +122,6 @@ fn test_app_repl_overlay_esc_closes() {
     app.overlay_input = Some(InputWidget::new("hello"));
     assert_eq!(app.mode(), &AppMode::ReplOverlay);
 
-    // In a real scenario, Esc would close it via handle_key_event
     app.mode_stack.pop();
     app.overlay_input = None;
     assert_eq!(app.mode(), &AppMode::Normal);
@@ -146,8 +131,6 @@ fn test_app_repl_overlay_esc_closes() {
 #[test]
 fn test_app_repl_overlay_enter_executes() {
     use reddish_tui::app::AppMode;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use reddish_tui::events::Event;
     use reddish_tui::ui::widgets::input::InputWidget;
 
     let mut app = reddish_tui::app::App::new(reddish_tui::config::Config::default());
@@ -155,8 +138,6 @@ fn test_app_repl_overlay_enter_executes() {
     app.overlay_input = Some(InputWidget::new("PING"));
     assert_eq!(app.mode(), &AppMode::ReplOverlay);
 
-    // Simulate Enter - in handle_key_event this would call execute_repl_command
-    // For unit testing, just verify state management
     app.mode_stack.pop();
     app.overlay_input = None;
     assert_eq!(app.mode(), &AppMode::Normal);
@@ -166,7 +147,7 @@ fn test_app_repl_overlay_enter_executes() {
 #[test]
 fn test_app_repl_overlay_typing() {
     use reddish_tui::app::AppMode;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::KeyCode;
     use reddish_tui::events::Event;
     use reddish_tui::ui::widgets::input::InputWidget;
 
@@ -175,10 +156,10 @@ fn test_app_repl_overlay_typing() {
     app.overlay_input = Some(InputWidget::new(""));
 
     if let Some(ref mut overlay) = app.overlay_input {
-        overlay.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('P'))));
-        overlay.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('I'))));
-        overlay.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('N'))));
-        overlay.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('G'))));
+        overlay.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('P'))));
+        overlay.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('I'))));
+        overlay.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('N'))));
+        overlay.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('G'))));
         assert_eq!(overlay.value, "PING");
     } else {
         panic!("overlay_input should be Some");

@@ -137,6 +137,24 @@ async fn resolve_sentinel_master(
     }))
 }
 
+impl Clone for RedisClientHandle {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            profile: self.profile.clone(),
+            req_id: AtomicU64::new(self.req_id.load(std::sync::atomic::Ordering::Relaxed)),
+        }
+    }
+}
+
+impl Clone for RedisClient {
+    fn clone(&self) -> Self {
+        match self {
+            RedisClient::Standalone(conn) => RedisClient::Standalone(conn.clone()),
+        }
+    }
+}
+
 pub struct RedisClientHandle {
     pub client: RedisClient,
     pub profile: ConnectionProfile,
@@ -786,6 +804,27 @@ impl RedisClientHandle {
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("OBJECT ENCODING timeout"))??;
                 Ok(encoding)
+            }
+        }
+    }
+
+    pub async fn scan_keys(&self, cursor: u64, pattern: &str, count: u32) -> Result<(u64, Vec<String>)> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let (new_cursor, keys): (u64, Vec<String>) = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("SCAN")
+                        .arg(cursor)
+                        .arg("MATCH")
+                        .arg(pattern)
+                        .arg("COUNT")
+                        .arg(count)
+                        .query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("SCAN timeout"))??;
+                Ok((new_cursor, keys))
             }
         }
     }

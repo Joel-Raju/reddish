@@ -1056,6 +1056,20 @@ impl App {
                     self.error_message = Some("Not connected".to_string());
                 }
             }
+            BrowserAction::SetOp { op, source_keys, dest } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked (press Esc)".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    let sources: Vec<&str> = source_keys.iter().map(|s| s.as_str()).collect();
+                    if let Err(err) = client.set_store(op, &dest, &sources).await {
+                        self.error_message = Some(format!("Failed to {}: {err}", op.cmd_str()));
+                    }
+                } else {
+                    self.error_message = Some("Not connected".to_string());
+                }
+            }
         }
     }
 

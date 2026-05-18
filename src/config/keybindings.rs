@@ -79,6 +79,12 @@ pub struct Keymap {
     pub inspector_toggle_view: KeyDef,
     #[serde(default = "default_inspector_goto_end")]
     pub inspector_goto_end: KeyDef,
+    #[serde(default = "default_set_union")]
+    pub set_union: KeyDef,
+    #[serde(default = "default_set_inter")]
+    pub set_inter: KeyDef,
+    #[serde(default = "default_set_diff")]
+    pub set_diff: KeyDef,
     #[serde(default = "default_search_execute")]
     pub search_execute: KeyDef,
     #[serde(default = "default_search_close")]
@@ -137,6 +143,9 @@ impl Keymap {
             inspector_stream_add: KeyDef { key: "a".to_string() },
             inspector_toggle_view: KeyDef { key: "f".to_string() },
             inspector_goto_end: KeyDef { key: "g".to_string() },
+            set_union: KeyDef { key: "u".to_string() },
+            set_inter: KeyDef { key: "i".to_string() },
+            set_diff: KeyDef { key: "x".to_string() },
             search_execute: KeyDef { key: "Enter".to_string() },
             search_close: KeyDef { key: "Esc".to_string() },
         }
@@ -182,6 +191,9 @@ impl Keymap {
             inspector_stream_add: KeyDef { key: "ctrl+shift+x".to_string() },
             inspector_toggle_view: KeyDef { key: "ctrl+shift+f".to_string() },
             inspector_goto_end: KeyDef { key: "ctrl+shift+g".to_string() },
+            set_union: KeyDef { key: "ctrl+u".to_string() },
+            set_inter: KeyDef { key: "ctrl+i".to_string() },
+            set_diff: KeyDef { key: "ctrl+d".to_string() },
             search_execute: KeyDef { key: "Enter".to_string() },
             search_close: KeyDef { key: "ctrl+g".to_string() },
         }
@@ -227,6 +239,9 @@ impl Keymap {
             "inspector_stream_add" => &self.inspector_stream_add,
             "inspector_toggle_view" => &self.inspector_toggle_view,
             "inspector_goto_end" => &self.inspector_goto_end,
+            "set_union" => &self.set_union,
+            "set_inter" => &self.set_inter,
+            "set_diff" => &self.set_diff,
             "search_execute" => &self.search_execute,
             "search_close" => &self.search_close,
             _ => return false,
@@ -407,6 +422,15 @@ fn default_inspector_toggle_view() -> KeyDef {
 }
 fn default_inspector_goto_end() -> KeyDef {
     KeyDef { key: "g".to_string() }
+}
+fn default_set_union() -> KeyDef {
+    KeyDef { key: "u".to_string() }
+}
+fn default_set_inter() -> KeyDef {
+    KeyDef { key: "i".to_string() }
+}
+fn default_set_diff() -> KeyDef {
+    KeyDef { key: "x".to_string() }
 }
 fn default_search_execute() -> KeyDef {
     KeyDef { key: "Enter".to_string() }

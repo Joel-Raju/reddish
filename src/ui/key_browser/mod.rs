@@ -10,7 +10,7 @@ use ratatui::{
 
 use crate::config::keybindings::Keymap;
 use crate::events::Event;
-use crate::redis::client::RedisType;
+use crate::redis::client::{RedisType, SetOpType};
 use crate::ui::key_browser::tree::{KeyEntry, NamespaceTree, TreeRow};
 use crate::ui::widgets::input::InputWidget;
 
@@ -46,6 +46,8 @@ pub enum BrowserPrompt {
     RenameKey(String),
     SetTtl(String),
     DuplicateKey(String),
+    SetOpDest { op: SetOpType, source_keys: Vec<String> },
+    SetOpAdditionalSources { op: SetOpType, source_keys: Vec<String>, dest: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -65,6 +67,7 @@ pub enum BrowserAction {
     SetTtl { key: String, seconds: i64 },
     CopyKeyName(String),
     DuplicateKey { old_name: String, new_name: String },
+    SetOp { op: SetOpType, source_keys: Vec<String>, dest: String },
     RefreshRequested,
 }
 
@@ -151,6 +154,37 @@ impl KeyBrowser {
                             return None;
                         }
                         Some(BrowserAction::DuplicateKey { old_name, new_name: val })
+                    }
+                    Some(BrowserPrompt::SetOpDest { op, source_keys }) => {
+                        if val.is_empty() {
+                            return None;
+                        }
+                        self.prompt = Some(InputWidget::new("Additional source keys (space-separated):"));
+                        self.prompt_mode = Some(BrowserPrompt::SetOpAdditionalSources {
+                            op,
+                            source_keys,
+                            dest: val,
+                        });
+                        None
+                    }
+                    Some(BrowserPrompt::SetOpAdditionalSources {
+                        op,
+                        mut source_keys,
+                        dest,
+                    }) => {
+                        if !val.is_empty() {
+                            for extra in val.split_whitespace() {
+                                let trimmed = extra.trim();
+                                if !trimmed.is_empty() && !source_keys.contains(&trimmed.to_string()) {
+                                    source_keys.push(trimmed.to_string());
+                                }
+                            }
+                        }
+                        Some(BrowserAction::SetOp {
+                            op,
+                            source_keys,
+                            dest,
+                        })
                     }
                     None => None,
                 };
@@ -268,6 +302,34 @@ impl KeyBrowser {
                         prompt.cursor = prompt.value.len();
                         self.prompt = Some(prompt);
                         self.prompt_mode = Some(BrowserPrompt::DuplicateKey(key.full_name.clone()));
+                    }
+            } else if keymap.matches("set_union", key) || keymap.matches("set_inter", key) || keymap.matches("set_diff", key) {
+                    let event_key = key;
+                    let rows = self.sorted_rows();
+                    if let Some(row) = rows.get(self.cursor)
+                        && let Some(ref key) = row.key
+                    {
+                        let op = if keymap.matches("set_union", event_key) {
+                            SetOpType::Union
+                        } else if keymap.matches("set_inter", event_key) {
+                            SetOpType::Inter
+                        } else {
+                            SetOpType::Diff
+                        };
+                        let mut source_keys = vec![key.full_name.clone()];
+                        for sel in &self.selected {
+                            if sel != &key.full_name {
+                                source_keys.push(sel.clone());
+                            }
+                        }
+                        let mut prompt = InputWidget::new("Destination key:");
+                        prompt.value = format!("{}{}", key.full_name, op.dest_suffix());
+                        prompt.cursor = prompt.value.len();
+                        self.prompt = Some(prompt);
+                        self.prompt_mode = Some(BrowserPrompt::SetOpDest {
+                            op,
+                            source_keys,
+                        });
                     }
             } else if keymap.matches("toggle_select", key) {
                     let rows = self.sorted_rows();
@@ -424,6 +486,8 @@ impl KeyBrowser {
                 Some(BrowserPrompt::RenameKey(_)) => "New name: ",
                 Some(BrowserPrompt::SetTtl(_)) => "TTL seconds: ",
                 Some(BrowserPrompt::DuplicateKey(_)) => "Duplicate as: ",
+                Some(BrowserPrompt::SetOpDest { .. }) => "Destination key: ",
+                Some(BrowserPrompt::SetOpAdditionalSources { .. }) => "Additional sources: ",
                 None => "Input: ",
             };
             let prompt_text = format!(

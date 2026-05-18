@@ -1037,3 +1037,89 @@ fn test_key_browser_sorted_rows_by_type() {
     assert_eq!(rows[0], "[S] str1");
     assert_eq!(rows[1], "[L] list1");
 }
+
+#[test]
+fn test_key_browser_d_duplicate_starts_prompt() {
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.apply_scan_batch(vec![
+        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
+    ]);
+
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('d'))));
+    assert!(browser.prompt.is_some());
+    assert_eq!(
+        browser.prompt_mode,
+        Some(reddish_tui::ui::key_browser::BrowserPrompt::DuplicateKey("mykey".to_string()))
+    );
+    // Pre-filled with "mykey_copy" as the default new name
+    assert_eq!(browser.prompt.as_ref().unwrap().value, "mykey_copy");
+}
+
+#[test]
+fn test_key_browser_duplicate_submit_new_name() {
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.apply_scan_batch(vec![
+        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
+    ]);
+
+    // Open prompt (pre-fills with "mykey_copy")
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('d'))));
+
+    // Clear pre-filled text, then type new name
+    for _ in 0.."mykey_copy".len() {
+        browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Backspace)));
+    }
+    for c in "mykey2".chars() {
+        browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+
+    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    assert_eq!(
+        action,
+        Some(BrowserAction::DuplicateKey {
+            old_name: "mykey".to_string(),
+            new_name: "mykey2".to_string(),
+        })
+    );
+}
+
+#[test]
+fn test_key_browser_duplicate_empty_name_returns_none() {
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.apply_scan_batch(vec![
+        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
+    ]);
+
+    // Open prompt
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('d'))));
+
+    // Clear the pre-filled name using backspace
+    for _ in 0.."mykey_copy".len() {
+        browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Backspace)));
+    }
+
+    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    assert_eq!(action, None);
+}
+
+#[test]
+fn test_key_browser_duplicate_same_name_returns_none() {
+    let mut browser = KeyBrowser::new(':', 500_000);
+    browser.apply_scan_batch(vec![
+        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
+    ]);
+
+    // Open prompt
+    browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('d'))));
+
+    // Clear and type the same name as original
+    for _ in 0.."mykey_copy".len() {
+        browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Backspace)));
+    }
+    for c in "mykey".chars() {
+        browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+    }
+
+    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+    assert_eq!(action, None);
+}

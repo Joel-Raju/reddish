@@ -926,6 +926,26 @@ impl App {
                 }
                 self.error_message = Some(format!("Copied: {}", name));
             }
+            BrowserAction::DuplicateKey { old_name, new_name } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked (press Esc)".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    match client.dump(&old_name).await {
+                        Ok(data) => {
+                            if let Err(err) = client.restore(&new_name, 0, &data).await {
+                                self.error_message = Some(format!("Failed to duplicate key: {err}"));
+                            }
+                        }
+                        Err(err) => {
+                            self.error_message = Some(format!("Failed to dump key '{old_name}': {err}"));
+                        }
+                    }
+                } else {
+                    self.error_message = Some("Not connected".to_string());
+                }
+            }
         }
     }
 

@@ -45,6 +45,7 @@ pub enum BrowserPrompt {
     NewKeyType(String),
     RenameKey(String),
     SetTtl(String),
+    DuplicateKey(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -63,6 +64,7 @@ pub enum BrowserAction {
     ExpireKey(String),
     SetTtl { key: String, seconds: i64 },
     CopyKeyName(String),
+    DuplicateKey { old_name: String, new_name: String },
     RefreshRequested,
 }
 
@@ -143,6 +145,12 @@ impl KeyBrowser {
                     Some(BrowserPrompt::SetTtl(key)) => {
                         let seconds = val.parse::<i64>().ok();
                         seconds.map(|s| BrowserAction::SetTtl { key, seconds: s })
+                    }
+                    Some(BrowserPrompt::DuplicateKey(old_name)) => {
+                        if val.is_empty() || val == old_name {
+                            return None;
+                        }
+                        Some(BrowserAction::DuplicateKey { old_name, new_name: val })
                     }
                     None => None,
                 };
@@ -249,6 +257,17 @@ impl KeyBrowser {
                         && let Some(ref key) = row.key
                     {
                         return Some(BrowserAction::CopyKeyName(key.full_name.clone()));
+                    }
+            } else if keymap.matches("duplicate_key", key) {
+                    let rows = self.sorted_rows();
+                    if let Some(row) = rows.get(self.cursor)
+                        && let Some(ref key) = row.key
+                    {
+                        let mut prompt = InputWidget::new("New key name:");
+                        prompt.value = format!("{}_copy", key.full_name);
+                        prompt.cursor = prompt.value.len();
+                        self.prompt = Some(prompt);
+                        self.prompt_mode = Some(BrowserPrompt::DuplicateKey(key.full_name.clone()));
                     }
             } else if keymap.matches("toggle_select", key) {
                     let rows = self.sorted_rows();
@@ -404,6 +423,7 @@ impl KeyBrowser {
                 Some(BrowserPrompt::NewKeyType(_)) => "Type (s/l/h/z/t/x): ",
                 Some(BrowserPrompt::RenameKey(_)) => "New name: ",
                 Some(BrowserPrompt::SetTtl(_)) => "TTL seconds: ",
+                Some(BrowserPrompt::DuplicateKey(_)) => "Duplicate as: ",
                 None => "Input: ",
             };
             let prompt_text = format!(

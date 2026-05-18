@@ -57,6 +57,8 @@ pub struct Keymap {
     pub go_up: KeyDef,
     #[serde(default = "default_repl_overlay")]
     pub repl_overlay: KeyDef,
+    #[serde(default = "default_duplicate_key")]
+    pub duplicate_key: KeyDef,
     #[serde(default = "default_confirm_yes")]
     pub confirm_yes: KeyDef,
     #[serde(default = "default_confirm_no")]
@@ -124,6 +126,7 @@ impl Keymap {
             cycle_sort: KeyDef { key: "s".to_string() },
             go_up: KeyDef { key: "Backspace".to_string() },
             repl_overlay: KeyDef { key: ":".to_string() },
+            duplicate_key: KeyDef { key: "d".to_string() },
             confirm_yes: KeyDef { key: "y".to_string() },
             confirm_no: KeyDef { key: "n".to_string() },
             inspector_list_push: KeyDef { key: "a".to_string() },
@@ -168,6 +171,7 @@ impl Keymap {
             cycle_sort: KeyDef { key: "ctrl+o".to_string() },
             go_up: KeyDef { key: "ctrl+b".to_string() },
             repl_overlay: KeyDef { key: "alt+;".to_string() },
+            duplicate_key: KeyDef { key: "ctrl+d".to_string() },
             confirm_yes: KeyDef { key: "y".to_string() },
             confirm_no: KeyDef { key: "n".to_string() },
             inspector_list_push: KeyDef { key: "ctrl+shift+a".to_string() },
@@ -212,6 +216,7 @@ impl Keymap {
             "cycle_sort" => &self.cycle_sort,
             "go_up" => &self.go_up,
             "repl_overlay" => &self.repl_overlay,
+            "duplicate_key" => &self.duplicate_key,
             "confirm_yes" => &self.confirm_yes,
             "confirm_no" => &self.confirm_no,
             "inspector_list_push" => &self.inspector_list_push,
@@ -369,6 +374,9 @@ fn default_go_up() -> KeyDef {
 }
 fn default_repl_overlay() -> KeyDef {
     KeyDef { key: ":".to_string() }
+}
+fn default_duplicate_key() -> KeyDef {
+    KeyDef { key: "d".to_string() }
 }
 fn default_confirm_yes() -> KeyDef {
     KeyDef { key: "y".to_string() }

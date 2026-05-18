@@ -828,6 +828,45 @@ impl RedisClientHandle {
             }
         }
     }
+
+    pub async fn dump(&self, key: &str) -> Result<Vec<u8>> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let val: redis::Value = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("DUMP").arg(key).query_async::<redis::Value>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("DUMP timeout"))??;
+                match val {
+                    redis::Value::BulkString(bytes) => Ok(bytes),
+                    redis::Value::Nil => Err(color_eyre::eyre::eyre!("Key '{}' not found for DUMP", key)),
+                    _ => Err(color_eyre::eyre::eyre!("Unexpected DUMP response")),
+                }
+            }
+        }
+    }
+
+    pub async fn restore(&self, key: &str, ttl: i64, value: &[u8]) -> Result<()> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("RESTORE")
+                        .arg(key)
+                        .arg(ttl)
+                        .arg(value)
+                        .arg("REPLACE")
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("RESTORE timeout"))??;
+                Ok(())
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

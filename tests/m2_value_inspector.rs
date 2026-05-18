@@ -737,6 +737,7 @@ async fn test_redis_get_set_string() {
     let client = RedisClientHandle::connect(&profile).await.unwrap();
     let mut c = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
+        _ => unreachable!("test always uses standalone"),
     };
     redis::cmd("SET")
         .arg("m2_key")
@@ -908,6 +909,7 @@ async fn test_redis_hgetall() {
     let client = RedisClientHandle::connect(&profile).await.unwrap();
     let mut c = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
+        _ => unreachable!("test always uses standalone"),
     };
     redis::cmd("HSET")
         .arg("m2_hash")
@@ -949,6 +951,7 @@ async fn test_redis_lrange() {
     let client = RedisClientHandle::connect(&profile).await.unwrap();
     let mut c = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
+        _ => unreachable!("test always uses standalone"),
     };
     redis::cmd("LPUSH")
         .arg("m2_list")
@@ -988,6 +991,7 @@ async fn test_redis_smembers() {
     let client = RedisClientHandle::connect(&profile).await.unwrap();
     let mut c = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
+        _ => unreachable!("test always uses standalone"),
     };
     redis::cmd("SADD")
         .arg("m2_set")
@@ -1028,6 +1032,7 @@ async fn test_redis_zrange_withscores() {
     let client = RedisClientHandle::connect(&profile).await.unwrap();
     let mut c = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
+        _ => unreachable!("test always uses standalone"),
     };
     redis::cmd("ZADD")
         .arg("m2_zset")

@@ -1,12 +1,11 @@
-use crossterm::event::{KeyCode, KeyEvent};
 use reddish_tui::app::App;
 use reddish_tui::backoff::backoff_sequence;
 use reddish_tui::config::connections::{
     ConnectionMode, ConnectionProfile, SentinelNode, SshTunnelConfig, TlsConfig,
 };
-use reddish_tui::events::Event;
 use reddish_tui::redis::client::parse_cluster_nodes;
 use reddish_tui::ui::connection_screen::ConnectionScreen;
+use reddish_tui::ui::repl::parse_pipeline;
 
 #[test]
 fn test_parse_cluster_nodes() {
@@ -72,6 +71,54 @@ fn test_tls_config_roundtrip() {
 }
 
 #[test]
+fn test_ssh_tunnel_config_roundtrip() {
+    use std::path::PathBuf;
+    let cfg = SshTunnelConfig {
+        host: "bastion.example.com".to_string(),
+        port: 22,
+        user: "deploy".to_string(),
+        key_path: PathBuf::from("/home/deploy/.ssh/id_ed25519"),
+        local_port: 16379,
+    };
+    let toml = toml::to_string(&cfg).unwrap();
+    let back: SshTunnelConfig = toml::from_str(&toml).unwrap();
+    assert_eq!(cfg.host, back.host);
+    assert_eq!(cfg.port, back.port);
+    assert_eq!(cfg.user, back.user);
+    assert_eq!(cfg.key_path, back.key_path);
+    assert_eq!(cfg.local_port, back.local_port);
+}
+
+#[test]
+fn test_ssh_tunnel_in_connection_profile_roundtrip() {
+    use std::path::PathBuf;
+    let profile = ConnectionProfile {
+        name: "tunneled".to_string(),
+        host: "private-redis.internal".to_string(),
+        port: 6379,
+        db: 1,
+        username: None,
+        password: None,
+        last_connected: None,
+        mode: ConnectionMode::Standalone,
+        tls: None,
+        ssh_tunnel: Some(SshTunnelConfig {
+            host: "bastion.example.com".to_string(),
+            port: 22,
+            user: "ops".to_string(),
+            key_path: PathBuf::from("/home/ops/.ssh/id_rsa"),
+            local_port: 26379,
+        }),
+    };
+    let toml = toml::to_string(&profile).unwrap();
+    let back: ConnectionProfile = toml::from_str(&toml).unwrap();
+    let tunnel = back.ssh_tunnel.expect("ssh_tunnel should round-trip");
+    assert_eq!(tunnel.host, "bastion.example.com");
+    assert_eq!(tunnel.local_port, 26379);
+    assert_eq!(back.host, "private-redis.internal");
+}
+
+#[test]
 fn test_connection_screen_renders_without_panic() {
     use ratatui::backend::TestBackend;
     use reddish_tui::config::connections::ConnectionStore;
@@ -124,18 +171,91 @@ fn test_connection_screen_renders_without_panic() {
     let _ = terminal.draw(|f| screen.render(f, f.area()));
 }
 
-#[test]
-fn test_readonly_mode_blocks_writes() {
+#[tokio::test]
+async fn test_readonly_repl_blocks_set() {
     let mut app = App::new(reddish_tui::config::Config::default());
     app.readonly = true;
 
-    // Simulate delete key press in key browser
-    let _event = Event::Key(KeyEvent::from(KeyCode::Char('D')));
-    // In readonly mode, the action should be blocked and an error set
-    // We test at the App level that readonly is respected
-    assert!(app.readonly);
-    assert!(app.error_message.is_none());
-    // The actual blocking logic would set the error in the event handler
+    // Drive execute_repl_command directly; no Redis connection needed because
+    // the policy check fires before any client call.
+    reddish_tui::app::execute_repl_command_for_test(&mut app, "SET foo bar".to_string()).await;
+
+    assert!(
+        app.error_message
+            .as_deref()
+            .is_some_and(|m| m.contains("Read-only mode")),
+        "expected Read-only error, got: {:?}",
+        app.error_message,
+    );
+    assert!(
+        !app.status_bar.error_notifications.is_empty(),
+        "error should also appear in status bar toast"
+    );
+}
+
+#[tokio::test]
+async fn test_readonly_repl_allows_get() {
+    let mut app = App::new(reddish_tui::config::Config::default());
+    app.readonly = true;
+
+    // GET is a read command — the policy should not block it.
+    // Without a client the stage will fail with "Not connected", NOT with a policy error.
+    reddish_tui::app::execute_repl_command_for_test(&mut app, "GET foo".to_string()).await;
+
+    assert!(
+        app.error_message
+            .as_deref()
+            .map(|m| !m.contains("Read-only mode"))
+            .unwrap_or(true),
+        "GET should not be blocked by read-only policy"
+    );
+}
+
+#[test]
+fn test_danger_policy_blocks_flushdb() {
+    let stages = parse_pipeline("FLUSHDB");
+    let err = reddish_tui::app::repl_policy_error_for_test(&stages, false);
+    assert!(
+        err.as_deref()
+            .is_some_and(|m| m.contains("blocked by safety policy")),
+        "FLUSHDB should be blocked unconditionally, got: {err:?}"
+    );
+}
+
+#[test]
+fn test_danger_policy_blocks_keys_star() {
+    let stages = parse_pipeline("KEYS *");
+    let err = reddish_tui::app::repl_policy_error_for_test(&stages, false);
+    assert!(
+        err.as_deref()
+            .is_some_and(|m| m.contains("blocked by safety policy")),
+        "KEYS * should be blocked, got: {err:?}"
+    );
+}
+
+#[test]
+fn test_danger_policy_allows_keys_prefix() {
+    // KEYS with a non-wildcard pattern is not blocked by danger policy
+    let stages = parse_pipeline("KEYS user:*");
+    let err = reddish_tui::app::repl_policy_error_for_test(&stages, false);
+    assert!(err.is_none(), "KEYS user:* should not be blocked, got: {err:?}");
+}
+
+#[test]
+fn test_readonly_policy_blocks_del() {
+    let stages = parse_pipeline("DEL mykey");
+    let err = reddish_tui::app::repl_policy_error_for_test(&stages, true);
+    assert!(
+        err.as_deref().is_some_and(|m| m.contains("Read-only mode")),
+        "DEL should be blocked in readonly, got: {err:?}"
+    );
+}
+
+#[test]
+fn test_readonly_policy_allows_hgetall() {
+    let stages = parse_pipeline("HGETALL myhash");
+    let err = reddish_tui::app::repl_policy_error_for_test(&stages, true);
+    assert!(err.is_none(), "HGETALL should not be blocked in readonly");
 }
 
 #[test]

@@ -3,9 +3,11 @@ use std::time::Duration;
 
 use color_eyre::Result;
 use redis::aio::MultiplexedConnection;
+use redis::cluster_async::ClusterConnection;
 use thiserror::Error;
 
 use crate::config::connections::{ConnectionMode, ConnectionProfile, SentinelNode};
+use crate::redis::ssh_tunnel::SshTunnel;
 use crate::redis::types::{
     RedisValue, StreamEntry, StreamGroup, ZSetEntry, bytes_to_string_lossy, map_pairs_to_index_map,
     stream_fields_from_map,
@@ -27,6 +29,7 @@ pub enum RedisError {
 
 pub enum RedisClient {
     Standalone(MultiplexedConnection),
+    Cluster(ClusterConnection),
 }
 
 fn resolve_password(profile: &ConnectionProfile) -> RedisResult<Option<String>> {
@@ -143,6 +146,7 @@ impl Clone for RedisClientHandle {
             client: self.client.clone(),
             profile: self.profile.clone(),
             req_id: AtomicU64::new(self.req_id.load(std::sync::atomic::Ordering::Relaxed)),
+            _tunnel: None,
         }
     }
 }
@@ -151,6 +155,7 @@ impl Clone for RedisClient {
     fn clone(&self) -> Self {
         match self {
             RedisClient::Standalone(conn) => RedisClient::Standalone(conn.clone()),
+            RedisClient::Cluster(conn) => RedisClient::Cluster(conn.clone()),
         }
     }
 }
@@ -159,6 +164,8 @@ pub struct RedisClientHandle {
     pub client: RedisClient,
     pub profile: ConnectionProfile,
     pub req_id: AtomicU64,
+    /// Keeps the SSH tunnel process alive for the lifetime of this handle.
+    _tunnel: Option<SshTunnel>,
 }
 
 impl RedisClientHandle {
@@ -167,10 +174,52 @@ impl RedisClientHandle {
     }
 
     pub async fn connect(profile: &ConnectionProfile) -> RedisResult<Self> {
-        let conn = match &profile.mode {
-            ConnectionMode::Standalone | ConnectionMode::Cluster => {
-                let url = build_redis_url(profile, &profile.host, profile.port)?;
-                connect_with_timeout(&url).await?
+        // Optionally open an SSH tunnel before connecting.
+        let tunnel = if let Some(cfg) = &profile.ssh_tunnel {
+            let t = SshTunnel::open(cfg, &profile.host, profile.port)
+                .await
+                .map_err(|e| RedisError::ConnectionFailed(format!("SSH tunnel: {e}")))? ;
+            Some(t)
+        } else {
+            None
+        };
+
+        // When a tunnel is active, connect to localhost:local_port instead.
+        let (effective_host, effective_port) = match &tunnel {
+            Some(t) => ("127.0.0.1".to_string(), t.local_port),
+            None => (profile.host.clone(), profile.port),
+        };
+
+        match &profile.mode {
+            ConnectionMode::Standalone => {
+                let url = build_redis_url(profile, &effective_host, effective_port)?;
+                let conn = connect_with_timeout(&url).await?;
+                Ok(Self {
+                    client: RedisClient::Standalone(conn),
+                    profile: profile.clone(),
+                    req_id: AtomicU64::new(0),
+                    _tunnel: tunnel,
+                })
+            }
+            ConnectionMode::Cluster => {
+                let url = build_redis_url(profile, &effective_host, effective_port)?;
+                let cluster_client = redis::cluster::ClusterClient::new(vec![url.as_str()])
+                    .map_err(|e| RedisError::ConnectionFailed(format!("cluster client: {e}")))?;
+                let conn = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    cluster_client.get_async_connection(),
+                )
+                .await
+                .map_err(|_| RedisError::Timeout("cluster connect"))
+                .and_then(|r| {
+                    r.map_err(|e| RedisError::ConnectionFailed(format!("cluster connect: {e}")))
+                })?;
+                Ok(Self {
+                    client: RedisClient::Cluster(conn),
+                    profile: profile.clone(),
+                    req_id: AtomicU64::new(0),
+                    _tunnel: tunnel,
+                })
             }
             ConnectionMode::Sentinel {
                 master_name,
@@ -178,22 +227,33 @@ impl RedisClientHandle {
             } => {
                 let (master_host, master_port) =
                     resolve_sentinel_master(profile, master_name, sentinels).await?;
+                // For sentinel, the tunnel points to the sentinel, not the master;
+                // resolve sentinel first, then connect to the actual master directly.
                 let url = build_redis_url(profile, &master_host, master_port)?;
-                connect_with_timeout(&url).await?
+                let conn = connect_with_timeout(&url).await?;
+                Ok(Self {
+                    client: RedisClient::Standalone(conn),
+                    profile: profile.clone(),
+                    req_id: AtomicU64::new(0),
+                    _tunnel: tunnel,
+                })
             }
-        };
-
-        Ok(Self {
-            client: RedisClient::Standalone(conn),
-            profile: profile.clone(),
-            req_id: AtomicU64::new(0),
-        })
+        }
     }
 
     pub async fn ping(&self) -> Result<Duration> {
         let start = std::time::Instant::now();
         match &self.client {
             RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("PING").query_async::<String>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("Ping timeout"))??;
+            }
+            RedisClient::Cluster(conn) => {
                 let mut c = conn.clone();
                 tokio::time::timeout(
                     Duration::from_secs(5),
@@ -218,6 +278,16 @@ impl RedisClientHandle {
                 .map_err(|_| color_eyre::eyre::eyre!("DBSIZE timeout"))??;
                 Ok(size)
             }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                let size: u64 = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("DBSIZE").query_async::<u64>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("DBSIZE timeout"))??;
+                Ok(size)
+            }
         }
     }
 
@@ -233,29 +303,50 @@ impl RedisClientHandle {
                 .map_err(|_| color_eyre::eyre::eyre!("TYPE timeout"))??;
                 Ok(RedisType::from(t.as_str()))
             }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                let t: String = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("TYPE").arg(key).query_async::<String>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("TYPE timeout"))??;
+                Ok(RedisType::from(t.as_str()))
+            }
         }
     }
 
     pub async fn ttl(&self, key: &str) -> Result<Ttl> {
-        match &self.client {
+        let ttl_val: i64 = match &self.client {
             RedisClient::Standalone(conn) => {
                 let mut c = conn.clone();
-                let ttl_val: i64 = tokio::time::timeout(
+                tokio::time::timeout(
                     Duration::from_secs(5),
                     redis::cmd("TTL").arg(key).query_async::<i64>(&mut c),
                 )
                 .await
-                .map_err(|_| color_eyre::eyre::eyre!("TTL timeout"))??;
-                if ttl_val < 0 {
-                    if ttl_val == -2 {
-                        Ok(Ttl::KeyNotFound)
-                    } else {
-                        Ok(Ttl::NoExpiry)
-                    }
-                } else {
-                    Ok(Ttl::Expires(Duration::from_secs(ttl_val as u64)))
-                }
+                .map_err(|_| color_eyre::eyre::eyre!("TTL timeout"))?
+                .map_err(|e| color_eyre::eyre::eyre!("TTL failed: {e}"))?
             }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("TTL").arg(key).query_async::<i64>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("TTL timeout"))?
+                .map_err(|e| color_eyre::eyre::eyre!("TTL failed: {e}"))?
+            }
+        };
+        if ttl_val < 0 {
+            if ttl_val == -2 {
+                Ok(Ttl::KeyNotFound)
+            } else {
+                Ok(Ttl::NoExpiry)
+            }
+        } else {
+            Ok(Ttl::Expires(Duration::from_secs(ttl_val as u64)))
         }
     }
 
@@ -269,9 +360,18 @@ impl RedisClientHandle {
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("DEL timeout"))??;
-                Ok(())
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("DEL").arg(key).query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("DEL timeout"))??;
             }
         }
+        Ok(())
     }
 
     pub async fn rename(&self, from: &str, to: &str) -> Result<()> {
@@ -287,19 +387,30 @@ impl RedisClientHandle {
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("RENAME timeout"))??;
-                Ok(())
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("RENAME")
+                        .arg(from)
+                        .arg(to)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("RENAME timeout"))??;
             }
         }
+        Ok(())
     }
 
     pub async fn set_ttl(&self, key: &str, seconds: i64) -> Result<()> {
-        match &self.client {
-            RedisClient::Standalone(conn) => {
-                let mut c = conn.clone();
+        macro_rules! do_set_ttl {
+            ($c:expr) => {
                 if seconds < 0 {
                     tokio::time::timeout(
                         Duration::from_secs(5),
-                        redis::cmd("PERSIST").arg(key).query_async::<()>(&mut c),
+                        redis::cmd("PERSIST").arg(key).query_async::<()>($c),
                     )
                     .await
                     .map_err(|_| color_eyre::eyre::eyre!("PERSIST timeout"))??;
@@ -309,19 +420,39 @@ impl RedisClientHandle {
                         redis::cmd("EXPIRE")
                             .arg(key)
                             .arg(seconds)
-                            .query_async::<()>(&mut c),
+                            .query_async::<()>($c),
                     )
                     .await
                     .map_err(|_| color_eyre::eyre::eyre!("EXPIRE timeout"))??;
                 }
-                Ok(())
+            };
+        }
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                do_set_ttl!(&mut c);
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                do_set_ttl!(&mut c);
             }
         }
+        Ok(())
     }
 
     pub async fn get(&self, key: &str) -> Result<Vec<u8>> {
         match &self.client {
             RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let val: Vec<u8> = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("GET").arg(key).query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("GET timeout"))??;
+                Ok(val)
+            }
+            RedisClient::Cluster(conn) => {
                 let mut c = conn.clone();
                 let val: Vec<u8> = tokio::time::timeout(
                     Duration::from_secs(5),
@@ -347,14 +478,36 @@ impl RedisClientHandle {
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("SET timeout"))??;
-                Ok(())
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("SET")
+                        .arg(key)
+                        .arg(value)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("SET timeout"))??;
             }
         }
+        Ok(())
     }
 
     pub async fn hgetall(&self, key: &str) -> Result<Vec<(String, Vec<u8>)>> {
         match &self.client {
             RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let val: Vec<(String, Vec<u8>)> = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("HGETALL").arg(key).query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("HGETALL timeout"))??;
+                Ok(val)
+            }
+            RedisClient::Cluster(conn) => {
                 let mut c = conn.clone();
                 let val: Vec<(String, Vec<u8>)> = tokio::time::timeout(
                     Duration::from_secs(5),
@@ -383,12 +536,36 @@ impl RedisClientHandle {
                 .map_err(|_| color_eyre::eyre::eyre!("LRANGE timeout"))??;
                 Ok(val)
             }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                let val: Vec<Vec<u8>> = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("LRANGE")
+                        .arg(key)
+                        .arg(start)
+                        .arg(stop)
+                        .query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("LRANGE timeout"))??;
+                Ok(val)
+            }
         }
     }
 
     pub async fn smembers(&self, key: &str) -> Result<Vec<Vec<u8>>> {
         match &self.client {
             RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let val: Vec<Vec<u8>> = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("SMEMBERS").arg(key).query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("SMEMBERS timeout"))??;
+                Ok(val)
+            }
+            RedisClient::Cluster(conn) => {
                 let mut c = conn.clone();
                 let val: Vec<Vec<u8>> = tokio::time::timeout(
                     Duration::from_secs(5),
@@ -423,6 +600,21 @@ impl RedisClientHandle {
                 .map_err(|_| color_eyre::eyre::eyre!("ZRANGE timeout"))??;
                 Ok(val)
             }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                let val: Vec<(Vec<u8>, f64)> = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("ZRANGE")
+                        .arg(key)
+                        .arg(start)
+                        .arg(stop)
+                        .arg("WITHSCORES")
+                        .query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("ZRANGE timeout"))??;
+                Ok(val)
+            }
         }
     }
 
@@ -438,12 +630,35 @@ impl RedisClientHandle {
                 .map_err(|_| color_eyre::eyre::eyre!("INFO timeout"))??;
                 Ok(val)
             }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                let val: String = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("INFO").arg(section).query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("INFO timeout"))??;
+                Ok(val)
+            }
         }
     }
 
     pub async fn publish(&self, channel: &str, message: &str) -> Result<u64> {
         match &self.client {
             RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let val: u64 = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("PUBLISH")
+                        .arg(channel)
+                        .arg(message)
+                        .query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("PUBLISH timeout"))??;
+                Ok(val)
+            }
+            RedisClient::Cluster(conn) => {
                 let mut c = conn.clone();
                 let val: u64 = tokio::time::timeout(
                     Duration::from_secs(5),
@@ -507,22 +722,34 @@ impl RedisClientHandle {
     }
 
     pub async fn list_push(&self, key: &str, value: &str, head: bool) -> Result<()> {
+        let cmd_name = if head { "LPUSH" } else { "RPUSH" };
         match &self.client {
             RedisClient::Standalone(conn) => {
                 let mut c = conn.clone();
-                let cmd = if head { "LPUSH" } else { "RPUSH" };
                 tokio::time::timeout(
                     Duration::from_secs(5),
-                    redis::cmd(cmd)
+                    redis::cmd(cmd_name)
                         .arg(key)
                         .arg(value)
                         .query_async::<()>(&mut c),
                 )
                 .await
-                .map_err(|_| color_eyre::eyre::eyre!("{cmd} timeout"))??;
-                Ok(())
+                .map_err(|_| color_eyre::eyre::eyre!("{cmd_name} timeout"))??;
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd(cmd_name)
+                        .arg(key)
+                        .arg(value)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("{cmd_name} timeout"))??;
             }
         }
+        Ok(())
     }
 
     pub async fn list_set(&self, key: &str, index: i64, value: &str) -> Result<()> {
@@ -539,9 +766,22 @@ impl RedisClientHandle {
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("LSET timeout"))??;
-                Ok(())
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("LSET")
+                        .arg(key)
+                        .arg(index)
+                        .arg(value)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("LSET timeout"))??;
             }
         }
+        Ok(())
     }
 
     pub async fn list_remove(&self, key: &str, value: &str) -> Result<()> {
@@ -558,9 +798,22 @@ impl RedisClientHandle {
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("LREM timeout"))??;
-                Ok(())
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("LREM")
+                        .arg(key)
+                        .arg(0)
+                        .arg(value)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("LREM timeout"))??;
             }
         }
+        Ok(())
     }
 
     pub async fn hash_set(&self, key: &str, field: &str, value: &str) -> Result<()> {
@@ -577,29 +830,48 @@ impl RedisClientHandle {
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("HSET timeout"))??;
-                Ok(())
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("HSET")
+                        .arg(key)
+                        .arg(field)
+                        .arg(value)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("HSET timeout"))??;
             }
         }
+        Ok(())
     }
 
     pub async fn hash_del(&self, key: &str, fields: &[&str]) -> Result<()> {
         if fields.is_empty() {
             return Ok(());
         }
+        let mut cmd = redis::cmd("HDEL");
+        cmd.arg(key);
+        for field in fields {
+            cmd.arg(field);
+        }
         match &self.client {
             RedisClient::Standalone(conn) => {
                 let mut c = conn.clone();
-                let mut cmd = redis::cmd("HDEL");
-                cmd.arg(key);
-                for field in fields {
-                    cmd.arg(field);
-                }
                 tokio::time::timeout(Duration::from_secs(5), cmd.query_async::<()>(&mut c))
                     .await
                     .map_err(|_| color_eyre::eyre::eyre!("HDEL timeout"))??;
-                Ok(())
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(Duration::from_secs(5), cmd.query_async::<()>(&mut c))
+                    .await
+                    .map_err(|_| color_eyre::eyre::eyre!("HDEL timeout"))??;
             }
         }
+        Ok(())
     }
 
     pub async fn set_add(&self, key: &str, member: &str) -> Result<()> {
@@ -615,9 +887,21 @@ impl RedisClientHandle {
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("SADD timeout"))??;
-                Ok(())
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("SADD")
+                        .arg(key)
+                        .arg(member)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("SADD timeout"))??;
             }
         }
+        Ok(())
     }
 
     pub async fn set_rem(&self, key: &str, member: &str) -> Result<()> {
@@ -633,9 +917,21 @@ impl RedisClientHandle {
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("SREM timeout"))??;
-                Ok(())
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("SREM")
+                        .arg(key)
+                        .arg(member)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("SREM timeout"))??;
             }
         }
+        Ok(())
     }
 
     pub async fn zadd(&self, key: &str, score: f64, member: &str) -> Result<()> {
@@ -652,9 +948,22 @@ impl RedisClientHandle {
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("ZADD timeout"))??;
-                Ok(())
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("ZADD")
+                        .arg(key)
+                        .arg(score)
+                        .arg(member)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("ZADD timeout"))??;
             }
         }
+        Ok(())
     }
 
     pub async fn zrem(&self, key: &str, member: &str) -> Result<()> {
@@ -670,9 +979,21 @@ impl RedisClientHandle {
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("ZREM timeout"))??;
-                Ok(())
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("ZREM")
+                        .arg(key)
+                        .arg(member)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("ZREM timeout"))??;
             }
         }
+        Ok(())
     }
 
     pub async fn zscore_update(&self, key: &str, member: &str, score: f64) -> Result<()> {
@@ -680,14 +1001,22 @@ impl RedisClientHandle {
     }
 
     pub async fn xadd(&self, key: &str, entry_id: &str, fields: &[(&str, &str)]) -> Result<String> {
+        let mut cmd = redis::cmd("XADD");
+        cmd.arg(key).arg(entry_id);
+        for (field, value) in fields {
+            cmd.arg(field).arg(value);
+        }
         match &self.client {
             RedisClient::Standalone(conn) => {
                 let mut c = conn.clone();
-                let mut cmd = redis::cmd("XADD");
-                cmd.arg(key).arg(entry_id);
-                for (field, value) in fields {
-                    cmd.arg(field).arg(value);
-                }
+                let id: String =
+                    tokio::time::timeout(Duration::from_secs(5), cmd.query_async(&mut c))
+                        .await
+                        .map_err(|_| color_eyre::eyre::eyre!("XADD timeout"))??;
+                Ok(id)
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
                 let id: String =
                     tokio::time::timeout(Duration::from_secs(5), cmd.query_async(&mut c))
                         .await
@@ -710,15 +1039,26 @@ impl RedisClientHandle {
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("XDEL timeout"))??;
-                Ok(())
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("XDEL")
+                        .arg(key)
+                        .arg(id)
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("XDEL timeout"))??;
             }
         }
+        Ok(())
     }
 
     pub async fn xrange(&self, key: &str) -> Result<Vec<StreamEntry>> {
-        match &self.client {
-            RedisClient::Standalone(conn) => {
-                let mut c = conn.clone();
+        macro_rules! do_xrange {
+            ($c:expr) => {{
                 let raw: Vec<(String, std::collections::HashMap<String, redis::Value>)> =
                     tokio::time::timeout(
                         Duration::from_secs(5),
@@ -726,36 +1066,42 @@ impl RedisClientHandle {
                             .arg(key)
                             .arg("-")
                             .arg("+")
-                            .query_async(&mut c),
+                            .query_async($c),
                     )
                     .await
                     .map_err(|_| color_eyre::eyre::eyre!("XRANGE timeout"))??;
-
-                Ok(raw
-                    .into_iter()
+                raw.into_iter()
                     .map(|(id, fields)| StreamEntry {
                         id,
                         fields: stream_fields_from_map(fields),
                     })
-                    .collect())
+                    .collect()
+            }};
+        }
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                Ok(do_xrange!(&mut c))
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                Ok(do_xrange!(&mut c))
             }
         }
     }
 
     pub async fn xgroups(&self, key: &str) -> Result<Vec<StreamGroup>> {
-        match &self.client {
-            RedisClient::Standalone(conn) => {
-                let mut c = conn.clone();
+        macro_rules! do_xgroups {
+            ($c:expr) => {{
                 let rows: Vec<Vec<String>> = tokio::time::timeout(
                     Duration::from_secs(5),
                     redis::cmd("XINFO")
                         .arg("GROUPS")
                         .arg(key)
-                        .query_async(&mut c),
+                        .query_async($c),
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("XINFO GROUPS timeout"))??;
-
                 let mut out = Vec::new();
                 for row in rows {
                     if row.len() >= 8 {
@@ -767,7 +1113,17 @@ impl RedisClientHandle {
                         });
                     }
                 }
-                Ok(out)
+                out
+            }};
+        }
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                Ok(do_xgroups!(&mut c))
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                Ok(do_xgroups!(&mut c))
             }
         }
     }
@@ -787,12 +1143,38 @@ impl RedisClientHandle {
                 .map_err(|_| color_eyre::eyre::eyre!("MEMORY USAGE timeout"))??;
                 Ok(bytes)
             }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                let bytes: u64 = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("MEMORY")
+                        .arg("USAGE")
+                        .arg(key)
+                        .query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("MEMORY USAGE timeout"))??;
+                Ok(bytes)
+            }
         }
     }
 
     pub async fn object_encoding(&self, key: &str) -> Result<String> {
         match &self.client {
             RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let encoding: String = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("OBJECT")
+                        .arg("ENCODING")
+                        .arg(key)
+                        .query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("OBJECT ENCODING timeout"))??;
+                Ok(encoding)
+            }
+            RedisClient::Cluster(conn) => {
                 let mut c = conn.clone();
                 let encoding: String = tokio::time::timeout(
                     Duration::from_secs(5),
@@ -826,16 +1208,31 @@ impl RedisClientHandle {
                 .map_err(|_| color_eyre::eyre::eyre!("SCAN timeout"))??;
                 Ok((new_cursor, keys))
             }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                let (new_cursor, keys): (u64, Vec<String>) = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("SCAN")
+                        .arg(cursor)
+                        .arg("MATCH")
+                        .arg(pattern)
+                        .arg("COUNT")
+                        .arg(count)
+                        .query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("SCAN timeout"))??;
+                Ok((new_cursor, keys))
+            }
         }
     }
 
     pub async fn dump(&self, key: &str) -> Result<Vec<u8>> {
-        match &self.client {
-            RedisClient::Standalone(conn) => {
-                let mut c = conn.clone();
+        macro_rules! do_dump {
+            ($c:expr) => {{
                 let val: redis::Value = tokio::time::timeout(
                     Duration::from_secs(5),
-                    redis::cmd("DUMP").arg(key).query_async::<redis::Value>(&mut c),
+                    redis::cmd("DUMP").arg(key).query_async::<redis::Value>($c),
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("DUMP timeout"))??;
@@ -844,8 +1241,68 @@ impl RedisClientHandle {
                     redis::Value::Nil => Err(color_eyre::eyre::eyre!("Key '{}' not found for DUMP", key)),
                     _ => Err(color_eyre::eyre::eyre!("Unexpected DUMP response")),
                 }
+            }};
+        }
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                do_dump!(&mut c)
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                do_dump!(&mut c)
             }
         }
+    }
+
+    /// Returns the host:port addresses of all master nodes in a cluster.
+    /// For standalone/sentinel connections returns an empty Vec.
+    pub async fn cluster_master_addrs(&self) -> Result<Vec<String>> {
+        let raw: String = match &self.client {
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("CLUSTER").arg("NODES").query_async::<String>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("CLUSTER NODES timeout"))?
+                .map_err(|e| color_eyre::eyre::eyre!("CLUSTER NODES failed: {e}"))?
+            }
+            RedisClient::Standalone(_) => return Ok(Vec::new()),
+        };
+        let addrs = raw
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|line| {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                let flags = parts.get(2)?;
+                if flags.contains("master") && !flags.contains("fail") {
+                    let addr_full = parts.get(1)?;
+                    let addr = addr_full.split('@').next()?;
+                    Some(addr.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        Ok(addrs)
+    }
+
+    /// Open a direct `MultiplexedConnection` to a specific `host:port`, reusing
+    /// the profile's auth/TLS settings.
+    pub async fn connect_node(&self, addr: &str) -> Result<MultiplexedConnection> {
+        let mut parts = addr.splitn(2, ':');
+        let host = parts.next().unwrap_or("127.0.0.1");
+        let port = parts
+            .next()
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(6379);
+        let url = build_redis_url(&self.profile, host, port)
+            .map_err(|e| color_eyre::eyre::eyre!("build node URL: {e}"))?;
+        connect_with_timeout(&url)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("connect node {addr}: {e}"))
     }
 
     pub async fn restore(&self, key: &str, ttl: i64, value: &[u8]) -> Result<()> {
@@ -863,9 +1320,23 @@ impl RedisClientHandle {
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("RESTORE timeout"))??;
-                Ok(())
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("RESTORE")
+                        .arg(key)
+                        .arg(ttl)
+                        .arg(value)
+                        .arg("REPLACE")
+                        .query_async::<()>(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("RESTORE timeout"))??;
             }
         }
+        Ok(())
     }
 }
 

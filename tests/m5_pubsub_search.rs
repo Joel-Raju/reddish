@@ -27,6 +27,7 @@ async fn test_publish_and_subscribe() {
 
     let _conn = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
+        _ => unreachable!("test always uses standalone"),
     };
 
     // Use a PubSub connection via redis crate

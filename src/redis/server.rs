@@ -37,15 +37,26 @@ pub struct SlowLogEntry {
 }
 
 pub async fn slowlog_get(client: &RedisClientHandle, count: usize) -> Result<Vec<SlowLogEntry>> {
-    let mut conn = match &client.client {
-        crate::redis::client::RedisClient::Standalone(c) => c.clone(),
+    let raw: Vec<Vec<redis::Value>> = match &client.client {
+        crate::redis::client::RedisClient::Standalone(c) => {
+            let mut conn = c.clone();
+            redis::cmd("SLOWLOG")
+                .arg("GET")
+                .arg(count)
+                .query_async(&mut conn)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("SLOWLOG failed: {}", e))?
+        }
+        crate::redis::client::RedisClient::Cluster(c) => {
+            let mut conn = c.clone();
+            redis::cmd("SLOWLOG")
+                .arg("GET")
+                .arg(count)
+                .query_async(&mut conn)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("SLOWLOG failed: {}", e))?
+        }
     };
-    let raw: Vec<Vec<redis::Value>> = redis::cmd("SLOWLOG")
-        .arg("GET")
-        .arg(count)
-        .query_async(&mut conn)
-        .await
-        .map_err(|e| color_eyre::eyre::eyre!("SLOWLOG failed: {}", e))?;
 
     let mut entries = Vec::new();
     for item in raw {

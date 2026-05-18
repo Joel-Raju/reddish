@@ -97,6 +97,7 @@ async fn test_scanner_scans_all_keys() {
     // Clear any existing keys first
     let mut c = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
+        _ => unreachable!("test always uses standalone"),
     };
     redis::cmd("FLUSHDB")
         .query_async::<()>(&mut c)
@@ -417,6 +418,7 @@ async fn test_redis_client_delete() {
     let client = RedisClientHandle::connect(&profile).await.unwrap();
     let mut c = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
+        _ => unreachable!("test always uses standalone"),
     };
     redis::cmd("SET")
         .arg("del_test")
@@ -449,6 +451,7 @@ async fn test_redis_client_ttl() {
     let client = RedisClientHandle::connect(&profile).await.unwrap();
     let mut c = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
+        _ => unreachable!("test always uses standalone"),
     };
     redis::cmd("SET")
         .arg("ttl_test")

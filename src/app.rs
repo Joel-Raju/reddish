@@ -100,6 +100,92 @@ fn redis_value_to_string(value: &redis::Value) -> String {
     }
 }
 
+pub fn repl_policy_error_for_test(stages: &[Vec<String>], readonly: bool) -> Option<String> {
+    repl_policy_error(stages, readonly)
+}
+
+pub async fn execute_repl_command_for_test(app: &mut App, input: String) {
+    app.execute_repl_command(input).await;
+}
+
+fn repl_policy_error(stages: &[Vec<String>], readonly: bool) -> Option<String> {
+    for stage in stages {
+        let Some(command) = stage.first() else {
+            continue;
+        };
+        let command = command.to_ascii_uppercase();
+        if is_dangerous_repl_command(&command, &stage[1..]) {
+            return Some(format!("{command} is blocked by safety policy"));
+        }
+        if readonly && is_mutating_repl_command(&command, &stage[1..]) {
+            return Some(format!("Read-only mode: {command} blocked"));
+        }
+    }
+    None
+}
+
+fn is_dangerous_repl_command(command: &str, args: &[String]) -> bool {
+    matches!(command, "FLUSHDB" | "FLUSHALL")
+        || command == "KEYS"
+            && args
+                .first()
+                .map(|arg| arg.trim() == "*")
+                .unwrap_or(false)
+}
+
+fn is_mutating_repl_command(command: &str, args: &[String]) -> bool {
+    match command {
+        "APPEND" | "BITFIELD" | "BITOP" | "BLMOVE" | "BLMPOP" | "BLPOP" | "BRPOP"
+        | "BRPOPLPUSH" | "BZMPOP" | "BZPOPMAX" | "BZPOPMIN" | "COPY" | "DECR" | "DECRBY"
+        | "DEL" | "EVAL" | "EVALSHA" | "EXPIRE" | "EXPIREAT" | "EXPIRETIME" | "FLUSHALL"
+        | "FLUSHDB" | "GEOADD" | "GETDEL" | "GETEX" | "HDEL" | "HINCRBY" | "HINCRBYFLOAT"
+        | "HMSET" | "HSET" | "HSETNX" | "INCR" | "INCRBY" | "INCRBYFLOAT" | "LINSERT"
+        | "LMOVE" | "LMPOP" | "LPOP" | "LPOS" | "LPUSH" | "LPUSHX" | "LREM" | "LSET"
+        | "LTRIM" | "MIGRATE" | "MOVE" | "MSET" | "MSETNX" | "PERSIST" | "PEXPIRE"
+        | "PEXPIREAT" | "PFADD" | "PFMERGE" | "PUBLISH" | "RENAME" | "RENAMENX" | "RESTORE"
+        | "RPOP" | "RPOPLPUSH" | "RPUSH" | "RPUSHX" | "SADD" | "SDIFFSTORE" | "SET"
+        | "SETBIT" | "SETEX" | "SETNX" | "SETRANGE" | "SINTERSTORE" | "SMOVE" | "SORT"
+        | "SPOP" | "SREM" | "SUNIONSTORE" | "TOUCH" | "UNLINK" | "XACK"
+        | "XADD" | "XAUTOCLAIM" | "XCLAIM" | "XDEL" | "XGROUP" | "XREADGROUP" | "XSETID"
+        | "XTRIM" | "ZADD" | "ZDIFFSTORE" | "ZINCRBY" | "ZINTERSTORE" | "ZMPOP"
+        | "ZMSCORE" | "ZPOPMAX" | "ZPOPMIN" | "ZRANGESTORE" | "ZREM" | "ZREMRANGEBYLEX"
+        | "ZREMRANGEBYRANK" | "ZREMRANGEBYSCORE" | "ZUNIONSTORE" => true,
+        "ACL" => matches!(
+            args.first().map(|s| s.to_ascii_uppercase()).as_deref(),
+            Some("SETUSER" | "DELUSER" | "LOAD" | "SAVE" | "GENPASS")
+        ),
+        "CLIENT" => matches!(
+            args.first().map(|s| s.to_ascii_uppercase()).as_deref(),
+            Some("KILL" | "PAUSE" | "REPLY" | "SETNAME" | "TRACKING" | "UNBLOCK")
+        ),
+        "CONFIG" => matches!(
+            args.first().map(|s| s.to_ascii_uppercase()).as_deref(),
+            Some("SET" | "REWRITE" | "RESETSTAT")
+        ),
+        "FUNCTION" => matches!(
+            args.first().map(|s| s.to_ascii_uppercase()).as_deref(),
+            Some("LOAD" | "DELETE" | "FLUSH" | "RESTORE" | "KILL")
+        ),
+        "MEMORY" => matches!(
+            args.first().map(|s| s.to_ascii_uppercase()).as_deref(),
+            Some("PURGE")
+        ),
+        "MODULE" => matches!(
+            args.first().map(|s| s.to_ascii_uppercase()).as_deref(),
+            Some("LOAD" | "UNLOAD")
+        ),
+        "SCRIPT" => matches!(
+            args.first().map(|s| s.to_ascii_uppercase()).as_deref(),
+            Some("LOAD" | "FLUSH" | "KILL")
+        ),
+        "SLOWLOG" => matches!(
+            args.first().map(|s| s.to_ascii_uppercase()).as_deref(),
+            Some("RESET")
+        ),
+        _ => false,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tab {
     Keys,
@@ -192,6 +278,12 @@ impl App {
                 self.error_message = Some(format!("Unsubscribed from '{channel}'"));
             }
             PubSubAction::Publish { channel, message } => {
+                if self.readonly {
+                    let msg = "Read-only mode: publish blocked".to_string();
+                    self.status_bar.push_error(msg.clone());
+                    self.error_message = Some(msg);
+                    return;
+                }
                 if let Some(client) = &self.client {
                     match client.publish(&channel, &message).await {
                         Ok(_) => {
@@ -204,11 +296,15 @@ impl App {
                             self.error_message = None;
                         }
                         Err(err) => {
-                            self.error_message = Some(format!("Publish failed: {err}"));
+                            let msg = format!("Publish failed: {err}");
+                            self.status_bar.push_error(msg.clone());
+                            self.error_message = Some(msg);
                         }
                     }
                 } else {
-                    self.error_message = Some("Not connected".to_string());
+                    let msg = "Not connected".to_string();
+                    self.status_bar.push_error(msg.clone());
+                    self.error_message = Some(msg);
                 }
             }
         }
@@ -217,6 +313,13 @@ impl App {
     async fn execute_repl_command(&mut self, input: String) {
         let stages = parse_pipeline(&input);
         if stages.is_empty() {
+            return;
+        }
+        if let Some(err) = repl_policy_error(&stages, self.readonly) {
+            self.repl
+                .add_result(&input, err.clone(), ReplLineStatus::Error(err.clone()));
+            self.status_bar.push_error(err.clone());
+            self.error_message = Some(err);
             return;
         }
 
@@ -229,6 +332,7 @@ impl App {
                 Err(err) => {
                     self.repl
                         .add_result(&input, err.clone(), ReplLineStatus::Error(err.clone()));
+                    self.status_bar.push_error(err.clone());
                     self.error_message = Some(err);
                     return;
                 }
@@ -263,22 +367,27 @@ impl App {
         let cmd_name = tokens[0].to_uppercase();
         let args = &tokens[1..];
 
-        let mut conn = match &client.client {
-            RedisClient::Standalone(conn) => conn.clone(),
-        };
-
         let mut cmd = redis::cmd(&cmd_name);
         for arg in args {
             cmd.arg(arg);
         }
 
-        let value: redis::Value = tokio::time::timeout(
-            Duration::from_secs(5),
-            cmd.query_async::<redis::Value>(&mut conn),
-        )
-        .await
-        .map_err(|_| format!("{cmd_name} timeout"))
-        .and_then(|res| res.map_err(|e| format!("{cmd_name} error: {e}")))?;
+        let value: redis::Value = match &client.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(Duration::from_secs(5), cmd.query_async::<redis::Value>(&mut c))
+                    .await
+                    .map_err(|_| format!("{cmd_name} timeout"))
+                    .and_then(|res| res.map_err(|e| format!("{cmd_name} error: {e}")))?
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(Duration::from_secs(5), cmd.query_async::<redis::Value>(&mut c))
+                    .await
+                    .map_err(|_| format!("{cmd_name} timeout"))
+                    .and_then(|res| res.map_err(|e| format!("{cmd_name} error: {e}")))?
+            }
+        };
 
         Ok(redis_value_to_string(&value))
     }
@@ -730,6 +839,7 @@ impl App {
 
     async fn handle_tick(&mut self) {
         self.tick_count = self.tick_count.saturating_add(1);
+        self.status_bar.drain_expired_toasts();
         self.drain_scan_batches();
         self.drain_search_scan();
         self.drain_pubsub_messages();

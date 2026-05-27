@@ -93,6 +93,8 @@ pub enum PromptMode {
     ZSetAddMember,
     ZSetAddScore(String),
     ZSetEditScore(String, usize),
+    ZSetScoreMin,
+    ZSetScoreMax(String),
     StreamAddId,
     StreamAddFields(String),
     SetTtlSeconds,
@@ -114,6 +116,8 @@ pub struct ValueInspector {
     pub set_cursor: usize,
     pub zset_cursor: usize,
     pub zset_sort_score_asc: bool,
+    pub zset_score_min: Option<String>,
+    pub zset_score_max: Option<String>,
     pub stream_cursor: usize,
     pub stream_compact: bool,
     pub list_prompt: Option<InputWidget>,
@@ -144,6 +148,8 @@ impl ValueInspector {
             set_cursor: 0,
             zset_cursor: 0,
             zset_sort_score_asc: true,
+            zset_score_min: None,
+            zset_score_max: None,
             stream_cursor: 0,
             stream_compact: true,
             list_prompt: None,
@@ -166,6 +172,8 @@ impl ValueInspector {
         self.set_cursor = 0;
         self.zset_cursor = 0;
         self.zset_sort_score_asc = true;
+        self.zset_score_min = None;
+        self.zset_score_max = None;
         self.stream_cursor = 0;
         self.stream_compact = true;
         self.list_prompt = None;
@@ -187,6 +195,8 @@ impl ValueInspector {
         self.set_cursor = 0;
         self.zset_cursor = 0;
         self.zset_sort_score_asc = true;
+        self.zset_score_min = None;
+        self.zset_score_max = None;
         self.stream_cursor = 0;
         self.stream_compact = true;
         self.list_prompt = None;
@@ -205,6 +215,8 @@ impl ValueInspector {
         self.set_cursor = 0;
         self.zset_cursor = 0;
         self.zset_sort_score_asc = true;
+        self.zset_score_min = None;
+        self.zset_score_max = None;
         self.stream_cursor = 0;
         self.stream_compact = true;
         self.list_prompt = None;
@@ -327,12 +339,23 @@ impl ValueInspector {
                     }
                     Some(PromptMode::SetTtlSeconds) => {
                         if val.trim().is_empty() {
-                            // Persist key: set TTL to -1 so handle_inspector_action knows
                             Some(InspectorAction::SetTtl { key, seconds: -1 })
                         } else {
                             let seconds = val.parse::<i64>().ok()?;
                             Some(InspectorAction::SetTtl { key, seconds })
                         }
+                    }
+                    Some(PromptMode::ZSetScoreMin) => {
+                        let min = if val.trim().is_empty() { "-inf".to_string() } else { val.trim().to_string() };
+                        self.list_prompt = Some(InputWidget::new("Max score (empty=+inf):"));
+                        self.prompt_mode = Some(PromptMode::ZSetScoreMax(min));
+                        None
+                    }
+                    Some(PromptMode::ZSetScoreMax(min)) => {
+                        let max = if val.trim().is_empty() { "+inf".to_string() } else { val.trim().to_string() };
+                        self.zset_score_min = Some(min);
+                        self.zset_score_max = Some(max);
+                        None
                     }
                     None => None,
                 };
@@ -511,6 +534,14 @@ impl ValueInspector {
                 && let Some(entry) = entries.get(self.zset_cursor)
             {
                 return Some(InspectorAction::CopyValue(entry.member.clone()));
+            } else if keymap.matches("inspector_zset_range_query", key) {
+                if self.zset_score_min.is_some() || self.zset_score_max.is_some() {
+                    self.zset_score_min = None;
+                    self.zset_score_max = None;
+                } else {
+                    self.list_prompt = Some(InputWidget::new("Min score (empty=-inf):"));
+                    self.prompt_mode = Some(PromptMode::ZSetScoreMin);
+                }
             }
         }
 
@@ -772,13 +803,34 @@ impl ValueInspector {
 
     fn render_zset(&self, frame: &mut Frame, area: Rect, entries: &[ZSetEntry]) {
         let mode_label = if self.zset_sort_score_asc { "asc" } else { "desc" };
+        let filtered = self.zset_score_min.is_some() || self.zset_score_max.is_some();
+        let visible: Vec<&ZSetEntry> = if filtered && !entries.is_empty() {
+            entries.iter().filter(|e| {
+                let above_min = self.zset_score_min.as_ref().is_none_or(|min| {
+                    if min == "-inf" { true } else { e.score >= min.parse::<f64>().unwrap_or(f64::NEG_INFINITY) }
+                });
+                let below_max = self.zset_score_max.as_ref().is_none_or(|max| {
+                    if max == "+inf" { true } else { e.score <= max.parse::<f64>().unwrap_or(f64::INFINITY) }
+                });
+                above_min && below_max
+            }).collect()
+        } else {
+            entries.iter().collect()
+        };
         let title = self
             .key
             .as_deref()
-            .map(|k| format!("ZSet [{}] (len={}, score:{})", k, entries.len(), mode_label))
-            .unwrap_or_else(|| format!("ZSet (len={})", entries.len()));
+            .map(|k| {
+                let base = format!("ZSet [{}] (len={}, score:{})", k, visible.len(), mode_label);
+                if filtered {
+                    format!("{} filter:{}~{}", base, self.zset_score_min.as_deref().unwrap_or("-inf"), self.zset_score_max.as_deref().unwrap_or("+inf"))
+                } else {
+                    base
+                }
+            })
+            .unwrap_or_else(|| format!("ZSet (len={})", visible.len()));
 
-        let mut items: Vec<&ZSetEntry> = entries.iter().collect();
+        let mut items: Vec<&&ZSetEntry> = visible.iter().collect();
         if self.zset_sort_score_asc {
             items.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
         } else {

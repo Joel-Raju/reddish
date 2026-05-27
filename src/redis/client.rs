@@ -991,6 +991,46 @@ impl RedisClientHandle {
         Ok(())
     }
 
+    pub async fn zrangebyscore(
+        &self,
+        key: &str,
+        min: &str,
+        max: &str,
+    ) -> Result<Vec<(Vec<u8>, f64)>> {
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let val: Vec<(Vec<u8>, f64)> = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("ZRANGEBYSCORE")
+                        .arg(key)
+                        .arg(min)
+                        .arg(max)
+                        .arg("WITHSCORES")
+                        .query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("ZRANGEBYSCORE timeout"))??;
+                Ok(val)
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                let val: Vec<(Vec<u8>, f64)> = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis::cmd("ZRANGEBYSCORE")
+                        .arg(key)
+                        .arg(min)
+                        .arg(max)
+                        .arg("WITHSCORES")
+                        .query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("ZRANGEBYSCORE timeout"))??;
+                Ok(val)
+            }
+        }
+    }
+
     pub async fn zrem(&self, key: &str, member: &str) -> Result<()> {
         match &self.client {
             RedisClient::Standalone(conn) => {

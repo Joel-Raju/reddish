@@ -73,6 +73,8 @@ pub struct Keymap {
     pub inspector_set_add: KeyDef,
     #[serde(default = "default_inspector_zset_add")]
     pub inspector_zset_add: KeyDef,
+    #[serde(default = "default_inspector_zset_range_query")]
+    pub inspector_zset_range_query: KeyDef,
     #[serde(default = "default_inspector_stream_add")]
     pub inspector_stream_add: KeyDef,
     #[serde(default = "default_inspector_toggle_view")]
@@ -140,6 +142,7 @@ impl Keymap {
             inspector_hash_add: KeyDef { key: "a".to_string() },
             inspector_set_add: KeyDef { key: "a".to_string() },
             inspector_zset_add: KeyDef { key: "a".to_string() },
+            inspector_zset_range_query: KeyDef { key: "q".to_string() },
             inspector_stream_add: KeyDef { key: "a".to_string() },
             inspector_toggle_view: KeyDef { key: "f".to_string() },
             inspector_goto_end: KeyDef { key: "g".to_string() },
@@ -188,6 +191,7 @@ impl Keymap {
             inspector_hash_add: KeyDef { key: "ctrl+shift+h".to_string() },
             inspector_set_add: KeyDef { key: "ctrl+shift+s".to_string() },
             inspector_zset_add: KeyDef { key: "ctrl+shift+z".to_string() },
+            inspector_zset_range_query: KeyDef { key: "ctrl+shift+q".to_string() },
             inspector_stream_add: KeyDef { key: "ctrl+shift+x".to_string() },
             inspector_toggle_view: KeyDef { key: "ctrl+shift+f".to_string() },
             inspector_goto_end: KeyDef { key: "ctrl+shift+g".to_string() },
@@ -236,6 +240,7 @@ impl Keymap {
             "inspector_hash_add" => &self.inspector_hash_add,
             "inspector_set_add" => &self.inspector_set_add,
             "inspector_zset_add" => &self.inspector_zset_add,
+            "inspector_zset_range_query" => &self.inspector_zset_range_query,
             "inspector_stream_add" => &self.inspector_stream_add,
             "inspector_toggle_view" => &self.inspector_toggle_view,
             "inspector_goto_end" => &self.inspector_goto_end,
@@ -413,6 +418,9 @@ fn default_inspector_set_add() -> KeyDef {
 }
 fn default_inspector_zset_add() -> KeyDef {
     KeyDef { key: "a".to_string() }
+}
+fn default_inspector_zset_range_query() -> KeyDef {
+    KeyDef { key: "q".to_string() }
 }
 fn default_inspector_stream_add() -> KeyDef {
     KeyDef { key: "a".to_string() }

@@ -1060,3 +1060,110 @@ fn render_value_preview(value: &RedisValue, view_mode: &StringViewMode) -> Strin
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_groups_toggle_sets_state() {
+        let mut inspector = ValueInspector::new();
+        assert!(!inspector.stream_show_groups);
+        assert!(inspector.stream_groups.is_none());
+
+        inspector.stream_show_groups = true;
+        inspector.stream_groups = Some(vec![StreamGroup {
+            name: "g1".to_string(),
+            consumers: 2,
+            pending: 5,
+            last_delivered_id: "123-0".to_string(),
+        }]);
+        assert!(inspector.stream_show_groups);
+        assert_eq!(inspector.stream_groups.as_ref().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn stream_groups_reset_on_set_value() {
+        let mut inspector = ValueInspector::new();
+        inspector.stream_show_groups = true;
+        inspector.stream_groups = Some(vec![]);
+        inspector.set_value(
+            "events".to_string(),
+            RedisValue::Stream(vec![StreamEntry {
+                id: "123-0".to_string(),
+                fields: [("k".to_string(), "v".to_string())].into(),
+            }]),
+        );
+        assert!(!inspector.stream_show_groups);
+        assert!(inspector.stream_groups.is_none());
+    }
+
+    #[test]
+    fn stream_groups_reset_on_set_loading() {
+        let mut inspector = ValueInspector::new();
+        inspector.stream_show_groups = true;
+        inspector.stream_groups = Some(vec![StreamGroup {
+            name: "g1".to_string(),
+            consumers: 1,
+            pending: 0,
+            last_delivered_id: "0-0".to_string(),
+        }]);
+        inspector.set_loading("events".to_string());
+        assert!(!inspector.stream_show_groups);
+        assert!(inspector.stream_groups.is_none());
+    }
+
+    #[test]
+    fn render_stream_with_groups_does_not_panic() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut inspector = ValueInspector::new();
+        inspector.set_value(
+            "events".to_string(),
+            RedisValue::Stream(vec![StreamEntry {
+                id: "123-0".to_string(),
+                fields: [("k".to_string(), "v".to_string())].into(),
+            }]),
+        );
+        inspector.stream_show_groups = true;
+        inspector.stream_groups = Some(vec![StreamGroup {
+            name: "g1".to_string(),
+            consumers: 2,
+            pending: 5,
+            last_delivered_id: "123-0".to_string(),
+        }]);
+        terminal.draw(|f| inspector.render(f, f.size())).unwrap();
+    }
+
+    #[test]
+    fn render_stream_without_groups_does_not_panic() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut inspector = ValueInspector::new();
+        inspector.set_value(
+            "events".to_string(),
+            RedisValue::Stream(vec![StreamEntry {
+                id: "123-0".to_string(),
+                fields: [("k".to_string(), "v".to_string())].into(),
+            }]),
+        );
+        terminal.draw(|f| inspector.render(f, f.size())).unwrap();
+    }
+
+    #[test]
+    fn render_stream_groups_empty_does_not_panic() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut inspector = ValueInspector::new();
+        inspector.set_value(
+            "events".to_string(),
+            RedisValue::Stream(vec![]),
+        );
+        inspector.stream_show_groups = true;
+        inspector.stream_groups = Some(vec![]);
+        terminal.draw(|f| inspector.render(f, f.size())).unwrap();
+    }
+}

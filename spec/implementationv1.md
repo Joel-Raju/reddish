@@ -391,11 +391,11 @@
 | Spec Requirement | Status | Gap |
 |-----------------|--------|-----|
 | Subscribe exact channels | ✅ Done | |
-| PSUBSCRIBE patterns | ❌ Missing | |
+| PSUBSCRIBE patterns | ✅ Done | |
 | Timestamps + channel + payload | ✅ Done | |
 | Auto-scroll `f` toggle | ❌ Missing | |
 | Publish form | ✅ Done | |
-| Color-coded per-channel tags | ⚠️ Partial | Basic styling |
+| Color-coded per-channel tags | ✅ Done | 8-color cycle per subscription |
 | MONITOR mode | ❌ Missing | |
 
 ### 4.6 Server Info & Stats
@@ -463,7 +463,7 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 | **A** | A1 — Set ops (`u`/`i`/`x`) | ✅ **Complete** | `SetOpType` enum, `set_store()` client method, two-step prompt in key_browser, keybindings, `BrowserAction::SetOp` wired in `app.rs` | Tests (prompt flow, integration) |
 | **A** | A2 — ZSet range query (`q`) | ✅ **Complete** | `zrangebyscore()` client method, `q` keybinding, two-step min/max prompt, in-memory score filtering in `render_zset`, filter display in title | Tests |
 | **A** | A3 — Stream consumer groups (`g`) | ✅ **Complete** | `inspector_stream_groups` keybinding (`G` vim / `ctrl+shift+m` emacs), `InspectorAction::StreamToggleGroups`, split-pane render with groups table (name/consumers/pending/last-delivered-id), wired to `client.xgroups()`. Tests: state toggle, reset on value change, render with/without groups. | — |
-| **B** | B1 — PSUBSCRIBE + channel colors | ❌ **Not started** | `PubSubAction::Subscribe/Unsubscribe` exist | No `PubSubKind` enum, no `psubscribe()` client method, no color cycle |
+| **B** | B1 — PSUBSCRIBE + channel colors | ✅ **Complete** | `PubSubKind` enum, `PSubscribe`/`PUnsubscribe` actions, Pattern input mode, 8-color cycle round-robin per subscription, color-coded message tags, `start_pubsub_subscription` accepts `PubSubKind` | — |
 | **B** | B2 — PubSubClient as module | ❌ **Not started** | PubSub logic lives inline in `app.rs` | No `src/redis/pubsub.rs` module extraction |
 | **C** | C1 — SparklineBuffer | ❌ **Not started** | — | No `src/ui/stats/sparkline.rs`, no circular buffer |
 | **C** | C2 — 6-panel sparkline grid | ❌ **Not started** | Info dashboard renders raw text stats | No sparklines, no gauges, no delta badges, no 2×3 grid layout |

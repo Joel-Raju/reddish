@@ -8,6 +8,31 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PubSubKind {
+    Channel(String),
+    Pattern(String),
+}
+
+impl PubSubKind {
+    pub fn name(&self) -> &str {
+        match self {
+            PubSubKind::Channel(n) => n,
+            PubSubKind::Pattern(n) => n,
+        }
+    }
+
+    pub fn is_pattern(&self) -> bool {
+        matches!(self, PubSubKind::Pattern(_))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Subscription {
+    pub kind: PubSubKind,
+    pub color: Color,
+}
+
 #[derive(Debug, Clone)]
 pub struct PubSubMessage {
     pub channel: String,
@@ -32,27 +57,41 @@ impl PubSubMessage {
 }
 
 pub struct PubSubWidget {
-    pub channels: Vec<String>,
+    pub subscriptions: Vec<Subscription>,
     pub messages: VecDeque<PubSubMessage>,
     pub scroll: u16,
     pub input: String,
     pub cursor: usize,
-    pub active_channel: Option<String>,
+    pub active_subscription: Option<PubSubKind>,
     pub input_mode: PubSubInputMode,
     pub channel_cursor: usize,
     pub channel_scroll: u16,
 }
 
+const COLOR_CYCLE: &[Color] = &[
+    Color::Cyan,
+    Color::Magenta,
+    Color::Green,
+    Color::Yellow,
+    Color::Red,
+    Color::Blue,
+    Color::White,
+    Color::Gray,
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PubSubInputMode {
     Channel,
     Message,
+    Pattern,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PubSubAction {
     Subscribe(String),
     Unsubscribe(String),
+    PSubscribe(String),
+    PUnsubscribe(String),
     Publish { channel: String, message: String },
 }
 
@@ -65,12 +104,12 @@ impl Default for PubSubWidget {
 impl PubSubWidget {
     pub fn new() -> Self {
         Self {
-            channels: Vec::new(),
+            subscriptions: Vec::new(),
             messages: VecDeque::new(),
             scroll: 0,
             input: String::new(),
             cursor: 0,
-            active_channel: None,
+            active_subscription: None,
             input_mode: PubSubInputMode::Channel,
             channel_cursor: 0,
             channel_scroll: 0,
@@ -85,7 +124,8 @@ impl PubSubWidget {
                 KeyCode::Tab => {
                     self.input_mode = match self.input_mode {
                         PubSubInputMode::Channel => PubSubInputMode::Message,
-                        PubSubInputMode::Message => PubSubInputMode::Channel,
+                        PubSubInputMode::Message => PubSubInputMode::Pattern,
+                        PubSubInputMode::Pattern => PubSubInputMode::Channel,
                     };
                     self.input.clear();
                     self.cursor = 0;
@@ -101,7 +141,7 @@ impl PubSubWidget {
                 KeyCode::Home => self.cursor = 0,
                 KeyCode::End => self.cursor = self.input.len(),
                 KeyCode::Up => {
-                    if self.input_mode == PubSubInputMode::Channel {
+                    if self.input_mode == PubSubInputMode::Channel || self.input_mode == PubSubInputMode::Pattern {
                         if self.channel_cursor > 0 {
                             self.channel_cursor -= 1;
                         }
@@ -110,8 +150,8 @@ impl PubSubWidget {
                     }
                 }
                 KeyCode::Down => {
-                    if self.input_mode == PubSubInputMode::Channel {
-                        if self.channel_cursor + 1 < self.channels.len() {
+                    if self.input_mode == PubSubInputMode::Channel || self.input_mode == PubSubInputMode::Pattern {
+                        if self.channel_cursor + 1 < self.subscriptions.len() {
                             self.channel_cursor += 1;
                         }
                     } else {
@@ -129,20 +169,33 @@ impl PubSubWidget {
 
                     match self.input_mode {
                         PubSubInputMode::Channel => {
-                            self.active_channel = Some(value.clone());
-                            if !self.channels.iter().any(|c| c == &value) {
-                                self.channels.push(value.clone());
+                            let kind = PubSubKind::Channel(value.clone());
+                            self.active_subscription = Some(kind.clone());
+                            if !self.subscriptions.iter().any(|s| s.kind == kind) {
+                                let color = COLOR_CYCLE[self.subscriptions.len() % COLOR_CYCLE.len()];
+                                self.subscriptions.push(Subscription { kind, color });
                             }
                             self.input.clear();
                             self.cursor = 0;
                             return Some(PubSubAction::Subscribe(value));
                         }
+                        PubSubInputMode::Pattern => {
+                            let kind = PubSubKind::Pattern(value.clone());
+                            self.active_subscription = Some(kind.clone());
+                            if !self.subscriptions.iter().any(|s| s.kind == kind) {
+                                let color = COLOR_CYCLE[self.subscriptions.len() % COLOR_CYCLE.len()];
+                                self.subscriptions.push(Subscription { kind, color });
+                            }
+                            self.input.clear();
+                            self.cursor = 0;
+                            return Some(PubSubAction::PSubscribe(value));
+                        }
                         PubSubInputMode::Message => {
-                            if let Some(channel) = self.active_channel.clone() {
+                            if let Some(ref kind) = self.active_subscription.clone() {
                                 self.input.clear();
                                 self.cursor = 0;
                                 return Some(PubSubAction::Publish {
-                                    channel,
+                                    channel: kind.name().to_string(),
                                     message: value,
                                 });
                             }
@@ -150,17 +203,20 @@ impl PubSubWidget {
                     }
                 }
                 KeyCode::Char('D') => {
-                    if self.input_mode == PubSubInputMode::Channel
-                        && let Some(channel) = self.channels.get(self.channel_cursor).cloned()
+                    if (self.input_mode == PubSubInputMode::Channel || self.input_mode == PubSubInputMode::Pattern)
+                        && let Some(sub) = self.subscriptions.get(self.channel_cursor).cloned()
                     {
-                        self.channels.remove(self.channel_cursor);
-                        if self.channel_cursor >= self.channels.len() && self.channel_cursor > 0 {
+                        self.subscriptions.remove(self.channel_cursor);
+                        if self.channel_cursor >= self.subscriptions.len() && self.channel_cursor > 0 {
                             self.channel_cursor -= 1;
                         }
-                        if self.active_channel.as_deref() == Some(&channel) {
-                            self.active_channel = self.channels.first().cloned();
+                        if self.active_subscription.as_ref() == Some(&sub.kind) {
+                            self.active_subscription = self.subscriptions.first().map(|s| s.kind.clone());
                         }
-                        return Some(PubSubAction::Unsubscribe(channel));
+                        return match sub.kind {
+                            PubSubKind::Channel(ch) => Some(PubSubAction::Unsubscribe(ch)),
+                            PubSubKind::Pattern(pat) => Some(PubSubAction::PUnsubscribe(pat)),
+                        };
                     }
                 }
                 KeyCode::Char('l')
@@ -203,35 +259,40 @@ impl PubSubWidget {
         let mode_label = match self.input_mode {
             PubSubInputMode::Channel => "[channel]",
             PubSubInputMode::Message => "[message]",
+            PubSubInputMode::Pattern => "[pattern]",
         };
 
         let mut lines: Vec<Line> = Vec::new();
 
-        if self.channels.is_empty() {
+        if self.subscriptions.is_empty() {
             lines.push(Line::from(Span::styled(
-                "  No channels",
+                "  No subscriptions",
                 Style::default().fg(Color::DarkGray),
             )));
         } else {
             let max_visible = area.height.saturating_sub(6) as usize;
             let start = self.channel_scroll as usize;
-            for (i, ch) in self.channels.iter().skip(start).take(max_visible).enumerate() {
+            for (i, sub) in self.subscriptions.iter().skip(start).take(max_visible).enumerate() {
                 let abs_idx = start + i;
-                let is_active = self.active_channel.as_deref() == Some(ch);
+                let is_active = self.active_subscription.as_ref() == Some(&sub.kind);
                 let prefix = if abs_idx == self.channel_cursor {
                     if is_active { " ▶" } else { " ▷" }
                 } else {
                     "  "
                 };
+                let label = match &sub.kind {
+                    PubSubKind::Channel(ch) => ch.to_string(),
+                    PubSubKind::Pattern(pat) => format!("{}*", pat),
+                };
                 let style = if is_active {
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    Style::default().fg(sub.color).add_modifier(Modifier::BOLD)
                 } else if abs_idx == self.channel_cursor {
                     Style::default().fg(Color::Yellow)
                 } else {
                     Style::default().fg(Color::White)
                 };
                 lines.push(Line::from(Span::styled(
-                    format!("{} {}", prefix, ch),
+                    format!("{} {}", prefix, label),
                     style,
                 )));
             }
@@ -260,8 +321,9 @@ impl PubSubWidget {
         let mode_label = match self.input_mode {
             PubSubInputMode::Channel => "channel",
             PubSubInputMode::Message => "message",
+            PubSubInputMode::Pattern => "pattern",
         };
-        let active = self.active_channel.as_deref().unwrap_or("<none>");
+        let active = self.active_subscription.as_ref().map(|k| k.name()).unwrap_or("<none>");
 
         let mut lines: Vec<Line> = Vec::new();
 
@@ -294,6 +356,10 @@ impl PubSubWidget {
             } else {
                 format!("[{}]", msg.channel)
             };
+            let tag_color = self.subscriptions.iter()
+                .find(|s| s.kind.name() == msg.channel || msg.pattern.as_deref() == Some(s.kind.name()))
+                .map(|s| s.color)
+                .unwrap_or(Color::Blue);
             lines.push(Line::from(vec![
                 Span::styled(
                     format!(" {:<4}", msg.relative_time()),
@@ -301,7 +367,7 @@ impl PubSubWidget {
                 ),
                 Span::styled(
                     channel_tag,
-                    Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+                    Style::default().fg(tag_color).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(" ", Style::default().fg(Color::White)),
                 Span::styled(&msg.payload, Style::default().fg(Color::White)),

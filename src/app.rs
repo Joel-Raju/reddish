@@ -27,7 +27,7 @@ use crate::ui::connection_screen::{ConnectionScreen, ConnectionScreenAction};
 use crate::ui::info_dashboard::{InfoDashboard, SystemStats};
 use crate::ui::key_browser::scanner_task;
 use crate::ui::key_browser::{BrowserAction, KeyBrowser};
-use crate::ui::pubsub::{PubSubAction, PubSubMessage, PubSubWidget};
+use crate::ui::pubsub::{PubSubAction, PubSubKind, PubSubMessage, PubSubWidget};
 use crate::ui::repl::{ReplAction, ReplLineStatus, ReplWidget, parse_pipeline};
 use crate::ui::search::{GlobalSearch, SearchAction};
 use crate::ui::status_bar::{ConnectionState, StatusBar};
@@ -264,7 +264,7 @@ impl App {
     async fn handle_pubsub_action(&mut self, action: PubSubAction) {
         match action {
             PubSubAction::Subscribe(channel) => {
-                match self.start_pubsub_subscription(channel.clone()) {
+                match self.start_pubsub_subscription(PubSubKind::Channel(channel.clone())) {
                     Ok(()) => {
                         self.error_message = Some(format!("Subscribed to channel '{channel}'"));
                     }
@@ -273,9 +273,23 @@ impl App {
                     }
                 }
             }
+            PubSubAction::PSubscribe(pattern) => {
+                match self.start_pubsub_subscription(PubSubKind::Pattern(pattern.clone())) {
+                    Ok(()) => {
+                        self.error_message = Some(format!("Subscribed to pattern '{pattern}'"));
+                    }
+                    Err(err) => {
+                        self.error_message = Some(format!("PSubscribe failed: {err}"));
+                    }
+                }
+            }
             PubSubAction::Unsubscribe(channel) => {
                 self.pubsub_rx = None;
                 self.error_message = Some(format!("Unsubscribed from '{channel}'"));
+            }
+            PubSubAction::PUnsubscribe(pattern) => {
+                self.pubsub_rx = None;
+                self.error_message = Some(format!("Unsubscribed from pattern '{pattern}'"));
             }
             PubSubAction::Publish { channel, message } => {
                 if self.readonly {
@@ -850,7 +864,7 @@ impl App {
         self.update_status_bar_context();
     }
 
-    fn start_pubsub_subscription(&mut self, channel: String) -> color_eyre::Result<()> {
+    fn start_pubsub_subscription(&mut self, kind: PubSubKind) -> color_eyre::Result<()> {
         let profile = self
             .client
             .as_ref()
@@ -875,7 +889,12 @@ impl App {
                 Err(_) => return,
             };
 
-            if pubsub.subscribe(channel.clone()).await.is_err() {
+            let sub_result = match &kind {
+                PubSubKind::Channel(ch) => pubsub.subscribe(ch.clone()).await,
+                PubSubKind::Pattern(pat) => pubsub.psubscribe(pat.clone()).await,
+            };
+
+            if sub_result.is_err() {
                 return;
             }
 

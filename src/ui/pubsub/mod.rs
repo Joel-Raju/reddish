@@ -379,3 +379,126 @@ impl PubSubWidget {
         frame.render_widget(para, area);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::events::Event;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn key_event(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::from(code))
+    }
+
+    fn key_event_with_mods(code: KeyCode, mods: KeyModifiers) -> Event {
+        Event::Key(KeyEvent::new(code, mods))
+    }
+
+    #[test]
+    fn tab_cycles_input_modes() {
+        let mut widget = PubSubWidget::new();
+        assert_eq!(widget.input_mode, PubSubInputMode::Channel);
+
+        widget.handle_event(&key_event(KeyCode::Tab));
+        assert_eq!(widget.input_mode, PubSubInputMode::Message);
+
+        widget.handle_event(&key_event(KeyCode::Tab));
+        assert_eq!(widget.input_mode, PubSubInputMode::Pattern);
+
+        widget.handle_event(&key_event(KeyCode::Tab));
+        assert_eq!(widget.input_mode, PubSubInputMode::Channel);
+    }
+
+    #[test]
+    fn subscribe_adds_channel_subscription_with_color() {
+        let mut widget = PubSubWidget::new();
+        widget.input = "test-chan".to_string();
+        let action = widget.handle_event(&key_event(KeyCode::Enter));
+        assert_eq!(action, Some(PubSubAction::Subscribe("test-chan".to_string())));
+        assert_eq!(widget.subscriptions.len(), 1);
+        assert_eq!(widget.subscriptions[0].kind, PubSubKind::Channel("test-chan".to_string()));
+        assert_eq!(widget.subscriptions[0].color, Color::Cyan);
+    }
+
+    #[test]
+    fn psubscribe_adds_pattern_subscription_with_color() {
+        let mut widget = PubSubWidget::new();
+        widget.input_mode = PubSubInputMode::Pattern;
+        widget.input = "test-*".to_string();
+        let action = widget.handle_event(&key_event(KeyCode::Enter));
+        assert_eq!(action, Some(PubSubAction::PSubscribe("test-*".to_string())));
+        assert_eq!(widget.subscriptions.len(), 1);
+        assert_eq!(widget.subscriptions[0].kind, PubSubKind::Pattern("test-*".to_string()));
+        assert_eq!(widget.subscriptions[0].color, Color::Cyan);
+    }
+
+    #[test]
+    fn unsubscribe_removes_channel_subscription() {
+        let mut widget = PubSubWidget::new();
+        widget.subscriptions.push(Subscription {
+            kind: PubSubKind::Channel("ch1".to_string()),
+            color: Color::Cyan,
+        });
+        widget.subscriptions.push(Subscription {
+            kind: PubSubKind::Pattern("pat*".to_string()),
+            color: Color::Magenta,
+        });
+        let action = widget.handle_event(&key_event(KeyCode::Char('D')));
+        assert_eq!(action, Some(PubSubAction::Unsubscribe("ch1".to_string())));
+        assert_eq!(widget.subscriptions.len(), 1);
+        assert_eq!(widget.subscriptions[0].kind, PubSubKind::Pattern("pat*".to_string()));
+    }
+
+    #[test]
+    fn punsubscribe_removes_pattern_subscription() {
+        let mut widget = PubSubWidget::new();
+        widget.input_mode = PubSubInputMode::Pattern;
+        widget.subscriptions.push(Subscription {
+            kind: PubSubKind::Channel("ch1".to_string()),
+            color: Color::Cyan,
+        });
+        widget.subscriptions.push(Subscription {
+            kind: PubSubKind::Pattern("pat*".to_string()),
+            color: Color::Magenta,
+        });
+        widget.channel_cursor = 1;
+        let action = widget.handle_event(&key_event(KeyCode::Char('D')));
+        assert_eq!(action, Some(PubSubAction::PUnsubscribe("pat*".to_string())));
+        assert_eq!(widget.subscriptions.len(), 1);
+        assert_eq!(widget.subscriptions[0].kind, PubSubKind::Channel("ch1".to_string()));
+    }
+
+    #[test]
+    fn color_cycle_wraps_after_8_subscriptions() {
+        let mut widget = PubSubWidget::new();
+        for i in 0..10 {
+            widget.input = format!("ch{}", i);
+            widget.handle_event(&key_event(KeyCode::Enter));
+        }
+        assert_eq!(widget.subscriptions.len(), 10);
+        assert_eq!(widget.subscriptions[0].color, Color::Cyan);
+        assert_eq!(widget.subscriptions[7].color, Color::Gray);
+        assert_eq!(widget.subscriptions[8].color, Color::Cyan);
+        assert_eq!(widget.subscriptions[9].color, Color::Magenta);
+    }
+
+    #[test]
+    fn render_with_subscriptions_does_not_panic() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut widget = PubSubWidget::new();
+        widget.subscriptions.push(Subscription {
+            kind: PubSubKind::Channel("chan".to_string()),
+            color: Color::Cyan,
+        });
+        widget.active_subscription = Some(PubSubKind::Channel("chan".to_string()));
+        widget.messages.push_back(PubSubMessage {
+            channel: "chan".to_string(),
+            pattern: None,
+            payload: "hello".to_string(),
+            timestamp: std::time::Instant::now(),
+        });
+        terminal.draw(|f| widget.render(f, f.size())).unwrap();
+    }
+}

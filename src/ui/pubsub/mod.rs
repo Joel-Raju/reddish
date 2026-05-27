@@ -8,7 +8,8 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::redis::pubsub::{PubSubKind, PubSubMessage};
+pub use crate::redis::pubsub::PubSubKind;
+use crate::redis::pubsub::PubSubMessage;
 
 #[derive(Debug, Clone)]
 pub struct Subscription {
@@ -350,6 +351,7 @@ mod tests {
         Event::Key(KeyEvent::from(code))
     }
 
+    #[allow(dead_code)]
     fn key_event_with_mods(code: KeyCode, mods: KeyModifiers) -> Event {
         Event::Key(KeyEvent::new(code, mods))
     }
@@ -459,6 +461,6 @@ mod tests {
             payload: "hello".to_string(),
             timestamp: std::time::Instant::now(),
         });
-        terminal.draw(|f| widget.render(f, f.size())).unwrap();
+        terminal.draw(|f| widget.render(f, f.area())).unwrap();
     }
 }

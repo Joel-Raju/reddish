@@ -98,6 +98,7 @@ fn test_info_dashboard_renders_without_panic() {
         redis_version: Some("7.0".to_string()),
         uptime_in_seconds: Some(60),
         connected_clients: Some(1),
+        used_memory: Some(1_000_000),
         used_memory_human: Some("1M".to_string()),
         total_commands_processed: Some(100),
         instantaneous_ops_per_sec: Some(10),
@@ -115,8 +116,8 @@ fn test_info_dashboard_scroll_down() {
     dashboard.slowlog = (0..20)
         .map(|i| SlowLogEntry {
             id: i,
-            timestamp: 1000 + i as u64,
-            duration_us: i as u64 * 100,
+            timestamp: 1000 + i,
+            duration_us: i * 100,
             command: vec!["GET".to_string(), format!("key{i}")],
             client: None,
             name: None,
@@ -141,8 +142,8 @@ fn test_info_dashboard_scroll_up() {
     dashboard.slowlog = (0..20)
         .map(|i| SlowLogEntry {
             id: i,
-            timestamp: 1000 + i as u64,
-            duration_us: i as u64 * 100,
+            timestamp: 1000 + i,
+            duration_us: i * 100,
             command: vec!["GET".to_string(), format!("key{i}")],
             client: None,
             name: None,
@@ -163,7 +164,7 @@ fn test_info_dashboard_scroll_does_not_overflow() {
     dashboard.slowlog = (0..5)
         .map(|i| SlowLogEntry {
             id: i,
-            timestamp: 1000 + i as u64,
+            timestamp: 1000 + i,
             duration_us: 100,
             command: vec!["PING".to_string()],
             client: None,
@@ -225,6 +226,7 @@ fn test_info_dashboard_render_with_slowlog_entries() {
         redis_version: Some("6.0".to_string()),
         uptime_in_seconds: Some(3600),
         connected_clients: Some(5),
+        used_memory: Some(2_000_000),
         used_memory_human: Some("2M".to_string()),
         total_commands_processed: Some(500),
         instantaneous_ops_per_sec: Some(50),
@@ -258,5 +260,127 @@ fn test_info_dashboard_render_empty_slowlog() {
     let backend = TestBackend::new(80, 24);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     let dashboard = InfoDashboard::new();
+    let _ = terminal.draw(|f| dashboard.render(f, f.area()));
+}
+
+#[test]
+fn test_info_dashboard_update_stats_seeds_buffers() {
+    let mut dashboard = InfoDashboard::new();
+    let stats = SystemStats {
+        redis_version: Some("7.0".to_string()),
+        uptime_in_seconds: Some(60),
+        connected_clients: Some(5),
+        used_memory: Some(1_000_000),
+        used_memory_human: Some("1M".to_string()),
+        total_commands_processed: Some(100),
+        instantaneous_ops_per_sec: Some(10),
+        keyspace_hits: Some(90),
+        keyspace_misses: Some(10),
+        evicted_keys: Some(0),
+        expired_keys: Some(0),
+    };
+    dashboard.update_stats(stats);
+    assert_eq!(dashboard.buf_memory.len(), 1);
+    assert_eq!(dashboard.buf_clients.len(), 1);
+    assert_eq!(dashboard.buf_ops.len(), 1);
+    assert_eq!(dashboard.buf_hits.len(), 1);
+    assert_eq!(dashboard.buf_memory.latest(), Some(1_000_000.0));
+    assert_eq!(dashboard.buf_clients.latest(), Some(5.0));
+    assert_eq!(dashboard.buf_ops.latest(), Some(10.0));
+    assert_eq!(dashboard.buf_hits.latest(), Some(100.0));
+}
+
+#[test]
+fn test_info_dashboard_update_stats_delta() {
+    let mut dashboard = InfoDashboard::new();
+    let stats1 = SystemStats {
+        redis_version: Some("7.0".to_string()),
+        uptime_in_seconds: Some(60),
+        connected_clients: Some(5),
+        used_memory: Some(1_000_000),
+        used_memory_human: Some("1M".to_string()),
+        total_commands_processed: Some(100),
+        instantaneous_ops_per_sec: Some(10),
+        keyspace_hits: Some(90),
+        keyspace_misses: Some(10),
+        evicted_keys: Some(0),
+        expired_keys: Some(0),
+    };
+    let stats2 = SystemStats {
+        redis_version: Some("7.0".to_string()),
+        uptime_in_seconds: Some(120),
+        connected_clients: Some(7),
+        used_memory: Some(1_100_000),
+        used_memory_human: Some("1.1M".to_string()),
+        total_commands_processed: Some(200),
+        instantaneous_ops_per_sec: Some(15),
+        keyspace_hits: Some(110),
+        keyspace_misses: Some(15),
+        evicted_keys: Some(0),
+        expired_keys: Some(0),
+    };
+    dashboard.update_stats(stats1);
+    dashboard.update_stats(stats2);
+    assert_eq!(dashboard.buf_memory.len(), 2);
+    assert_eq!(dashboard.buf_clients.latest(), Some(7.0));
+    assert_eq!(dashboard.buf_ops.latest(), Some(15.0));
+    // hits delta: (110+15) - (90+10) = 25
+    assert_eq!(dashboard.buf_hits.latest(), Some(25.0));
+}
+
+#[test]
+fn test_info_dashboard_update_stats_missing_fields() {
+    let mut dashboard = InfoDashboard::new();
+    let stats = SystemStats {
+        redis_version: None,
+        uptime_in_seconds: None,
+        connected_clients: None,
+        used_memory: None,
+        used_memory_human: None,
+        total_commands_processed: None,
+        instantaneous_ops_per_sec: None,
+        keyspace_hits: None,
+        keyspace_misses: None,
+        evicted_keys: None,
+        expired_keys: None,
+    };
+    dashboard.update_stats(stats);
+    assert_eq!(dashboard.buf_memory.len(), 0);
+    assert_eq!(dashboard.buf_clients.len(), 0);
+    assert_eq!(dashboard.buf_ops.len(), 0);
+    assert_eq!(dashboard.buf_hits.len(), 0);
+}
+
+#[test]
+fn test_info_dashboard_render_with_sparklines() {
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    let mut dashboard = InfoDashboard::new();
+    dashboard.update_stats(SystemStats {
+        redis_version: Some("7.0".to_string()),
+        uptime_in_seconds: Some(60),
+        connected_clients: Some(5),
+        used_memory: Some(1_000_000),
+        used_memory_human: Some("1M".to_string()),
+        total_commands_processed: Some(100),
+        instantaneous_ops_per_sec: Some(10),
+        keyspace_hits: Some(90),
+        keyspace_misses: Some(10),
+        evicted_keys: Some(0),
+        expired_keys: Some(0),
+    });
+    dashboard.update_stats(SystemStats {
+        redis_version: Some("7.0".to_string()),
+        uptime_in_seconds: Some(120),
+        connected_clients: Some(7),
+        used_memory: Some(1_100_000),
+        used_memory_human: Some("1.1M".to_string()),
+        total_commands_processed: Some(200),
+        instantaneous_ops_per_sec: Some(15),
+        keyspace_hits: Some(110),
+        keyspace_misses: Some(15),
+        evicted_keys: Some(0),
+        expired_keys: Some(0),
+    });
     let _ = terminal.draw(|f| dashboard.render(f, f.area()));
 }

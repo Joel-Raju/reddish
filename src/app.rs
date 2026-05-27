@@ -884,7 +884,8 @@ impl App {
 
         match client.info("all").await {
             Ok(raw) => {
-                self.info_dashboard.stats = SystemStats::from_info_sections(&raw);
+                let stats = SystemStats::from_info_sections(&raw);
+                self.info_dashboard.update_stats(stats);
             }
             Err(err) => {
                 self.error_message = Some(format!("Failed to refresh INFO: {err}"));

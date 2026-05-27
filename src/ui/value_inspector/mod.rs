@@ -1133,7 +1133,7 @@ mod tests {
             pending: 5,
             last_delivered_id: "123-0".to_string(),
         }]);
-        terminal.draw(|f| inspector.render(f, f.size())).unwrap();
+        terminal.draw(|f| inspector.render(f, f.area())).unwrap();
     }
 
     #[test]
@@ -1149,7 +1149,7 @@ mod tests {
                 fields: [("k".to_string(), "v".to_string())].into(),
             }]),
         );
-        terminal.draw(|f| inspector.render(f, f.size())).unwrap();
+        terminal.draw(|f| inspector.render(f, f.area())).unwrap();
     }
 
     #[test]
@@ -1164,6 +1164,6 @@ mod tests {
         );
         inspector.stream_show_groups = true;
         inspector.stream_groups = Some(vec![]);
-        terminal.draw(|f| inspector.render(f, f.size())).unwrap();
+        terminal.draw(|f| inspector.render(f, f.area())).unwrap();
     }
 }

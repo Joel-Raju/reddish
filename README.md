@@ -9,32 +9,46 @@ It is designed for day-to-day Redis operations with keyboard-centric workflows: 
 The project is under active development and tracks a milestone-driven spec (`spec/reddish-tui-spec.md`).
 
 Implemented highlights:
-- Key browser with namespace tree and SCAN-based loading
-- Typed value inspector foundation (`string`, `list`, `hash`, `set`, `zset`, `stream`)
-- REPL with persistent history, command parsing, and pipeline execution
-- Info dashboard refresh loop with INFO + SLOWLOG integration
-- Pub/Sub publish + live subscription stream wiring
-- Global search overlay and jump-to-key flow
-- Keymap and mouse support foundations
+- Key browser with namespace tree, SCAN-based loading, multi-select, and sort modes
+- Typed value inspector (`string`, `list`, `hash`, `set`, `zset`, `stream`) with editing and filtering
+- Set operations: union/inter/diff with multi-source selection
+- ZSet score range filtering
+- REPL with persistent history, command parsing, pipeline execution, and autocomplete
+- REPL overlay (`:`) for quick one-line commands without leaving the current tab
+- Info dashboard refresh loop with INFO + SLOWLOG integration, colored stats, and scrolling
+- Pub/Sub publish + live subscription stream with two-panel layout
+- Global search overlay with real-time SCAN-backed filtering and jump-to-key flow
+- Keymap and mouse support with Vim/Emacs presets
 - CLI startup overrides (`--url`, `--profile`, `--readonly`, `--log-level`, `--theme`)
 
 ## Features
 
-- Connection and startup
-  - Connection profiles (`standalone`, `cluster`, `sentinel`) with TLS/password resolution support
-  - Startup overrides via CLI (`--url`, `--profile`, `--readonly`, `--log-level`, `--theme`)
-- Data exploration and inspection
-  - Key browser with namespace-aware navigation
-  - Typed Redis value loading (`string`, `list`, `hash`, `set`, `zset`, `stream`)
-  - Global search overlay with jump-to-key workflow
-- Operational workflows
-  - REPL with history, parsing, and pipeline execution
-  - Info dashboard with periodic INFO and SLOWLOG refresh
-  - Pub/Sub tab with publish flow and live subscription stream
-- Interaction model
-  - Vim/Emacs-style keymap foundations with configurable actions
-  - Mouse capture and basic mouse interactions
-  - Read-only mode to block destructive writes
+### Connection and startup
+- Connection profiles (`standalone`, `cluster`, `sentinel`) with TLS/password resolution support
+- Startup overrides via CLI (`--url`, `--profile`, `--readonly`, `--log-level`, `--theme`)
+
+### Data exploration and inspection
+- Key browser with namespace-aware navigation
+- Multi-select with `Space` and select-all with `Ctrl+A`
+- Sort modes: alphabetical, by Redis type, by TTL (`s` to cycle)
+- Typed Redis value loading (`string`, `list`, `hash`, `set`, `zset`, `stream`)
+- Value editing, TTL editing (`t`), and clipboard copy (`y`)
+- Duplicate key via `DUMP`/`RESTORE` (`d`)
+- Set operations: `SUNIONSTORE`, `SINTERSTORE`, `SDIFFSTORE` (`u`/`i`/`x`)
+- ZSet score range query (`q`) with min/max filtering
+- Global search overlay with jump-to-key workflow (`/`)
+
+### Operational workflows
+- REPL with history, parsing, pipeline execution (`;;`), and tab autocomplete
+- REPL overlay (`:`) for quick commands from any tab
+- Info dashboard with periodic INFO refresh, colored stats, and scrollable slowlog
+- Pub/Sub tab with subscribe/unsubscribe, publish, and live message stream
+- Read-only mode to block destructive writes
+
+### Interaction model
+- Vim/Emacs-style keymaps with configurable actions
+- Mouse capture and basic mouse interactions
+- Context-aware clipboard copy across all value types
 
 ## Installation
 
@@ -112,44 +126,88 @@ Connection profiles are loaded from:
 
 Reddish supports configurable keymaps and ships with Vim/Emacs-style defaults.
 
-Keymap actions are configured under keybinding fields in your config and mapped to action IDs.
+### Global shortcuts
 
-### Action groups
+| Action | Vim | Emacs | Description |
+|--------|-----|-------|-------------|
+| quit | `q` | `Ctrl+c` | Quit application |
+| help | `?` | `?` | Show help overlay |
+| palette | `Ctrl+p` | `Ctrl+x` | Open command palette |
+| filter | `/` | `Ctrl+s` | Open global search |
+| repl_overlay | `:` | `Alt+;` | One-line REPL prompt |
+| tab_keys | `1` | `Alt+1` | Keys tab |
+| tab_repl | `2` | `Alt+2` | REPL tab |
+| tab_info | `3` | `Alt+3` | Info dashboard tab |
+| tab_pubsub | `4` | `Alt+4` | Pub/Sub tab |
+| nav_up | `k` / `Up` | `Ctrl+p` | Move cursor up |
+| nav_down | `j` / `Down` | `Ctrl+n` | Move cursor down |
+| nav_left | `h` / `Left` | `Ctrl+b` | Collapse namespace / go back |
+| nav_right | `l` / `Right` | `Ctrl+f` | Expand namespace / go forward |
+| confirm | `Enter` | `Enter` | Confirm action |
+| cancel | `Esc` | `Ctrl+g` | Cancel / close overlay |
+| refresh | `R` | `Ctrl+l` | Refresh key browser scan |
+| copy | `y` | `Ctrl+w` | Copy context-aware value |
 
-- Navigation: `nav_up`, `nav_down`, `nav_left`, `nav_right`
-- Global: `quit`, `help`, `palette`, `filter`
-- Tabs: `tab_keys`, `tab_repl`, `tab_info`, `tab_pubsub`
-- Panel actions: `confirm`, `delete`, `refresh`, `edit`, `copy`
+### Key browser shortcuts
 
-### Default keys (common)
+| Action | Vim | Emacs | Description |
+|--------|-----|-------|-------------|
+| confirm | `Enter` | `Enter` | Inspect selected key |
+| delete | `D` | `Ctrl+d` | Delete selected key |
+| new_key | `n` | `Ctrl+n` | Create a new key |
+| rename_key | `r` | `Ctrl+r` | Rename selected key |
+| expire_key | `e` | `Ctrl+e` | Persist key (remove TTL) |
+| set_ttl | `t` | `Ctrl+t` | Set TTL on selected key |
+| duplicate_key | `d` | `Ctrl+shift+d` | Duplicate selected key |
+| set_union | `u` | `Ctrl+u` | SUNIONSTORE with multi-select |
+| set_inter | `i` | `Ctrl+i` | SINTERSTORE with multi-select |
+| set_diff | `x` | `Ctrl+d` | SDIFFSTORE with multi-select |
+| toggle_select | `Space` | `Space` | Toggle key selection |
+| select_all | `Ctrl+a` | `Ctrl+a` | Select all visible keys |
+| cycle_sort | `s` | `Ctrl+o` | Cycle sort: alpha → type → TTL |
 
-```text
-quit       q
-help       ?
-palette    :
-filter     /
+### Value inspector shortcuts
 
-tab_keys   1
-tab_repl   2
-tab_info   3
-tab_pubsub 4
-```
+| Action | Vim | Emacs | Description |
+|--------|-----|-------|-------------|
+| edit | `e` | `Ctrl+e` | Edit current item |
+| delete | `D` | `Ctrl+d` | Delete current item |
+| copy | `y` | `Ctrl+w` | Copy current item |
+| set_ttl | `t` | `Ctrl+t` | Set TTL on inspected key |
+| inspector_list_push | `a` | `Ctrl+shift+a` | RPUSH to list |
+| inspector_list_prepend | `p` | `Ctrl+shift+p` | LPUSH to list |
+| inspector_hash_add | `a` | `Ctrl+shift+h` | Add hash field |
+| inspector_set_add | `a` | `Ctrl+shift+s` | Add set member |
+| inspector_zset_add | `a` | `Ctrl+shift+z` | Add zset member |
+| inspector_zset_range_query | `q` | `Ctrl+shift+q` | Filter zset by score range |
+| inspector_stream_add | `a` | `Ctrl+shift+x` | Add stream entry |
+| inspector_toggle_view | `f` | `Ctrl+shift+f` | Toggle stream compact/full |
+| inspector_goto_end | `g` | `Ctrl+shift+g` | Jump to last stream entry |
+| cycle_sort | `s` | `Ctrl+o` | Toggle zset score sort asc/desc |
+| Tab | `Tab` | `Tab` | Cycle string view mode |
 
-### Navigation defaults by style
+### Info dashboard shortcuts
 
-```text
-Vim-style:
-  nav_up    k
-  nav_down  j
-  nav_left  h
-  nav_right l
+| Action | Vim | Emacs | Description |
+|--------|-----|-------|-------------|
+| nav_up | `k` / `Up` | `Ctrl+p` | Scroll slowlog up |
+| nav_down | `j` / `Down` | `Ctrl+n` | Scroll slowlog down |
+| Space | `Space` | `Space` | Toggle slowlog compact mode |
 
-Emacs-style:
-  nav_up    Ctrl+p
-  nav_down  Ctrl+n
-  nav_left  Ctrl+b
-  nav_right Ctrl+f
-```
+### Pub/Sub shortcuts
+
+| Action | Vim | Emacs | Description |
+|--------|-----|-------|-------------|
+| Tab | `Tab` | `Tab` | Switch channel / message input mode |
+| delete | `D` | `Ctrl+d` | Unsubscribe from selected channel |
+| Ctrl+L | `Ctrl+l` | `Ctrl+l` | Clear message history |
+
+### Search overlay shortcuts
+
+| Action | Vim | Emacs | Description |
+|--------|-----|-------|-------------|
+| search_execute | `Enter` | `Enter` | Jump to selected key |
+| search_close | `Esc` | `Ctrl+g` | Close search without action |
 
 ## Testing
 

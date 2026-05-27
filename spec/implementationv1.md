@@ -189,7 +189,7 @@
 | 4.15 | `SLOWLOG RESET` (`Ctrl+R`) | ❌ Missing | `Ctrl+R` is reconnect in app |
 | 4.16 | `test_parse_info_valid` | ✅ Done | |
 | 4.17 | `test_parse_info_missing_field` | ❌ Missing | |
-| 4.18 | `test_sparkline_buffer_capacity` | ❌ Missing | No sparkline module |
+| 4.18 | `test_sparkline_buffer_capacity` | ✅ Done | `ui::stats::sparkline` |
 | 4.19 | `test_sparkline_buffer_delta_insufficient_data` | ❌ Missing | |
 | 4.20 | `test_stats_panel_update_populates_buffers` | ❌ Missing | |
 | 4.21 | `test_stats_panel_renders_without_panic` | ❌ Missing | |
@@ -198,7 +198,7 @@
 | 4.24 | `test_slowlog_csv_export` | ❌ Missing | |
 | 4.25 | `test_slowlog_renders_duration_bars` | ❌ Missing | |
 
-**M4 Verdict:** ~60% complete. The info dashboard is readable but lacks all visual richness specified (sparklines, gauges, bar charts, deltas). Slow log is a scrolling list without analytics.
+**M4 Verdict:** ~65% complete. SparklineBuffer module is done. Info dashboard still needs integration (C2) and visual widgets (gauges, bar charts, deltas). Slow log is a scrolling list without analytics.
 
 ---
 
@@ -465,7 +465,7 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 | **A** | A3 — Stream consumer groups (`g`) | ✅ **Complete** | `inspector_stream_groups` keybinding (`G` vim / `ctrl+shift+m` emacs), `InspectorAction::StreamToggleGroups`, split-pane render with groups table (name/consumers/pending/last-delivered-id), wired to `client.xgroups()`. Tests: state toggle, reset on value change, render with/without groups. | — |
 | **B** | B1 — PSUBSCRIBE + channel colors | ✅ **Complete** | `PubSubKind` enum, `PSubscribe`/`PUnsubscribe` actions, Pattern input mode, 8-color cycle round-robin per subscription, color-coded message tags, `start_pubsub_subscription` accepts `PubSubKind`. Tests: tab cycle, subscribe/psubscribe color, unsubscribe/punsubscribe, color wrap, render. | — |
 | **B** | B2 — PubSubClient as module | ✅ **Complete** | `src/redis/pubsub.rs` with `PubSubClient::spawn_subscription`, `PubSubKind`/`PubSubMessage` moved from UI to shared redis module, `app.rs::start_pubsub_subscription` is thin wrapper | — |
-| **C** | C1 — SparklineBuffer | ❌ **Not started** | — | No `src/ui/stats/sparkline.rs`, no circular buffer |
+| **C** | C1 — SparklineBuffer | ✅ **Complete** | `SparklineBuffer` circular buffer (default 60 samples), `push()`, `to_vec()`, `latest()`, `delta()`. Tests: capacity, overflow, wrap, delta, negative change. | — |
 | **C** | C2 — 6-panel sparkline grid | ❌ **Not started** | Info dashboard renders raw text stats | No sparklines, no gauges, no delta badges, no 2×3 grid layout |
 | **C** | C3 — Dedicated SlowLogPanel | ❌ **Not started** | Slowlog renders as scrolling text list | No `Table` widget, no duration bars, no CSV export, no threshold filter |
 | **D** | D1 — `execute_raw` / `execute_pipeline` | ❌ **Not started** | Raw dispatch lives in `app.rs` `handle_repl_command()` | No `execute_raw()` / `execute_pipeline()` on `RedisClientHandle` |

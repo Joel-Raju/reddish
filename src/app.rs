@@ -1245,6 +1245,24 @@ impl App {
                     self.reload_inspector_value(&key).await;
                 }
             }
+            InspectorAction::StreamToggleGroups => {
+                if self.value_inspector.stream_show_groups {
+                    self.value_inspector.stream_show_groups = false;
+                    self.value_inspector.stream_groups = None;
+                } else if let Some(ref key) = self.value_inspector.key
+                    && let Some(ref client) = self.client
+                {
+                    match client.xgroups(key).await {
+                        Ok(groups) => {
+                            self.value_inspector.stream_show_groups = true;
+                            self.value_inspector.stream_groups = Some(groups);
+                        }
+                        Err(err) => {
+                            self.error_message = Some(format!("Failed to fetch stream groups: {err}"));
+                        }
+                    }
+                }
+            }
             InspectorAction::CopyValue(val) => {
                 #[cfg(not(test))]
                 if let Ok(mut clipboard) = arboard::Clipboard::new() {

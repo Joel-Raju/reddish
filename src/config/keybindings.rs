@@ -77,6 +77,8 @@ pub struct Keymap {
     pub inspector_zset_range_query: KeyDef,
     #[serde(default = "default_inspector_stream_add")]
     pub inspector_stream_add: KeyDef,
+    #[serde(default = "default_inspector_stream_groups")]
+    pub inspector_stream_groups: KeyDef,
     #[serde(default = "default_inspector_toggle_view")]
     pub inspector_toggle_view: KeyDef,
     #[serde(default = "default_inspector_goto_end")]
@@ -144,6 +146,7 @@ impl Keymap {
             inspector_zset_add: KeyDef { key: "a".to_string() },
             inspector_zset_range_query: KeyDef { key: "q".to_string() },
             inspector_stream_add: KeyDef { key: "a".to_string() },
+            inspector_stream_groups: KeyDef { key: "G".to_string() },
             inspector_toggle_view: KeyDef { key: "f".to_string() },
             inspector_goto_end: KeyDef { key: "g".to_string() },
             set_union: KeyDef { key: "u".to_string() },
@@ -193,6 +196,7 @@ impl Keymap {
             inspector_zset_add: KeyDef { key: "ctrl+shift+z".to_string() },
             inspector_zset_range_query: KeyDef { key: "ctrl+shift+q".to_string() },
             inspector_stream_add: KeyDef { key: "ctrl+shift+x".to_string() },
+            inspector_stream_groups: KeyDef { key: "ctrl+shift+m".to_string() },
             inspector_toggle_view: KeyDef { key: "ctrl+shift+f".to_string() },
             inspector_goto_end: KeyDef { key: "ctrl+shift+g".to_string() },
             set_union: KeyDef { key: "ctrl+u".to_string() },
@@ -242,6 +246,7 @@ impl Keymap {
             "inspector_zset_add" => &self.inspector_zset_add,
             "inspector_zset_range_query" => &self.inspector_zset_range_query,
             "inspector_stream_add" => &self.inspector_stream_add,
+            "inspector_stream_groups" => &self.inspector_stream_groups,
             "inspector_toggle_view" => &self.inspector_toggle_view,
             "inspector_goto_end" => &self.inspector_goto_end,
             "set_union" => &self.set_union,
@@ -424,6 +429,9 @@ fn default_inspector_zset_range_query() -> KeyDef {
 }
 fn default_inspector_stream_add() -> KeyDef {
     KeyDef { key: "a".to_string() }
+}
+fn default_inspector_stream_groups() -> KeyDef {
+    KeyDef { key: "G".to_string() }
 }
 fn default_inspector_toggle_view() -> KeyDef {
     KeyDef { key: "f".to_string() }

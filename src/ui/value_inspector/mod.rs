@@ -1,14 +1,14 @@
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Direction, Layout, Rect, Constraint},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap, Table, Row as TableRow, Cell},
     style::{Color, Style},
 };
 
 use crate::events::Event;
 use crate::redis::client::Ttl;
-use crate::redis::types::{RedisValue, StreamEntry, ZSetEntry};
+use crate::redis::types::{RedisValue, StreamEntry, StreamGroup, ZSetEntry};
 use crate::ui::widgets::input::InputWidget;
 use crate::ui::widgets::text_area_editor::TextAreaEditor;
 
@@ -78,6 +78,7 @@ pub enum InspectorAction {
     ZRem { key: String, member: String },
     StreamAdd { key: String, entry_id: String, fields: Vec<(String, String)> },
     StreamRem { key: String, entry_id: String },
+    StreamToggleGroups,
     CopyValue(String),
 }
 
@@ -120,6 +121,8 @@ pub struct ValueInspector {
     pub zset_score_max: Option<String>,
     pub stream_cursor: usize,
     pub stream_compact: bool,
+    pub stream_show_groups: bool,
+    pub stream_groups: Option<Vec<StreamGroup>>,
     pub list_prompt: Option<InputWidget>,
     pub prompt_mode: Option<PromptMode>,
 }
@@ -152,6 +155,8 @@ impl ValueInspector {
             zset_score_max: None,
             stream_cursor: 0,
             stream_compact: true,
+            stream_show_groups: false,
+            stream_groups: None,
             list_prompt: None,
             prompt_mode: None,
         }
@@ -176,6 +181,8 @@ impl ValueInspector {
         self.zset_score_max = None;
         self.stream_cursor = 0;
         self.stream_compact = true;
+        self.stream_show_groups = false;
+        self.stream_groups = None;
         self.list_prompt = None;
         self.prompt_mode = None;
     }
@@ -199,6 +206,8 @@ impl ValueInspector {
         self.zset_score_max = None;
         self.stream_cursor = 0;
         self.stream_compact = true;
+        self.stream_show_groups = false;
+        self.stream_groups = None;
         self.list_prompt = None;
         self.prompt_mode = None;
     }
@@ -219,6 +228,8 @@ impl ValueInspector {
         self.zset_score_max = None;
         self.stream_cursor = 0;
         self.stream_compact = true;
+        self.stream_show_groups = false;
+        self.stream_groups = None;
         self.list_prompt = None;
         self.prompt_mode = None;
     }
@@ -572,6 +583,8 @@ impl ValueInspector {
                 if !entries.is_empty() {
                     self.stream_cursor = entries.len() - 1;
                 }
+            } else if keymap.matches("inspector_stream_groups", key) {
+                return Some(InspectorAction::StreamToggleGroups);
             } else if keymap.matches("copy", key)
                 && let Some(entry) = entries.get(self.stream_cursor)
             {
@@ -869,46 +882,129 @@ impl ValueInspector {
 
     fn render_stream(&self, frame: &mut Frame, area: Rect, entries: &[StreamEntry]) {
         let mode = if self.stream_compact { "compact" } else { "full" };
-        let title = self
-            .key
-            .as_deref()
-            .map(|k| format!("Stream [{}] (len={}, {})", k, entries.len(), mode))
-            .unwrap_or_else(|| format!("Stream (len={})", entries.len()));
 
-        let mut text = String::new();
-        for (i, entry) in entries.iter().enumerate() {
-            let marker = if i == self.stream_cursor { ">" } else { " " };
-            if self.stream_compact {
-                text.push_str(&format!("{}[{}] {} ({} fields)\n", marker, i, entry.id, entry.fields.len()));
-            } else {
-                text.push_str(&format!("{}[{}] {}\n", marker, i, entry.id));
-                for (field, val) in &entry.fields {
-                    text.push_str(&format!("  {}: {}\n", field, val));
+        if self.stream_show_groups {
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+                .split(area);
+            let left = chunks[0];
+            let right = chunks[1];
+
+            // Left: stream messages
+            let title_left = self
+                .key
+                .as_deref()
+                .map(|k| format!("Stream [{}] (len={}, {})", k, entries.len(), mode))
+                .unwrap_or_else(|| format!("Stream (len={})", entries.len()));
+            let mut text = String::new();
+            for (i, entry) in entries.iter().enumerate() {
+                let marker = if i == self.stream_cursor { ">" } else { " " };
+                if self.stream_compact {
+                    text.push_str(&format!("{}[{}] {} ({} fields)\n", marker, i, entry.id, entry.fields.len()));
+                } else {
+                    text.push_str(&format!("{}[{}] {}\n", marker, i, entry.id));
+                    for (field, val) in &entry.fields {
+                        text.push_str(&format!("  {}: {}\n", field, val));
+                    }
                 }
             }
-        }
+            if let Some(ref prompt) = self.list_prompt {
+                let prompt_label = match self.prompt_mode {
+                    Some(PromptMode::StreamAddId) => "Entry ID: ",
+                    Some(PromptMode::StreamAddFields(_)) => "Fields: ",
+                    _ => "Input: ",
+                };
+                text.push_str(&format!(
+                    "\n{}{}{}",
+                    prompt_label,
+                    prompt.value,
+                    if prompt.cursor >= prompt.value.len() { "_" } else { " " }
+                ));
+            }
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(title_left);
+            let paragraph = Paragraph::new(text)
+                .block(block)
+                .wrap(Wrap { trim: false });
+            frame.render_widget(paragraph, left);
 
-        if let Some(ref prompt) = self.list_prompt {
-            let prompt_label = match self.prompt_mode {
-                Some(PromptMode::StreamAddId) => "Entry ID: ",
-                Some(PromptMode::StreamAddFields(_)) => "Fields: ",
-                _ => "Input: ",
-            };
-            text.push_str(&format!(
-                "\n{}{}{}",
-                prompt_label,
-                prompt.value,
-                if prompt.cursor >= prompt.value.len() { "_" } else { " " }
-            ));
-        }
+            // Right: consumer groups
+            let title_right = "Consumer Groups";
+            if let Some(ref groups) = self.stream_groups {
+                let header = TableRow::new(vec![
+                    Cell::from("Group"),
+                    Cell::from("Consumers"),
+                    Cell::from("Pending"),
+                    Cell::from("Last ID"),
+                ]).style(Style::default().fg(Color::Yellow));
+                let rows: Vec<TableRow> = groups.iter().map(|g| {
+                    TableRow::new(vec![
+                        Cell::from(g.name.clone()),
+                        Cell::from(g.consumers.to_string()),
+                        Cell::from(g.pending.to_string()),
+                        Cell::from(g.last_delivered_id.clone()),
+                    ])
+                }).collect();
+                let table = Table::new(rows, vec![
+                    Constraint::Percentage(30),
+                    Constraint::Percentage(20),
+                    Constraint::Percentage(20),
+                    Constraint::Percentage(30),
+                ])
+                .header(header)
+                .block(Block::default().borders(Borders::ALL).title(title_right));
+                frame.render_widget(table, right);
+            } else {
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .title(title_right);
+                let paragraph = Paragraph::new("Loading groups...").block(block);
+                frame.render_widget(paragraph, right);
+            }
+        } else {
+            let title = self
+                .key
+                .as_deref()
+                .map(|k| format!("Stream [{}] (len={}, {})", k, entries.len(), mode))
+                .unwrap_or_else(|| format!("Stream (len={})", entries.len()));
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title);
-        let paragraph = Paragraph::new(text)
-            .block(block)
-            .wrap(Wrap { trim: false });
-        frame.render_widget(paragraph, area);
+            let mut text = String::new();
+            for (i, entry) in entries.iter().enumerate() {
+                let marker = if i == self.stream_cursor { ">" } else { " " };
+                if self.stream_compact {
+                    text.push_str(&format!("{}[{}] {} ({} fields)\n", marker, i, entry.id, entry.fields.len()));
+                } else {
+                    text.push_str(&format!("{}[{}] {}\n", marker, i, entry.id));
+                    for (field, val) in &entry.fields {
+                        text.push_str(&format!("  {}: {}\n", field, val));
+                    }
+                }
+            }
+
+            if let Some(ref prompt) = self.list_prompt {
+                let prompt_label = match self.prompt_mode {
+                    Some(PromptMode::StreamAddId) => "Entry ID: ",
+                    Some(PromptMode::StreamAddFields(_)) => "Fields: ",
+                    _ => "Input: ",
+                };
+                text.push_str(&format!(
+                    "\n{}{}{}",
+                    prompt_label,
+                    prompt.value,
+                    if prompt.cursor >= prompt.value.len() { "_" } else { " " }
+                ));
+            }
+
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(title);
+            let paragraph = Paragraph::new(text)
+                .block(block)
+                .wrap(Wrap { trim: false });
+            frame.render_widget(paragraph, area);
+        }
     }
 }
 

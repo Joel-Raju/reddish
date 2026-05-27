@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use color_eyre::Result;
 use crossterm::event::KeyCode;
-use futures::StreamExt;
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -27,7 +26,8 @@ use crate::ui::connection_screen::{ConnectionScreen, ConnectionScreenAction};
 use crate::ui::info_dashboard::{InfoDashboard, SystemStats};
 use crate::ui::key_browser::scanner_task;
 use crate::ui::key_browser::{BrowserAction, KeyBrowser};
-use crate::ui::pubsub::{PubSubAction, PubSubKind, PubSubMessage, PubSubWidget};
+use crate::redis::pubsub::{PubSubClient, PubSubKind, PubSubMessage};
+use crate::ui::pubsub::{PubSubAction, PubSubWidget};
 use crate::ui::repl::{ReplAction, ReplLineStatus, ReplWidget, parse_pipeline};
 use crate::ui::search::{GlobalSearch, SearchAction};
 use crate::ui::status_bar::{ConnectionState, StatusBar};
@@ -872,47 +872,8 @@ impl App {
             .or_else(|| self.last_profile.clone())
             .ok_or_else(|| color_eyre::eyre::eyre!("Not connected"))?;
 
-        let url = RedisClientHandle::connection_url(&profile)
-            .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
-
-        let (tx, rx) = mpsc::unbounded_channel::<PubSubMessage>();
+        let rx = PubSubClient::spawn_subscription(&profile, &kind)?;
         self.pubsub_rx = Some(rx);
-
-        tokio::spawn(async move {
-            let client = match redis::Client::open(url) {
-                Ok(c) => c,
-                Err(_) => return,
-            };
-
-            let mut pubsub = match client.get_async_pubsub().await {
-                Ok(p) => p,
-                Err(_) => return,
-            };
-
-            let sub_result = match &kind {
-                PubSubKind::Channel(ch) => pubsub.subscribe(ch.clone()).await,
-                PubSubKind::Pattern(pat) => pubsub.psubscribe(pat.clone()).await,
-            };
-
-            if sub_result.is_err() {
-                return;
-            }
-
-            let mut stream = pubsub.on_message();
-            while let Some(msg) = stream.next().await {
-                let payload = msg
-                    .get_payload::<String>()
-                    .unwrap_or_else(|_| "<non-utf8 payload>".to_string());
-
-                let _ = tx.send(PubSubMessage {
-                    channel: msg.get_channel_name().to_string(),
-                    pattern: msg.get_pattern::<String>().ok(),
-                    payload,
-                    timestamp: std::time::Instant::now(),
-                });
-            }
-        });
-
         Ok(())
     }
 

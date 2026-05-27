@@ -8,52 +8,12 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PubSubKind {
-    Channel(String),
-    Pattern(String),
-}
-
-impl PubSubKind {
-    pub fn name(&self) -> &str {
-        match self {
-            PubSubKind::Channel(n) => n,
-            PubSubKind::Pattern(n) => n,
-        }
-    }
-
-    pub fn is_pattern(&self) -> bool {
-        matches!(self, PubSubKind::Pattern(_))
-    }
-}
+use crate::redis::pubsub::{PubSubKind, PubSubMessage};
 
 #[derive(Debug, Clone)]
 pub struct Subscription {
     pub kind: PubSubKind,
     pub color: Color,
-}
-
-#[derive(Debug, Clone)]
-pub struct PubSubMessage {
-    pub channel: String,
-    pub pattern: Option<String>,
-    pub payload: String,
-    pub timestamp: std::time::Instant,
-}
-
-impl PubSubMessage {
-    fn relative_time(&self) -> String {
-        let secs = self.timestamp.elapsed().as_secs();
-        if secs < 60 {
-            format!("{}s", secs)
-        } else if secs < 3600 {
-            format!("{}m", secs / 60)
-        } else if secs < 86400 {
-            format!("{}h", secs / 3600)
-        } else {
-            format!("{}d", secs / 86400)
-        }
-    }
 }
 
 pub struct PubSubWidget {

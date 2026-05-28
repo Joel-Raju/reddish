@@ -3,52 +3,18 @@ use std::collections::VecDeque;
 use crossterm::event::KeyModifiers;
 use ratatui::{
     Frame,
-    layout::Rect,
-    widgets::{Block, Borders, Paragraph, Wrap},
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
 use crate::events::Event;
 
+pub mod autocomplete;
 pub mod history;
+use autocomplete::ReplAutocomplete;
 use history::CommandHistory;
-
-const COMMON_REDIS_COMMANDS: &[&str] = &[
-    "GET",
-    "SET",
-    "DEL",
-    "EXISTS",
-    "TTL",
-    "EXPIRE",
-    "TYPE",
-    "RENAME",
-    "PING",
-    "INFO",
-    "HGET",
-    "HSET",
-    "HGETALL",
-    "HDEL",
-    "LPUSH",
-    "RPUSH",
-    "LPOP",
-    "RPOP",
-    "LRANGE",
-    "LSET",
-    "LREM",
-    "SADD",
-    "SREM",
-    "SMEMBERS",
-    "ZADD",
-    "ZREM",
-    "ZRANGE",
-    "PUBLISH",
-    "SUBSCRIBE",
-    "SCAN",
-    "KEYS",
-    "DBSIZE",
-    "XADD",
-    "XRANGE",
-    "XDEL",
-];
 
 pub fn tokenize_shell_like(input: &str) -> Vec<String> {
     let mut tokens = Vec::new();
@@ -86,68 +52,11 @@ pub fn parse_pipeline(input: &str) -> Vec<Vec<String>> {
         .collect()
 }
 
-fn autocomplete_first_token(input: &str) -> Option<String> {
-    let trimmed = input.trim_start();
-    if trimmed.is_empty() || trimmed.contains(' ') {
-        return None;
-    }
-
-    let upper = trimmed.to_uppercase();
-    COMMON_REDIS_COMMANDS
-        .iter()
-        .find(|cmd| cmd.starts_with(&upper))
-        .map(|cmd| {
-            if input.starts_with(' ') {
-                format!(" {}", cmd)
-            } else {
-                (*cmd).to_string()
-            }
-        })
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum ReplLineStatus {
     Success,
     Error(String),
     Info,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{ReplWidget, autocomplete_first_token, parse_pipeline, tokenize_shell_like};
-    use crate::events::Event;
-    use crossterm::event::{KeyCode, KeyEvent};
-
-    #[test]
-    fn test_tokenize_shell_like_quotes() {
-        let tokens = tokenize_shell_like("SET foo 'hello world'");
-        assert_eq!(tokens, vec!["SET", "foo", "hello world"]);
-
-        let tokens = tokenize_shell_like("SET foo \"hello world\"");
-        assert_eq!(tokens, vec!["SET", "foo", "hello world"]);
-    }
-
-    #[test]
-    fn test_parse_pipeline_stages() {
-        let stages = parse_pipeline("GET foo ;; STRLEN");
-        assert_eq!(stages, vec![vec!["GET", "foo"], vec!["STRLEN"]]);
-    }
-
-    #[test]
-    fn test_autocomplete_first_token() {
-        assert_eq!(autocomplete_first_token("ge"), Some("GET".to_string()));
-        assert_eq!(autocomplete_first_token(" set"), Some(" SET".to_string()));
-        assert_eq!(autocomplete_first_token("SET foo"), None);
-    }
-
-    #[test]
-    fn test_repl_tab_autocomplete() {
-        let mut repl = ReplWidget::new();
-        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('g'))));
-        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
-        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
-        assert_eq!(repl.input, "GET");
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -170,6 +79,10 @@ pub struct ReplWidget {
     pub scroll: u16,
     pub max_history: usize,
     pub raw_mode: bool,
+    pub autocomplete: ReplAutocomplete,
+    pub ac_visible: bool,
+    pub ac_suggestions: Vec<String>,
+    pub ac_selected: usize,
 }
 
 impl Default for ReplWidget {
@@ -193,7 +106,57 @@ impl ReplWidget {
             scroll: 0,
             max_history: 1000,
             raw_mode: false,
+            autocomplete: ReplAutocomplete::new(),
+            ac_visible: false,
+            ac_suggestions: Vec::new(),
+            ac_selected: 0,
         }
+    }
+
+    pub fn update_key_cache(&mut self, keys: Vec<String>) {
+        self.autocomplete.update_key_cache(keys);
+    }
+
+    fn open_autocomplete(&mut self) {
+        let trimmed = self.input.trim_start();
+        if trimmed.is_empty() {
+            self.ac_visible = false;
+            return;
+        }
+        if !trimmed.contains(' ') {
+            self.ac_suggestions = self.autocomplete.suggest_commands(trimmed, 8);
+        } else {
+            let tokens = tokenize_shell_like(trimmed);
+            if tokens.len() >= 2 {
+                let last = &tokens[tokens.len() - 1];
+                self.ac_suggestions = self.autocomplete.suggest_keys(last, 8);
+            } else {
+                self.ac_suggestions.clear();
+            }
+        }
+        self.ac_selected = 0;
+        self.ac_visible = !self.ac_suggestions.is_empty();
+    }
+
+    fn accept_autocomplete(&mut self) {
+        if let Some(suggestion) = self.ac_suggestions.get(self.ac_selected) {
+            let trimmed = self.input.trim_start();
+            if !trimmed.contains(' ') {
+                let leading_ws: String = self.input.chars().take_while(|c| c.is_whitespace()).collect();
+                self.input = format!("{}{} ", leading_ws, suggestion);
+                self.cursor = self.input.len();
+            } else {
+                let tokens = tokenize_shell_like(trimmed);
+                let mut new_input = tokens[..tokens.len().saturating_sub(1)].join(" ");
+                if !new_input.is_empty() {
+                    new_input.push(' ');
+                }
+                new_input.push_str(suggestion);
+                self.input = new_input;
+                self.cursor = self.input.len();
+            }
+        }
+        self.ac_visible = false;
     }
 
     pub fn handle_event(&mut self, event: &Event) -> Option<ReplAction> {
@@ -203,6 +166,7 @@ impl ReplWidget {
                 KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' => {
                     self.input.clear();
                     self.cursor = 0;
+                    self.ac_visible = false;
                     self.command_history.reset_cursor();
                 }
                 KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'l' => {
@@ -211,35 +175,64 @@ impl ReplWidget {
                 KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'r' => {
                     self.raw_mode = !self.raw_mode;
                 }
+                KeyCode::Esc => {
+                    self.ac_visible = false;
+                }
                 KeyCode::Char(c) => {
                     self.input.insert(self.cursor, c);
                     self.cursor += 1;
+                    self.ac_visible = false;
                     self.command_history.reset_cursor();
                 }
                 KeyCode::Backspace => {
                     if self.cursor > 0 {
                         self.input.remove(self.cursor - 1);
                         self.cursor -= 1;
+                        self.ac_visible = false;
                         self.command_history.reset_cursor();
                     }
                 }
                 KeyCode::Delete => {
                     if self.cursor < self.input.len() {
                         self.input.remove(self.cursor);
+                        self.ac_visible = false;
                         self.command_history.reset_cursor();
                     }
                 }
-                KeyCode::Left if self.cursor > 0 => self.cursor -= 1,
-                KeyCode::Right if self.cursor < self.input.len() => self.cursor += 1,
-                KeyCode::Home => self.cursor = 0,
-                KeyCode::End => self.cursor = self.input.len(),
+                KeyCode::Left if self.cursor > 0 => {
+                    self.cursor -= 1;
+                    self.ac_visible = false;
+                }
+                KeyCode::Right if self.cursor < self.input.len() => {
+                    self.cursor += 1;
+                    self.ac_visible = false;
+                }
+                KeyCode::Home => {
+                    self.cursor = 0;
+                    self.ac_visible = false;
+                }
+                KeyCode::End => {
+                    self.cursor = self.input.len();
+                    self.ac_visible = false;
+                }
                 KeyCode::Tab => {
-                    if let Some(completed) = autocomplete_first_token(&self.input) {
-                        self.input = completed;
-                        self.cursor = self.input.len();
+                    if self.ac_visible {
+                        if key.modifiers.contains(KeyModifiers::SHIFT) {
+                            if self.ac_selected > 0 {
+                                self.ac_selected -= 1;
+                            }
+                        } else if self.ac_selected + 1 < self.ac_suggestions.len() {
+                            self.ac_selected += 1;
+                        }
+                    } else {
+                        self.open_autocomplete();
                     }
                 }
                 KeyCode::Enter => {
+                    if self.ac_visible {
+                        self.accept_autocomplete();
+                        return None;
+                    }
                     let cmd = self.input.trim().to_string();
                     if !cmd.is_empty() {
                         self.command_history.push(cmd.clone());
@@ -260,11 +253,12 @@ impl ReplWidget {
                 KeyCode::Up => {
                     self.input = self.command_history.prev(&self.input);
                     self.cursor = self.input.len();
+                    self.ac_visible = false;
                 }
                 KeyCode::Down => {
                     self.input = self.command_history.next_entry();
-                    self.cursor = 0;
                     self.cursor = self.input.len();
+                    self.ac_visible = false;
                 }
                 _ => {}
             }
@@ -280,12 +274,25 @@ impl ReplWidget {
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
+        let chunks = if self.ac_visible && !self.ac_suggestions.is_empty() {
+            let ac_height = (self.ac_suggestions.len() as u16 + 2).min(10);
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(0), Constraint::Length(ac_height)])
+                .split(area)
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(0), Constraint::Length(0)])
+                .split(area)
+        };
+
         let block = Block::default().borders(Borders::ALL).title("REPL");
         let history_text: String = self
             .history
             .iter()
             .rev()
-            .take(area.height.saturating_sub(3) as usize)
+            .take(chunks[0].height.saturating_sub(3) as usize)
             .map(|line| {
                 let prefix = match line.status {
                     ReplLineStatus::Success => "✓ ".to_string(),
@@ -301,6 +308,154 @@ impl ReplWidget {
             .block(block)
             .wrap(Wrap { trim: false })
             .scroll((self.scroll, 0));
-        frame.render_widget(paragraph, area);
+        frame.render_widget(paragraph, chunks[0]);
+
+        if self.ac_visible && !self.ac_suggestions.is_empty() {
+            let lines: Vec<Line> = self
+                .ac_suggestions
+                .iter()
+                .enumerate()
+                .map(|(i, sug)| {
+                    let style = if i == self.ac_selected {
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    Line::from(Span::styled(format!("  {}  ", sug), style))
+                })
+                .collect();
+            let ac_block = Block::default().borders(Borders::ALL).title(" Suggest ");
+            let ac_para = Paragraph::new(lines).block(ac_block);
+            frame.render_widget(Clear, chunks[1]);
+            frame.render_widget(ac_para, chunks[1]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ReplWidget, parse_pipeline, tokenize_shell_like};
+    use crate::events::Event;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn test_tokenize_shell_like_quotes() {
+        let tokens = tokenize_shell_like("SET foo 'hello world'");
+        assert_eq!(tokens, vec!["SET", "foo", "hello world"]);
+
+        let tokens = tokenize_shell_like("SET foo \"hello world\"");
+        assert_eq!(tokens, vec!["SET", "foo", "hello world"]);
+    }
+
+    #[test]
+    fn test_parse_pipeline_stages() {
+        let stages = parse_pipeline("GET foo ;; STRLEN");
+        assert_eq!(stages, vec![vec!["GET", "foo"], vec!["STRLEN"]]);
+    }
+
+    #[test]
+    fn test_repl_tab_autocomplete() {
+        let mut repl = ReplWidget::new();
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('g'))));
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+        assert!(repl.ac_visible);
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+        assert_eq!(repl.input, "GET ");
+    }
+
+    #[test]
+    fn test_repl_tab_cycles_suggestions() {
+        let mut repl = ReplWidget::new();
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+        assert!(repl.ac_visible);
+        let first = repl.ac_suggestions[repl.ac_selected].clone();
+
+        // Tab again cycles to next
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+        let second = repl.ac_suggestions[repl.ac_selected].clone();
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn test_repl_shift_tab_cycles_back() {
+        let mut repl = ReplWidget::new();
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+        let second = repl.ac_selected;
+
+        let shift_tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT);
+        repl.handle_event(&Event::Key(shift_tab));
+        assert_eq!(repl.ac_selected, second - 1);
+    }
+
+    #[test]
+    fn test_repl_enter_accepts_suggestion() {
+        let mut repl = ReplWidget::new();
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('g'))));
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+        assert!(repl.ac_visible);
+
+        let action = repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+        assert!(action.is_none()); // accepting suggestion does not submit
+        assert!(!repl.ac_visible);
+        assert_eq!(repl.input, "GET ");
+    }
+
+    #[test]
+    fn test_repl_esc_closes_autocomplete() {
+        let mut repl = ReplWidget::new();
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('g'))));
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+        assert!(repl.ac_visible);
+
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Esc)));
+        assert!(!repl.ac_visible);
+    }
+
+    #[test]
+    fn test_repl_typing_closes_autocomplete() {
+        let mut repl = ReplWidget::new();
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('g'))));
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+        assert!(repl.ac_visible);
+
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('t'))));
+        assert!(!repl.ac_visible);
+    }
+
+    #[test]
+    fn test_repl_key_cache_suggestions() {
+        let mut repl = ReplWidget::new();
+        repl.update_key_cache(vec![
+            "user:123".to_string(),
+            "user:456".to_string(),
+        ]);
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('G'))));
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('E'))));
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('T'))));
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(' '))));
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('u'))));
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+        assert!(repl.ac_visible);
+        assert!(repl.ac_suggestions.iter().any(|s| s.starts_with("user:")));
+    }
+
+    #[test]
+    fn test_repl_render_with_autocomplete_does_not_panic() {
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut repl = ReplWidget::new();
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('g'))));
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+        assert!(repl.ac_visible);
+        let _ = terminal.draw(|f| repl.render(f, f.area()));
     }
 }

@@ -142,8 +142,8 @@
 | 3.3 | History persisted to disk | ✅ Done | `CommandHistory::load/save` |
 | 3.4 | History deduplicates consecutive duplicates | ❌ Missing | `push()` appends blindly |
 | 3.5 | History max 1000 entries | ✅ Done | `ReplWidget` enforces `max_history: 1000` on output; input history unbounded |
-| 3.6 | Autocomplete: command names | ⚠️ Partial | Static `COMMON_REDIS_COMMANDS` list, prefix match only |
-| 3.7 | Autocomplete: key names (fuzzy) | ❌ Missing | No key cache fed into autocomplete |
+| 3.6 | Autocomplete: command names | ✅ Done | `ReplAutocomplete` with nucleo fuzzy matching on 100+ commands |
+| 3.7 | Autocomplete: key names (fuzzy) | ✅ Done | `suggest_keys()` with key cache, wired to `update_key_cache()` |
 | 3.8 | Autocomplete: argument hints / subcommands | ❌ Missing | |
 | 3.9 | Pipeline parsing with `;;` | ✅ Done | `parse_pipeline()` + `tokenize_shell_like()` |
 | 3.10 | Quoted token handling | ✅ Done | Single + double quote support in tokenizer |
@@ -154,8 +154,8 @@
 | 3.15 | `test_history_push_and_browse` | ❌ Missing | |
 | 3.16 | `test_history_persistence` | ❌ Missing | |
 | 3.17 | `test_history_max_1000` | ❌ Missing | |
-| 3.18 | `test_autocomplete_command_prefix` | ⚠️ Partial | `test_repl_tab_autocomplete` covers basic case |
-| 3.19 | `test_autocomplete_key_arg` | ❌ Missing | |
+| 3.18 | `test_autocomplete_command_prefix` | ✅ Done | `test_repl_tab_autocomplete` |
+| 3.19 | `test_autocomplete_key_arg` | ✅ Done | `test_repl_key_cache_suggestions` |
 | 3.20 | `test_pipeline_parsing` | ✅ Done | |
 | 3.21 | `test_quoted_token_parsing` | ✅ Done | |
 | 3.22 | `test_execute_raw_get_set` | ✅ Done | `test_execute_raw_get_set` in m1 |
@@ -469,7 +469,7 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 | **C** | C2 — 6-panel sparkline grid | ✅ **Complete** | `InfoDashboard` has `prev_stats` + 4 `SparklineBuffer`s, `update_stats()` computes deltas, renders 2×3 grid (Memory/Clients/Ops-sec/Hit Rate sparklines + Uptime/Version text). Tests: seeding, delta, missing fields, render. | — |
 | **C** | C3 — Dedicated SlowLogPanel | ✅ **Complete** | `SlowLogPanel` extracted to `src/ui/slowlog_panel/mod.rs`, `Table` widget with duration bars (color-coded: green/yellow/red), CSV export (`e`), threshold filter (`t` cycles presets), compact mode (`Space`). 13 unit tests. | — |
 | **D** | D1 — `execute_raw` / `execute_pipeline` | ✅ **Complete** | `RedisClientHandle::execute_raw()` and `execute_pipeline()` added. REPL refactored to use them. Tests: raw GET/SET/DEL, pipeline round-trip. | — |
-| **D** | D2 — Fuzzy REPL autocomplete | ❌ **Not started** | Static prefix match against 25 commands | No `nucleo` integration, no key-name suggestions, no match overlay |
+| **D** | D2 — Fuzzy REPL autocomplete | ✅ **Complete** | `ReplAutocomplete` with nucleo `fuzzy_match_greedy`, 100+ Redis commands, key cache support. Tab opens overlay, Tab/Shift+Tab cycles, Enter accepts, Esc closes. 18 tests. | — |
 | **E** | E1 — MONITOR mode | ❌ **Not started** | — | No `--allow-monitor` flag, no `MONITOR` connection, no render stream |
 | **E** | E2 — String editor popup + `$EDITOR` | ❌ **Not started** | `TextAreaEditor` widget exists | No full-screen overlay, no `$EDITOR` subprocess integration |
 | **F** | F1 — CI & Audit | ❌ **Not started** | — | No `.github/workflows`, no `cargo audit` gate |

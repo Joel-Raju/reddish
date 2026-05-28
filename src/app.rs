@@ -209,6 +209,7 @@ pub struct App {
     pub command_palette: Option<CommandPalette>,
     pub connection_screen: Option<ConnectionScreen>,
     pub readonly: bool,
+    pub allow_monitor: bool,
     pub error_message: Option<String>,
     pub client: Option<RedisClientHandle>,
     pub keymap: Keymap,
@@ -219,6 +220,7 @@ pub struct App {
     pub search_scan_rx: Option<mpsc::Receiver<Vec<String>>>,
     pub search_scan_cancel: Option<CancellationToken>,
     pub pubsub_rx: Option<mpsc::UnboundedReceiver<PubSubMessage>>,
+    pub monitor_rx: Option<mpsc::UnboundedReceiver<String>>,
     tick_count: u64,
     reconnect_attempt: u32,
     pub pending_delete_key: Option<String>,
@@ -244,6 +246,7 @@ impl App {
             command_palette: None,
             connection_screen: None,
             readonly: false,
+            allow_monitor: false,
             error_message: None,
             client: None,
             keymap: Keymap::default(),
@@ -254,6 +257,7 @@ impl App {
             search_scan_rx: None,
             search_scan_cancel: None,
             pubsub_rx: None,
+            monitor_rx: None,
             tick_count: 0,
             reconnect_attempt: 0,
             pending_delete_key: None,
@@ -684,8 +688,15 @@ impl App {
                 }
             }
             Tab::Repl => {
+                let was_monitor_visible = self.repl.monitor_visible;
                 if let Some(ReplAction::Submit(cmd)) = self.repl.handle_event(&Event::Key(key)) {
                     self.execute_repl_command(cmd).await;
+                }
+                if self.repl.monitor_visible && !was_monitor_visible && self.monitor_rx.is_none() {
+                    self.start_monitor().await;
+                }
+                if !self.repl.monitor_visible && was_monitor_visible {
+                    self.monitor_rx = None;
                 }
             }
             Tab::Info => {
@@ -846,11 +857,43 @@ impl App {
         self.drain_scan_batches();
         self.drain_search_scan();
         self.drain_pubsub_messages();
+        self.drain_monitor_messages();
         self.status_bar.key_count = self.key_browser.tree.total_keys();
         if self.active_tab == Tab::Info && self.tick_count.is_multiple_of(4) {
             self.refresh_info_dashboard().await;
         }
         self.update_status_bar_context();
+    }
+
+    fn drain_monitor_messages(&mut self) {
+        if let Some(ref mut rx) = self.monitor_rx {
+            while let Ok(line) = rx.try_recv() {
+                self.repl.push_monitor_line(line);
+            }
+        }
+    }
+
+    async fn start_monitor(&mut self) {
+        if !self.allow_monitor {
+            self.error_message = Some("MONITOR disabled. Use --allow-monitor to enable.".to_string());
+            return;
+        }
+        let Some(ref client) = self.client else {
+            self.error_message = Some("Not connected".to_string());
+            return;
+        };
+        match client.monitor().await {
+            Ok(Some(rx)) => {
+                self.monitor_rx = Some(rx);
+                self.repl.monitor_visible = true;
+            }
+            Ok(None) => {
+                self.error_message = Some("MONITOR not supported in cluster mode".to_string());
+            }
+            Err(err) => {
+                self.error_message = Some(format!("Failed to start MONITOR: {err}"));
+            }
+        }
     }
 
     fn start_pubsub_subscription(&mut self, kind: PubSubKind) -> color_eyre::Result<()> {

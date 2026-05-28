@@ -83,6 +83,9 @@ pub struct ReplWidget {
     pub ac_visible: bool,
     pub ac_suggestions: Vec<String>,
     pub ac_selected: usize,
+    pub monitor_visible: bool,
+    pub monitor_lines: VecDeque<String>,
+    pub monitor_scroll: u16,
 }
 
 impl Default for ReplWidget {
@@ -110,7 +113,17 @@ impl ReplWidget {
             ac_visible: false,
             ac_suggestions: Vec::new(),
             ac_selected: 0,
+            monitor_visible: false,
+            monitor_lines: VecDeque::new(),
+            monitor_scroll: 0,
         }
+    }
+
+    pub fn push_monitor_line(&mut self, line: String) {
+        if self.monitor_lines.len() > 1000 {
+            self.monitor_lines.pop_front();
+        }
+        self.monitor_lines.push_back(line);
     }
 
     pub fn update_key_cache(&mut self, keys: Vec<String>) {
@@ -174,6 +187,9 @@ impl ReplWidget {
                 }
                 KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'r' => {
                     self.raw_mode = !self.raw_mode;
+                }
+                KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'm' => {
+                    self.monitor_visible = !self.monitor_visible;
                 }
                 KeyCode::Esc => {
                     self.ac_visible = false;
@@ -274,18 +290,25 @@ impl ReplWidget {
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
-        let chunks = if self.ac_visible && !self.ac_suggestions.is_empty() {
-            let ac_height = (self.ac_suggestions.len() as u16 + 2).min(10);
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0), Constraint::Length(ac_height)])
-                .split(area)
+        let ac_height = if self.ac_visible && !self.ac_suggestions.is_empty() {
+            (self.ac_suggestions.len() as u16 + 2).min(10)
         } else {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0), Constraint::Length(0)])
-                .split(area)
+            0
         };
+        let mon_height = if self.monitor_visible {
+            area.height / 3
+        } else {
+            0
+        };
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(ac_height),
+                Constraint::Length(mon_height),
+            ])
+            .split(area);
 
         let block = Block::default().borders(Borders::ALL).title("REPL");
         let history_text: String = self
@@ -331,6 +354,23 @@ impl ReplWidget {
             let ac_para = Paragraph::new(lines).block(ac_block);
             frame.render_widget(Clear, chunks[1]);
             frame.render_widget(ac_para, chunks[1]);
+        }
+
+        if self.monitor_visible {
+            let mon_text: String = self
+                .monitor_lines
+                .iter()
+                .rev()
+                .take(chunks[2].height.saturating_sub(2) as usize)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n");
+            let mon_block = Block::default().borders(Borders::ALL).title(" MONITOR ");
+            let mon_para = Paragraph::new(mon_text)
+                .block(mon_block)
+                .wrap(Wrap { trim: false })
+                .scroll((self.monitor_scroll, 0));
+            frame.render_widget(mon_para, chunks[2]);
         }
     }
 }
@@ -456,6 +496,41 @@ mod tests {
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('g'))));
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
         assert!(repl.ac_visible);
+        let _ = terminal.draw(|f| repl.render(f, f.area()));
+    }
+
+    #[test]
+    fn test_repl_monitor_toggle() {
+        let mut repl = ReplWidget::new();
+        assert!(!repl.monitor_visible);
+
+        let ctrl_m = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL);
+        repl.handle_event(&Event::Key(ctrl_m));
+        assert!(repl.monitor_visible);
+
+        let ctrl_m = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL);
+        repl.handle_event(&Event::Key(ctrl_m));
+        assert!(!repl.monitor_visible);
+    }
+
+    #[test]
+    fn test_repl_monitor_push_line() {
+        let mut repl = ReplWidget::new();
+        repl.push_monitor_line("GET foo".to_string());
+        repl.push_monitor_line("SET bar 1".to_string());
+        assert_eq!(repl.monitor_lines.len(), 2);
+        assert_eq!(repl.monitor_lines[0], "GET foo");
+        assert_eq!(repl.monitor_lines[1], "SET bar 1");
+    }
+
+    #[test]
+    fn test_repl_render_with_monitor_does_not_panic() {
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut repl = ReplWidget::new();
+        repl.monitor_visible = true;
+        repl.push_monitor_line("GET foo".to_string());
+        repl.push_monitor_line("SET bar 1".to_string());
         let _ = terminal.draw(|f| repl.render(f, f.area()));
     }
 }

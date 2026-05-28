@@ -1467,6 +1467,45 @@ impl RedisClientHandle {
         }
         Ok(results)
     }
+
+    /// Open a separate MONITOR connection and return a stream of raw command strings.
+    /// Returns `None` if the profile uses cluster mode (MONITOR is node-specific).
+    #[allow(deprecated)]
+    pub async fn monitor(&self) -> RedisResult<Option<tokio::sync::mpsc::UnboundedReceiver<String>>> {
+        // MONITOR only makes sense on standalone/sentinel connections
+        let url = build_redis_url(&self.profile, &self.profile.host, self.profile.port)?;
+        let client = redis::Client::open(url.as_str())
+            .map_err(|e| RedisError::ConnectionFailed(format!("monitor client: {e}")))?;
+        let conn = tokio::time::timeout(
+            Duration::from_secs(5),
+            client.get_async_connection(),
+        )
+        .await
+        .map_err(|_| RedisError::Timeout("monitor connect"))?
+        .map_err(|e| RedisError::ConnectionFailed(format!("monitor connect: {e}")))?;
+
+        let mut monitor = redis::aio::Monitor::new(conn);
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            monitor.monitor(),
+        )
+        .await
+        .map_err(|_| RedisError::Timeout("monitor command"))?
+        .map_err(|e| RedisError::CommandFailed(format!("monitor: {e}")))?;
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            use futures::StreamExt;
+            let mut stream = monitor.into_on_message::<String>();
+            while let Some(msg) = stream.next().await {
+                if tx.send(msg).is_err() {
+                    break;
+                }
+            }
+        });
+
+        Ok(Some(rx))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

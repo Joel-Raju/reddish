@@ -24,6 +24,8 @@ struct Cli {
     log_level: Option<String>,
     #[arg(long, value_name = "THEME")]
     theme: Option<String>,
+    #[arg(long, help = "Allow MONITOR mode (opens a separate connection)")]
+    allow_monitor: bool,
 }
 
 fn main() -> Result<()> {
@@ -55,6 +57,7 @@ fn main() -> Result<()> {
 
     let mut app = App::new(config);
     app.readonly = cli.readonly;
+    app.allow_monitor = cli.allow_monitor;
 
     if let Some(profile_name) = cli.profile.as_deref() {
         if let Some(profile) = resolve_profile(profile_name)? {

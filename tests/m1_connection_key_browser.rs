@@ -1126,3 +1126,75 @@ fn test_key_browser_duplicate_same_name_returns_none() {
     let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
     assert_eq!(action, None);
 }
+
+#[tokio::test]
+async fn test_execute_raw_get_set() {
+    let profile = ConnectionProfile {
+        name: "test".to_string(),
+        host: "127.0.0.1".to_string(),
+        port: 16379,
+        db: 0,
+        username: None,
+        password: None,
+        last_connected: None,
+        ..Default::default()
+    };
+    let client = RedisClientHandle::connect(&profile).await.unwrap();
+
+    // SET via execute_raw
+    let set_result = client
+        .execute_raw(&["SET".to_string(), "raw_test_key".to_string(), "hello".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(set_result, redis::Value::SimpleString("OK".to_string()));
+
+    // GET via execute_raw
+    let get_result = client
+        .execute_raw(&["GET".to_string(), "raw_test_key".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(
+        get_result,
+        redis::Value::BulkString("hello".as_bytes().to_vec())
+    );
+
+    // DEL via execute_raw
+    let del_result = client
+        .execute_raw(&["DEL".to_string(), "raw_test_key".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(del_result, redis::Value::Int(1));
+}
+
+#[tokio::test]
+async fn test_execute_pipeline_round_trip() {
+    let profile = ConnectionProfile {
+        name: "test".to_string(),
+        host: "127.0.0.1".to_string(),
+        port: 16379,
+        db: 0,
+        username: None,
+        password: None,
+        last_connected: None,
+        ..Default::default()
+    };
+    let client = RedisClientHandle::connect(&profile).await.unwrap();
+
+    let cmds = vec![
+        vec!["SET".to_string(), "pipe_a".to_string(), "1".to_string()],
+        vec!["SET".to_string(), "pipe_b".to_string(), "2".to_string()],
+        vec!["MGET".to_string(), "pipe_a".to_string(), "pipe_b".to_string()],
+    ];
+
+    let results = client.execute_pipeline(&cmds).await.unwrap();
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0], redis::Value::SimpleString("OK".to_string()));
+    assert_eq!(results[1], redis::Value::SimpleString("OK".to_string()));
+    assert!(matches!(results[2], redis::Value::Array(_)));
+
+    // Cleanup
+    client
+        .execute_raw(&["DEL".to_string(), "pipe_a".to_string(), "pipe_b".to_string()])
+        .await
+        .unwrap();
+}

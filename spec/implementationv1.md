@@ -158,8 +158,8 @@
 | 3.19 | `test_autocomplete_key_arg` | ❌ Missing | |
 | 3.20 | `test_pipeline_parsing` | ✅ Done | |
 | 3.21 | `test_quoted_token_parsing` | ✅ Done | |
-| 3.22 | `test_execute_raw_get_set` | ❌ Missing | |
-| 3.23 | `test_execute_pipeline` | ❌ Missing | |
+| 3.22 | `test_execute_raw_get_set` | ✅ Done | `test_execute_raw_get_set` in m1 |
+| 3.23 | `test_execute_pipeline` | ✅ Done | `test_execute_pipeline_round_trip` in m1 |
 | 3.24 | `test_execute_pipeline_partial_error` | ❌ Missing | |
 | 3.25 | `test_repl_renders_without_panic` | ✅ Done | |
 | 3.26 | `test_repl_ctrl_l_clears_output` | ❌ Missing | |
@@ -468,7 +468,7 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 | **C** | C1 — SparklineBuffer | ✅ **Complete** | `SparklineBuffer` circular buffer (default 60 samples), `push()`, `to_vec()`, `latest()`, `delta()`. Tests: capacity, overflow, wrap, delta, negative change. | — |
 | **C** | C2 — 6-panel sparkline grid | ✅ **Complete** | `InfoDashboard` has `prev_stats` + 4 `SparklineBuffer`s, `update_stats()` computes deltas, renders 2×3 grid (Memory/Clients/Ops-sec/Hit Rate sparklines + Uptime/Version text). Tests: seeding, delta, missing fields, render. | — |
 | **C** | C3 — Dedicated SlowLogPanel | ✅ **Complete** | `SlowLogPanel` extracted to `src/ui/slowlog_panel/mod.rs`, `Table` widget with duration bars (color-coded: green/yellow/red), CSV export (`e`), threshold filter (`t` cycles presets), compact mode (`Space`). 13 unit tests. | — |
-| **D** | D1 — `execute_raw` / `execute_pipeline` | ❌ **Not started** | Raw dispatch lives in `app.rs` `handle_repl_command()` | No `execute_raw()` / `execute_pipeline()` on `RedisClientHandle` |
+| **D** | D1 — `execute_raw` / `execute_pipeline` | ✅ **Complete** | `RedisClientHandle::execute_raw()` and `execute_pipeline()` added. REPL refactored to use them. Tests: raw GET/SET/DEL, pipeline round-trip. | — |
 | **D** | D2 — Fuzzy REPL autocomplete | ❌ **Not started** | Static prefix match against 25 commands | No `nucleo` integration, no key-name suggestions, no match overlay |
 | **E** | E1 — MONITOR mode | ❌ **Not started** | — | No `--allow-monitor` flag, no `MONITOR` connection, no render stream |
 | **E** | E2 — String editor popup + `$EDITOR` | ❌ **Not started** | `TextAreaEditor` widget exists | No full-screen overlay, no `$EDITOR` subprocess integration |

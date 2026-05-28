@@ -19,7 +19,7 @@ use crate::config::Config;
 use crate::config::connections::{ConnectionMode, ConnectionProfile, ConnectionStore};
 use crate::config::keybindings::Keymap;
 use crate::events::{Event, EventHandler};
-use crate::redis::client::{RedisClient, RedisClientHandle, RedisType};
+use crate::redis::client::{RedisClientHandle, RedisType};
 use crate::redis::server::slowlog_get;
 use crate::ui::command_palette::{CommandPalette, PaletteAction};
 use crate::ui::connection_screen::{ConnectionScreen, ConnectionScreenAction};
@@ -378,31 +378,10 @@ impl App {
             return Ok(String::new());
         }
 
-        let cmd_name = tokens[0].to_uppercase();
-        let args = &tokens[1..];
-
-        let mut cmd = redis::cmd(&cmd_name);
-        for arg in args {
-            cmd.arg(arg);
-        }
-
-        let value: redis::Value = match &client.client {
-            RedisClient::Standalone(conn) => {
-                let mut c = conn.clone();
-                tokio::time::timeout(Duration::from_secs(5), cmd.query_async::<redis::Value>(&mut c))
-                    .await
-                    .map_err(|_| format!("{cmd_name} timeout"))
-                    .and_then(|res| res.map_err(|e| format!("{cmd_name} error: {e}")))?
-            }
-            RedisClient::Cluster(conn) => {
-                let mut c = conn.clone();
-                tokio::time::timeout(Duration::from_secs(5), cmd.query_async::<redis::Value>(&mut c))
-                    .await
-                    .map_err(|_| format!("{cmd_name} timeout"))
-                    .and_then(|res| res.map_err(|e| format!("{cmd_name} error: {e}")))?
-            }
-        };
-
+        let value = client
+            .execute_raw(&tokens)
+            .await
+            .map_err(|e| format!("{} error: {e}", tokens[0].to_uppercase()))?;
         Ok(redis_value_to_string(&value))
     }
 

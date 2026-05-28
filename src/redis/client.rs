@@ -1425,6 +1425,48 @@ impl RedisClientHandle {
         }
         Ok(())
     }
+
+    pub async fn execute_raw(&self, cmd: &[String]) -> Result<redis::Value> {
+        if cmd.is_empty() {
+            return Ok(redis::Value::Nil);
+        }
+        let cmd_name = &cmd[0];
+        let args = &cmd[1..];
+        let mut redis_cmd = redis::cmd(cmd_name);
+        for arg in args {
+            redis_cmd.arg(arg);
+        }
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let val: redis::Value = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis_cmd.query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("{cmd_name} timeout"))??;
+                Ok(val)
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                let val: redis::Value = tokio::time::timeout(
+                    Duration::from_secs(5),
+                    redis_cmd.query_async(&mut c),
+                )
+                .await
+                .map_err(|_| color_eyre::eyre::eyre!("{cmd_name} timeout"))??;
+                Ok(val)
+            }
+        }
+    }
+
+    pub async fn execute_pipeline(&self, cmds: &[Vec<String>]) -> Result<Vec<redis::Value>> {
+        let mut results = Vec::with_capacity(cmds.len());
+        for cmd in cmds {
+            results.push(self.execute_raw(cmd).await?);
+        }
+        Ok(results)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

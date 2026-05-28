@@ -7,6 +7,7 @@ use ratatui::{
 };
 
 use crate::events::Event;
+use crate::ui::slowlog_panel::{SlowLogAction, SlowLogPanel};
 use crate::ui::stats::sparkline::SparklineBuffer;
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -60,14 +61,13 @@ fn get_val(info: &str, section: &str, key: &str) -> Option<String> {
 pub enum InfoAction {
     ScrollUp,
     ScrollDown,
+    ExportCsv,
 }
 
 pub struct InfoDashboard {
     pub stats: SystemStats,
     pub prev_stats: Option<SystemStats>,
-    pub slowlog: Vec<crate::redis::server::SlowLogEntry>,
-    pub slowlog_scroll: u16,
-    pub compact_mode: bool,
+    pub slowlog_panel: SlowLogPanel,
     pub buf_memory: SparklineBuffer,
     pub buf_clients: SparklineBuffer,
     pub buf_ops: SparklineBuffer,
@@ -85,9 +85,7 @@ impl InfoDashboard {
         Self {
             stats: SystemStats::default(),
             prev_stats: None,
-            slowlog: Vec::new(),
-            slowlog_scroll: 0,
-            compact_mode: false,
+            slowlog_panel: SlowLogPanel::new(),
             buf_memory: SparklineBuffer::default(),
             buf_clients: SparklineBuffer::default(),
             buf_ops: SparklineBuffer::default(),
@@ -136,23 +134,13 @@ impl InfoDashboard {
     }
 
     pub fn handle_event(&mut self, event: &Event) -> Option<InfoAction> {
-        use crossterm::event::KeyCode;
-        if let Event::Key(key) = event {
-            match key.code {
-                KeyCode::Up | KeyCode::Char('k') => {
-                    self.slowlog_scroll = self.slowlog_scroll.saturating_sub(1);
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    let max = self.slowlog.len().saturating_sub(1) as u16;
-                    if self.slowlog_scroll < max {
-                        self.slowlog_scroll += 1;
-                    }
-                }
-                KeyCode::Char(' ') => {
-                    self.compact_mode = !self.compact_mode;
-                }
-                _ => {}
-            }
+        if let Some(action) = self.slowlog_panel.handle_event(event) {
+            return match action {
+                SlowLogAction::ScrollUp => Some(InfoAction::ScrollUp),
+                SlowLogAction::ScrollDown => Some(InfoAction::ScrollDown),
+                SlowLogAction::ExportCsv => Some(InfoAction::ExportCsv),
+                _ => None,
+            };
         }
         None
     }
@@ -163,7 +151,7 @@ impl InfoDashboard {
             .constraints([Constraint::Length(13), Constraint::Min(0)])
             .split(area);
         self.render_stats_grid(frame, chunks[0]);
-        self.render_slowlog_panel(frame, chunks[1]);
+        self.slowlog_panel.render(frame, chunks[1]);
     }
 
     fn format_uptime(seconds: u64) -> String {
@@ -255,57 +243,4 @@ impl InfoDashboard {
         let para = Paragraph::new(vec![val_line]);
         frame.render_widget(para, inner);
     }
-
-    fn render_slowlog_panel(&self, frame: &mut Frame, area: Rect) {
-        let title = if self.compact_mode {
-            " Slow Log (compact) "
-        } else {
-            " Slow Log "
-        };
-
-        if self.slowlog.is_empty() {
-            let para = Paragraph::new("No slow log entries")
-                .block(Block::default().borders(Borders::ALL).title(title));
-            frame.render_widget(para, area);
-            return;
-        }
-
-        let max_visible = area.height.saturating_sub(2) as usize;
-        let start = self.slowlog_scroll as usize;
-
-        let lines: Vec<Line> = self
-            .slowlog
-            .iter()
-            .skip(start)
-            .take(max_visible)
-            .map(|entry| {
-                let cmd_str = entry.command.join(" ");
-                if self.compact_mode {
-                    Line::from(Span::raw(format!(
-                        "  #{} {}us {}",
-                        entry.id, entry.duration_us, cmd_str,
-                    )))
-                } else {
-                    let dt = format_unix_timestamp(entry.timestamp);
-                    Line::from(Span::raw(format!(
-                        "  #{} {} {}us: {}",
-                        entry.id, dt, entry.duration_us, cmd_str,
-                    )))
-                }
-            })
-            .collect();
-
-        let para = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title(title));
-        frame.render_widget(para, area);
-    }
-}
-
-fn format_unix_timestamp(ts: u64) -> String {
-    let since_epoch = std::time::Duration::from_secs(ts);
-    let total_secs = since_epoch.as_secs();
-    let hours = (total_secs % 86400) / 3600;
-    let mins = (total_secs % 3600) / 60;
-    let seconds = total_secs % 60;
-    format!("{:02}:{:02}:{:02}", hours, mins, seconds)
 }

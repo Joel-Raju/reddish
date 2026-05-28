@@ -710,7 +710,17 @@ impl App {
                 }
             }
             Tab::Info => {
-                self.info_dashboard.handle_event(&Event::Key(key));
+                use crate::ui::info_dashboard::InfoAction;
+                if let Some(InfoAction::ExportCsv) = self.info_dashboard.handle_event(&Event::Key(key)) {
+                    match self.info_dashboard.slowlog_panel.export_csv() {
+                        Ok(path) => {
+                            self.error_message = Some(format!("Exported slowlog to {path}"));
+                        }
+                        Err(err) => {
+                            self.error_message = Some(format!("Failed to export CSV: {err}"));
+                        }
+                    }
+                }
             }
             Tab::PubSub => {
                 if let Some(action) = self.pubsub_widget.handle_event(&Event::Key(key)) {
@@ -894,7 +904,7 @@ impl App {
 
         match slowlog_get(client, 100).await {
             Ok(entries) => {
-                self.info_dashboard.slowlog = entries;
+                self.info_dashboard.slowlog_panel.set_entries(entries);
             }
             Err(err) => {
                 self.error_message = Some(format!("Failed to refresh SLOWLOG: {err}"));

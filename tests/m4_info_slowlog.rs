@@ -86,7 +86,7 @@ fn test_info_dashboard_renders_without_panic() {
     let backend = TestBackend::new(80, 24);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     let mut dashboard = InfoDashboard::new();
-    dashboard.slowlog = vec![SlowLogEntry {
+    dashboard.slowlog_panel.entries = vec![SlowLogEntry {
         id: 1,
         timestamp: 1234567890,
         duration_us: 150,
@@ -113,7 +113,7 @@ fn test_info_dashboard_renders_without_panic() {
 #[test]
 fn test_info_dashboard_scroll_down() {
     let mut dashboard = InfoDashboard::new();
-    dashboard.slowlog = (0..20)
+    dashboard.slowlog_panel.entries = (0..20)
         .map(|i| SlowLogEntry {
             id: i,
             timestamp: 1000 + i,
@@ -124,22 +124,22 @@ fn test_info_dashboard_scroll_down() {
         })
         .collect();
 
-    assert_eq!(dashboard.slowlog_scroll, 0);
+    assert_eq!(dashboard.slowlog_panel.scroll, 0);
 
     dashboard.handle_event(&Event::Key(KeyEvent::from(KeyCode::Down)));
-    assert_eq!(dashboard.slowlog_scroll, 1);
+    assert_eq!(dashboard.slowlog_panel.scroll, 1);
 
     dashboard.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
-    assert_eq!(dashboard.slowlog_scroll, 2);
+    assert_eq!(dashboard.slowlog_panel.scroll, 2);
 
     dashboard.handle_event(&Event::Key(KeyEvent::from(KeyCode::Down)));
-    assert_eq!(dashboard.slowlog_scroll, 3);
+    assert_eq!(dashboard.slowlog_panel.scroll, 3);
 }
 
 #[test]
 fn test_info_dashboard_scroll_up() {
     let mut dashboard = InfoDashboard::new();
-    dashboard.slowlog = (0..20)
+    dashboard.slowlog_panel.entries = (0..20)
         .map(|i| SlowLogEntry {
             id: i,
             timestamp: 1000 + i,
@@ -149,19 +149,19 @@ fn test_info_dashboard_scroll_up() {
             name: None,
         })
         .collect();
-    dashboard.slowlog_scroll = 5;
+    dashboard.slowlog_panel.scroll = 5;
 
     dashboard.handle_event(&Event::Key(KeyEvent::from(KeyCode::Up)));
-    assert_eq!(dashboard.slowlog_scroll, 4);
+    assert_eq!(dashboard.slowlog_panel.scroll, 4);
 
     dashboard.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('k'))));
-    assert_eq!(dashboard.slowlog_scroll, 3);
+    assert_eq!(dashboard.slowlog_panel.scroll, 3);
 }
 
 #[test]
 fn test_info_dashboard_scroll_does_not_overflow() {
     let mut dashboard = InfoDashboard::new();
-    dashboard.slowlog = (0..5)
+    dashboard.slowlog_panel.entries = (0..5)
         .map(|i| SlowLogEntry {
             id: i,
             timestamp: 1000 + i,
@@ -171,32 +171,32 @@ fn test_info_dashboard_scroll_does_not_overflow() {
             name: None,
         })
         .collect();
-    dashboard.slowlog_scroll = 4;
+    dashboard.slowlog_panel.scroll = 4;
 
     dashboard.handle_event(&Event::Key(KeyEvent::from(KeyCode::Down)));
-    assert_eq!(dashboard.slowlog_scroll, 4);
+    assert_eq!(dashboard.slowlog_panel.scroll, 4);
 
     dashboard.handle_event(&Event::Key(KeyEvent::from(KeyCode::Up)));
-    assert_eq!(dashboard.slowlog_scroll, 3);
+    assert_eq!(dashboard.slowlog_panel.scroll, 3);
 }
 
 #[test]
 fn test_info_dashboard_scroll_stays_at_zero() {
     let mut dashboard = InfoDashboard::new();
     dashboard.handle_event(&Event::Key(KeyEvent::from(KeyCode::Up)));
-    assert_eq!(dashboard.slowlog_scroll, 0);
+    assert_eq!(dashboard.slowlog_panel.scroll, 0);
 }
 
 #[test]
 fn test_info_dashboard_compact_toggle() {
     let mut dashboard = InfoDashboard::new();
-    assert!(!dashboard.compact_mode);
+    assert!(!dashboard.slowlog_panel.compact_mode);
 
     dashboard.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(' '))));
-    assert!(dashboard.compact_mode);
+    assert!(dashboard.slowlog_panel.compact_mode);
 
     dashboard.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(' '))));
-    assert!(!dashboard.compact_mode);
+    assert!(!dashboard.slowlog_panel.compact_mode);
 }
 
 #[test]
@@ -204,7 +204,7 @@ fn test_info_dashboard_render_with_slowlog_entries() {
     let backend = TestBackend::new(80, 24);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     let mut dashboard = InfoDashboard::new();
-    dashboard.slowlog = vec![
+    dashboard.slowlog_panel.entries = vec![
         SlowLogEntry {
             id: 1,
             timestamp: 1000,
@@ -243,8 +243,8 @@ fn test_info_dashboard_render_compact_mode() {
     let backend = TestBackend::new(80, 24);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     let mut dashboard = InfoDashboard::new();
-    dashboard.compact_mode = true;
-    dashboard.slowlog = vec![SlowLogEntry {
+    dashboard.slowlog_panel.compact_mode = true;
+    dashboard.slowlog_panel.entries = vec![SlowLogEntry {
         id: 42,
         timestamp: 3000,
         duration_us: 500,

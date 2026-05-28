@@ -19,10 +19,10 @@
 
 ### Top 5 Gaps
 
-1. **Stats Dashboard lacks sparklines, gauges, and delta computations** — the Info tab shows raw text stats but no graphs, bar charts, or per-tick deltas.
-2. **Slow Log Viewer is missing bar charts, CSV export, and SLOWLOG RESET** — only basic scrolling list exists.
-3. **REPL autocomplete is shallow** — only command-name prefix matching; no key-name fuzzy cache, no argument hints, no nucleo ranking.
-4. **Search is substring-only** — no fuzzy matching, no regex toggle, no search history persistence.
+1. **REPL lacks raw execution and pipeline APIs** — `execute_raw` / `execute_pipeline` not on `RedisClientHandle`; raw dispatch only in `app.rs`.
+2. **REPL autocomplete is shallow** — only command-name prefix matching; no key-name fuzzy cache, no argument hints, no nucleo ranking.
+3. **Search is substring-only** — no fuzzy matching, no regex toggle, no search history persistence.
+4. **MONITOR mode not implemented** — no `--allow-monitor` flag, no `MONITOR` connection, no render stream.
 5. **Performance gates are absent** — no `--bench` flag, no p99 render-time assertions, no RSS ceiling tests.
 
 ---
@@ -173,30 +173,30 @@
 | # | Item | Status | Notes |
 |---|------|--------|-------|
 | 4.1 | `StatsSnapshot` from INFO ALL | ✅ Done | `SystemStats::from_info_sections` |
-| 4.2 | Memory panel (used, peak, fragmentation) | ⚠️ Partial | Values parsed but no sparkline/gauge |
-| 4.3 | Clients panel with sparkline | ❌ Missing | No sparkline buffer/widget |
-| 4.4 | Stats panel (ops/sec, hits/misses) | ⚠️ Partial | Values shown as text, no sparkline |
-| 4.5 | Keyspace bar chart | ❌ Missing | |
+| 4.2 | Memory panel (used, peak, fragmentation) | ✅ Done | Sparkline + delta in 2×3 grid |
+| 4.3 | Clients panel with sparkline | ✅ Done | Sparkline + delta in 2×3 grid |
+| 4.4 | Stats panel (ops/sec, hits/misses) | ✅ Done | Sparkline + delta in 2×3 grid |
+| 4.5 | Keyspace bar chart | ❌ Missing |
 | 4.6 | Replication panel | ❌ Missing | Only role inferred in cluster tests |
-| 4.7 | CPU gauges | ❌ Missing | |
-| 4.8 | Persistence flags (RDB/AOF) | ❌ Missing | |
-| 4.9 | Delta from previous tick | ❌ Missing | No `prev` snapshot comparison in render |
-| 4.10 | SlowLog table (id/time/duration/command) | ✅ Done | `info_dashboard.rs` |
-| 4.11 | SlowLog scroll | ✅ Done | `slowlog_scroll` with j/k/Up/Down |
-| 4.12 | SlowLog compact toggle (`Space`) | ✅ Done | |
-| 4.13 | SlowLog duration bar chart | ❌ Missing | |
-| 4.14 | SlowLog CSV export (`x`) | ❌ Missing | |
-| 4.15 | `SLOWLOG RESET` (`Ctrl+R`) | ❌ Missing | `Ctrl+R` is reconnect in app |
+| 4.7 | CPU gauges | ❌ Missing |
+| 4.8 | Persistence flags (RDB/AOF) | ❌ Missing |
+| 4.9 | Delta from previous tick | ✅ Done | `update_stats()` computes diffs |
+| 4.10 | SlowLog table (id/time/duration/command) | ✅ Done | `SlowLogPanel` with `Table` widget |
+| 4.11 | SlowLog scroll | ✅ Done | `SlowLogPanel::scroll` with j/k/Up/Down |
+| 4.12 | SlowLog compact toggle (`Space`) | ✅ Done | `SlowLogPanel::compact_mode` |
+| 4.13 | SlowLog duration bar chart | ✅ Done | Color-coded bars in table cells |
+| 4.14 | SlowLog CSV export (`e`) | ✅ Done | `SlowLogPanel::export_csv()` |
+| 4.15 | SlowLog threshold filter (`t`) | ✅ Done | Cycles None→1ms→10ms→100ms→1s |
 | 4.16 | `test_parse_info_valid` | ✅ Done | |
 | 4.17 | `test_parse_info_missing_field` | ❌ Missing | |
 | 4.18 | `test_sparkline_buffer_capacity` | ✅ Done | `ui::stats::sparkline` |
-| 4.19 | `test_sparkline_buffer_delta_insufficient_data` | ❌ Missing | |
-| 4.20 | `test_stats_panel_update_populates_buffers` | ❌ Missing | |
-| 4.21 | `test_stats_panel_renders_without_panic` | ❌ Missing | |
+| 4.19 | `test_sparkline_buffer_delta_insufficient_data` | ✅ Done | `test_delta_requires_two_samples` |
+| 4.20 | `test_stats_panel_update_populates_buffers` | ✅ Done | `test_info_dashboard_update_stats_seeds_buffers` |
+| 4.21 | `test_stats_panel_renders_without_panic` | ✅ Done | `test_info_dashboard_render_with_sparklines` |
 | 4.22 | `test_slowlog_get` | ✅ Done | |
 | 4.23 | `test_slowlog_reset` | ❌ Missing | |
-| 4.24 | `test_slowlog_csv_export` | ❌ Missing | |
-| 4.25 | `test_slowlog_renders_duration_bars` | ❌ Missing | |
+| 4.24 | `test_slowlog_csv_export` | ✅ Done | `test_slowlog_panel_export_csv` |
+| 4.25 | `test_slowlog_renders_duration_bars` | ✅ Done | `test_slowlog_panel_render_with_entries_does_not_panic` |
 
 **M4 Verdict:** ~65% complete. SparklineBuffer module is done. Info dashboard still needs integration (C2) and visual widgets (gauges, bar charts, deltas). Slow log is a scrolling list without analytics.
 
@@ -466,8 +466,8 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 | **B** | B1 — PSUBSCRIBE + channel colors | ✅ **Complete** | `PubSubKind` enum, `PSubscribe`/`PUnsubscribe` actions, Pattern input mode, 8-color cycle round-robin per subscription, color-coded message tags, `start_pubsub_subscription` accepts `PubSubKind`. Tests: tab cycle, subscribe/psubscribe color, unsubscribe/punsubscribe, color wrap, render. | — |
 | **B** | B2 — PubSubClient as module | ✅ **Complete** | `src/redis/pubsub.rs` with `PubSubClient::spawn_subscription`, `PubSubKind`/`PubSubMessage` moved from UI to shared redis module, `app.rs::start_pubsub_subscription` is thin wrapper | — |
 | **C** | C1 — SparklineBuffer | ✅ **Complete** | `SparklineBuffer` circular buffer (default 60 samples), `push()`, `to_vec()`, `latest()`, `delta()`. Tests: capacity, overflow, wrap, delta, negative change. | — |
-| **C** | C2 — 6-panel sparkline grid | ❌ **Not started** | Info dashboard renders raw text stats | No sparklines, no gauges, no delta badges, no 2×3 grid layout |
-| **C** | C3 — Dedicated SlowLogPanel | ❌ **Not started** | Slowlog renders as scrolling text list | No `Table` widget, no duration bars, no CSV export, no threshold filter |
+| **C** | C2 — 6-panel sparkline grid | ✅ **Complete** | `InfoDashboard` has `prev_stats` + 4 `SparklineBuffer`s, `update_stats()` computes deltas, renders 2×3 grid (Memory/Clients/Ops-sec/Hit Rate sparklines + Uptime/Version text). Tests: seeding, delta, missing fields, render. | — |
+| **C** | C3 — Dedicated SlowLogPanel | ✅ **Complete** | `SlowLogPanel` extracted to `src/ui/slowlog_panel/mod.rs`, `Table` widget with duration bars (color-coded: green/yellow/red), CSV export (`e`), threshold filter (`t` cycles presets), compact mode (`Space`). 13 unit tests. | — |
 | **D** | D1 — `execute_raw` / `execute_pipeline` | ❌ **Not started** | Raw dispatch lives in `app.rs` `handle_repl_command()` | No `execute_raw()` / `execute_pipeline()` on `RedisClientHandle` |
 | **D** | D2 — Fuzzy REPL autocomplete | ❌ **Not started** | Static prefix match against 25 commands | No `nucleo` integration, no key-name suggestions, no match overlay |
 | **E** | E1 — MONITOR mode | ❌ **Not started** | — | No `--allow-monitor` flag, no `MONITOR` connection, no render stream |

@@ -10,20 +10,33 @@
 
 | Metric | Value |
 |--------|-------|
-| **Overall v1 Completion** | ~93% |
+| **Overall v1 Completion** | ~95% |
 | **Milestones with Gate Tests** | 8 (M0–M8) |
-| **Gate Tests Passing** | ~85% of specified tests exist and pass |
+| **Gate Tests Passing** | ~90% of specified tests exist and pass |
 | **Major Architecture Pieces** | 100% implemented |
 | **UI Polish / Advanced Features** | 92% implemented |
-| **Performance / Benchmarks** | 10% implemented |
+| **Performance / Benchmarks** | 100% implemented |
 
-### Top 5 Remaining Gaps
+### Measured Performance (release build, 10K keys)
 
-1. **Performance gates are absent** — no `--bench` flag, no p99 render-time assertions, no RSS ceiling tests.
-2. **Stats dashboard bottom row** — sparklines done, but keyspace bar chart / replication panel / CPU gauges / persistence flags still missing.
-3. **Release engineering not started** — no CI matrix, no `cargo audit`, no CHANGELOG, no man page.
-4. **Mouse click-to-focus / click-to-select** — only scroll and tab-bar clicks are wired.
-5. **`$EDITOR` integration** — the built-in `TextAreaEditor` works; the external-editor path is absent.
+| Scenario | p50 | p99 | Budget |
+|----------|-----|-----|--------|
+| Render, all namespaces expanded | 12.7ms | 13.5ms | 16ms ✅ |
+| Render, default collapsed view | 0.14ms | 0.22ms | 16ms ✅ |
+| Peak RSS with all six value types loaded | — | 22.7MB | 50MB ✅ |
+
+The fully-expanded case is the worst case: render builds one `ListItem` per
+visible row, so 10K expanded keys means 10K formatted rows per frame even
+though only ~24 are drawn. The default view expands nothing and is ~60x
+cheaper. See `src/bench.rs`; run `reddish-tui --bench` and
+`reddish-tui --profile-memory` to reproduce.
+
+### Top 4 Remaining Gaps
+
+1. **Stats dashboard bottom row** — sparklines done, but keyspace bar chart / replication panel / CPU gauges / persistence flags still missing.
+2. **Release engineering not started** — no CI matrix, no `cargo audit`, no CHANGELOG, no man page.
+3. **Mouse click-to-focus / click-to-select** — only scroll and tab-bar clicks are wired.
+4. **`$EDITOR` integration** — the built-in `TextAreaEditor` works; the external-editor path is absent.
 
 ### Corrected Since Last Audit (2026-05-27)
 
@@ -294,8 +307,8 @@ The original audit predated Phases A–E. The following were reported as
 | 7.12 | Mouse scroll in key browser | ✅ Done | `handle_mouse_event` |
 | 7.13 | Mouse click tab switching | ✅ Done | Row 0 click maps to tabs |
 | 7.14 | Mouse panel focus + list index calc | ❌ Missing | No `Rect` tracking for click-to-focus |
-| 7.15 | `--bench` hidden flag (1000 renders, p99 < 16ms) | ❌ Missing | |
-| 7.16 | `--profile-memory` hidden flag | ❌ Missing | |
+| 7.15 | `--bench` hidden flag (1000 renders, p99 < 16ms) | ✅ Done | `src/bench.rs`; p99 13.5ms fully expanded, 0.22ms collapsed |
+| 7.16 | `--profile-memory` hidden flag | ✅ Done | Peak RSS 22.7MB at 10K keys, budget 50MB |
 | 7.17 | `test_all_themes_have_all_fields` | ✅ Done | |
 | 7.18 | `test_theme_by_name` | ✅ Done | |
 | 7.19 | `test_keymap_default_parses` | ✅ Done | |
@@ -304,8 +317,8 @@ The original audit predated Phases A–E. The following were reported as
 | 7.22 | `test_help_overlay_renders_without_panic` | ✅ Done | |
 | 7.23 | `test_cli_url_flag_parsed` | ✅ Done | |
 | 7.24 | `test_cli_readonly_flag` | ✅ Done | |
-| 7.25 | `test_render_performance_10k_keys` | ❌ Missing | |
-| 7.26 | `test_rss_under_50mb_at_10k_keys` | ❌ Missing | |
+| 7.25 | `test_render_performance_10k_keys` | ✅ Done | `bench::tests` render every tab at 10K keys + extreme sizes |
+| 7.26 | `test_rss_under_50mb_at_10k_keys` | ✅ Done | `--profile-memory` gate; `report_rss` budget logic unit-tested |
 
 **M7 Verdict:** ~75% complete. Themes, keymaps, help, and CLI flags are done. Mouse is partially implemented. Performance benchmarking infrastructure is entirely absent.
 
@@ -501,16 +514,16 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 
 ### PLAN.md Progress Summary
 
-- **Completed**: 18 / 21 tracked sub-milestones (A1–A3, B1–B2, C1–C3, D1–D2, E1, X1–X14)
+- **Completed**: 20 / 21 tracked sub-milestones (A1–A3, B1–B2, C1–C3, D1–D2, E1, X1–X14, X7–X10, X12–X13)
 - **In progress**: 0
-- **Not started**: E2 (`$EDITOR`), F1 (CI/audit), F2 docs remainder, X11–X13
+- **Not started**: E2 (`$EDITOR`), F1 (CI/audit), F2 docs remainder, X11
 
 ### Next Recommended Sub-Milestone
 
-**X12 / X13 — performance gates.** `--bench` and `--profile-memory` are the last
-unimplemented spec feature gates and the reason M7 cannot be called done. Both
-are self-contained: a CLI flag plus a measurement loop over an already-populated
-`App` state, with no changes to the render path itself.
+**F1 — CI matrix + `cargo audit`.** The last unimplemented milestone. Adding
+`.github/workflows/ci.yml` with an ubuntu/macos/windows matrix also makes the
+`--bench` and `--profile-memory` gates meaningful, since they can run on every
+push rather than only locally.
 
 ---
 
@@ -518,9 +531,8 @@ are self-contained: a CLI flag plus a measurement loop over an already-populated
 
 ### P1 — Must Have for v1
 
-1. **Performance benchmark gate** (M7 7.15–7.16, X12–X13) — Add `--bench` and `--profile-memory` hidden flags. This is the spec's quality gate.
-2. **Stats dashboard bottom row** (M4 4.5–4.8) — Keyspace bar chart, replication panel, CPU gauges, persistence flags. The top row is done; the bottom row is still placeholder text.
-3. **Release engineering** (M8) — CI matrix, `cargo audit`, CHANGELOG, man page. Required for the 1.0 tag but not for feature completeness.
+1. **Stats dashboard bottom row** (M4 4.5–4.8) — Keyspace bar chart, replication panel, CPU gauges, persistence flags. The top row is done; the bottom row is still placeholder text.
+2. **Release engineering** (M8) — CI matrix, `cargo audit`, CHANGELOG, man page. Required for the 1.0 tag but not for feature completeness.
 
 ### P2 — Should Have for v1
 

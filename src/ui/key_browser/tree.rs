@@ -193,6 +193,17 @@ impl NamespaceTree {
         out
     }
 
+    /// Collapse every namespace back to root. The inverse of `expand_all`.
+    pub fn collapse_all(&mut self) {
+        fn collapse(node: &mut TreeNode) {
+            node.expanded = false;
+            for child in node.children.values_mut() {
+                collapse(child);
+            }
+        }
+        collapse(&mut self.root);
+    }
+
     pub fn expand_all(&mut self) {
         Self::expand_all_nodes(&mut self.root);
     }

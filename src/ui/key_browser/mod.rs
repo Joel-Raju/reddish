@@ -388,7 +388,10 @@ impl KeyBrowser {
     }
 
     pub fn sorted_rows(&self) -> Vec<TreeRow> {
-        let mut rows = self.tree.visible_rows().to_vec();
+        // visible_rows() already returns an owned Vec. Calling .to_vec() on it
+        // deep-cloned every TreeRow (including each KeyEntry's String) on every
+        // frame, which dominated render time at 10K keys.
+        let mut rows = self.tree.visible_rows();
         if self.sort_mode != SortMode::Alpha {
             rows.sort_by(|a, b| {
                 match (a.is_namespace, b.is_namespace) {

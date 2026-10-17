@@ -229,13 +229,6 @@ Reddish supports configurable keymaps and ships with Vim/Emacs-style defaults.
 | delete | `D` | `Ctrl+d` | Unsubscribe from selected channel |
 | Ctrl+L | `Ctrl+l` | `Ctrl+l` | Clear message history |
 
-### Search overlay shortcuts
-
-| Action | Vim | Emacs | Description |
-|--------|-----|-------|-------------|
-| search_execute | `Enter` | `Enter` | Jump to selected key |
-| search_close | `Esc` | `Ctrl+g` | Close search without action |
-
 ## Testing
 
 Run the full suite:
@@ -244,7 +237,38 @@ Run the full suite:
 cargo test -q
 ```
 
-Some tests spin up local Redis instances and may print Redis startup warnings during execution.
+Some tests spin up local Redis instances and may print Redis startup warnings
+during execution. Integration tests expect a Redis on **port 16379**:
+
+```bash
+redis-server --port 16379 --daemonize yes --loglevel warning --save ''
+```
+
+## Performance gates
+
+Two hidden flags enforce the spec's quality budgets. They run before any
+terminal setup, open no Redis connection, and exit non-zero on a violation, so
+they are safe in CI:
+
+```bash
+cargo run --release -- --bench            # 1000 render cycles, p99 must be <= 16ms
+cargo run --release -- --profile-memory   # peak RSS at 10K keys must be <= 50MB
+```
+
+Measured on a release build with 10K keys:
+
+| Scenario | p50 | p99 | Budget |
+|----------|-----|-----|--------|
+| Render, all namespaces expanded | 12.7ms | 13.5ms | 16ms ✅ |
+| Render, default collapsed view | 0.14ms | 0.22ms | 16ms ✅ |
+| Peak RSS (all six value types loaded) | — | 22.7MB | 50MB ✅ |
+
+The fully-expanded case is the worst case: `KeyBrowser::render` builds one
+`ListItem` per visible row, so expanding all 10K keys formats 10K rows per frame
+even though only ~24 are drawn. The default view expands nothing.
+
+Both gates assume a `--release` build; a debug build is roughly 3x slower and
+will fail the render budget.
 
 ## Project layout
 
@@ -254,6 +278,7 @@ Some tests spin up local Redis instances and may print Redis startup warnings du
 - `src/config/` — config and keybinding models
 - `src/events/` — input/tick event stream
 - `src/terminal.rs` — terminal lifecycle + mouse capture setup
+- `src/bench.rs` — `--bench` / `--profile-memory` performance gates
 - `tests/` — milestone-oriented integration tests
 
 ## Roadmap

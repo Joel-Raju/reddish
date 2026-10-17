@@ -5,7 +5,7 @@ use color_eyre::Result;
 use serde::Deserialize;
 use std::path::PathBuf;
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct Config {
     pub namespace_separator: Option<String>,
     pub scan_count: Option<u32>,

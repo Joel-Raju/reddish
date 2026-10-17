@@ -2,6 +2,7 @@ use clap::Parser;
 use color_eyre::Result;
 use reddish_tui::{
     app::App,
+    bench,
     config::{
         Config,
         connections::{ConnectionMode, ConnectionProfile, ConnectionStore, PasswordRef},
@@ -26,6 +27,14 @@ struct Cli {
     theme: Option<String>,
     #[arg(long, help = "Allow MONITOR mode (opens a separate connection)")]
     allow_monitor: bool,
+    /// Run 1000 render cycles against a synthetic 10K-key state and report
+    /// render-time percentiles. Exits non-zero if p99 exceeds the budget.
+    #[arg(long, hide = true)]
+    bench: bool,
+    /// Populate 10K keys and report peak resident set size. Exits non-zero if
+    /// RSS exceeds the budget.
+    #[arg(long, hide = true)]
+    profile_memory: bool,
 }
 
 fn main() -> Result<()> {
@@ -39,6 +48,16 @@ fn main() -> Result<()> {
     }
 
     logging::init_logging(&config)?;
+
+    // Hidden performance gates. These run before any terminal setup so they
+    // never touch raw mode or the alternate screen, making them safe in CI.
+    // A budget violation exits with code 1 so the gates can fail a build.
+    if cli.bench {
+        std::process::exit(i32::from(!bench::run_bench(config)));
+    }
+    if cli.profile_memory {
+        std::process::exit(i32::from(!bench::run_profile_memory(config)));
+    }
 
     let mut term = terminal::init_terminal()?;
 

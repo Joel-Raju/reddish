@@ -1159,6 +1159,26 @@ impl App {
                     self.reload_inspector_value(&key).await;
                 }
             }
+            InspectorAction::ListInsert {
+                key,
+                pivot,
+                value,
+                before,
+            } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    if let Err(err) = client.list_insert(&key, before, &pivot, &value).await {
+                        let msg = if before { "BEFORE" } else { "AFTER" };
+                        self.error_message =
+                            Some(format!("Failed to insert {msg} '{pivot}': {err}"));
+                        return;
+                    }
+                    self.reload_inspector_value(&key).await;
+                }
+            }
             InspectorAction::HashSet { key, field, value } => {
                 if self.readonly {
                     self.error_message = Some("Read-only mode: write blocked".to_string());
@@ -1301,6 +1321,39 @@ impl App {
                         }
                     }
                 }
+            }
+            InspectorAction::StreamTrim {
+                key,
+                strategy,
+                threshold,
+                approximate,
+            } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    if let Err(err) = client
+                        .xtrim(&key, &strategy, &threshold, approximate)
+                        .await
+                    {
+                        self.error_message =
+                            Some(format!("Failed to XTRIM '{key}': {err}"));
+                        return;
+                    }
+                    self.reload_inspector_value(&key).await;
+                }
+            }
+            InspectorAction::StreamRefresh => {
+                if let Some(ref key) = self.value_inspector.key.clone()
+                    && self.client.is_some()
+                {
+                    self.reload_inspector_value(key).await;
+                }
+            }
+            InspectorAction::InvalidInput(msg) => {
+                self.status_bar.push_error(msg.clone());
+                self.error_message = Some(msg);
             }
             InspectorAction::CopyValue(val) => {
                 #[cfg(not(test))]

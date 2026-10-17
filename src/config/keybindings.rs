@@ -67,6 +67,8 @@ pub struct Keymap {
     pub inspector_list_push: KeyDef,
     #[serde(default = "default_inspector_list_prepend")]
     pub inspector_list_prepend: KeyDef,
+    #[serde(default = "default_inspector_list_insert")]
+    pub inspector_list_insert: KeyDef,
     #[serde(default = "default_inspector_hash_add")]
     pub inspector_hash_add: KeyDef,
     #[serde(default = "default_inspector_hash_filter")]
@@ -83,6 +85,8 @@ pub struct Keymap {
     pub inspector_stream_add: KeyDef,
     #[serde(default = "default_inspector_stream_groups")]
     pub inspector_stream_groups: KeyDef,
+    #[serde(default = "default_inspector_stream_trim")]
+    pub inspector_stream_trim: KeyDef,
     #[serde(default = "default_inspector_toggle_view")]
     pub inspector_toggle_view: KeyDef,
     #[serde(default = "default_inspector_goto_end")]
@@ -147,6 +151,7 @@ impl Keymap {
             confirm_no: KeyDef { key: "n".to_string() },
             inspector_list_push: KeyDef { key: "a".to_string() },
             inspector_list_prepend: KeyDef { key: "p".to_string() },
+            inspector_list_insert: KeyDef { key: "i".to_string() },
             inspector_hash_add: KeyDef { key: "a".to_string() },
             inspector_hash_filter: KeyDef { key: "/".to_string() },
             delete_selected: KeyDef { key: "ctrl+d".to_string() },
@@ -155,6 +160,7 @@ impl Keymap {
             inspector_zset_range_query: KeyDef { key: "q".to_string() },
             inspector_stream_add: KeyDef { key: "a".to_string() },
             inspector_stream_groups: KeyDef { key: "G".to_string() },
+            inspector_stream_trim: KeyDef { key: "ctrl+t".to_string() },
             inspector_toggle_view: KeyDef { key: "f".to_string() },
             inspector_goto_end: KeyDef { key: "g".to_string() },
             set_union: KeyDef { key: "u".to_string() },
@@ -200,6 +206,7 @@ impl Keymap {
             confirm_no: KeyDef { key: "n".to_string() },
             inspector_list_push: KeyDef { key: "ctrl+shift+a".to_string() },
             inspector_list_prepend: KeyDef { key: "ctrl+shift+p".to_string() },
+            inspector_list_insert: KeyDef { key: "ctrl+shift+i".to_string() },
             inspector_hash_add: KeyDef { key: "ctrl+shift+h".to_string() },
             inspector_hash_filter: KeyDef { key: "ctrl+shift+f".to_string() },
             delete_selected: KeyDef { key: "ctrl+shift+d".to_string() },
@@ -208,6 +215,7 @@ impl Keymap {
             inspector_zset_range_query: KeyDef { key: "ctrl+shift+q".to_string() },
             inspector_stream_add: KeyDef { key: "ctrl+shift+x".to_string() },
             inspector_stream_groups: KeyDef { key: "ctrl+shift+m".to_string() },
+            inspector_stream_trim: KeyDef { key: "ctrl+shift+t".to_string() },
             inspector_toggle_view: KeyDef { key: "ctrl+shift+f".to_string() },
             inspector_goto_end: KeyDef { key: "ctrl+shift+g".to_string() },
             set_union: KeyDef { key: "ctrl+u".to_string() },
@@ -253,6 +261,7 @@ impl Keymap {
             "confirm_no" => &self.confirm_no,
             "inspector_list_push" => &self.inspector_list_push,
             "inspector_list_prepend" => &self.inspector_list_prepend,
+            "inspector_list_insert" => &self.inspector_list_insert,
             "inspector_hash_add" => &self.inspector_hash_add,
             "inspector_hash_filter" => &self.inspector_hash_filter,
             "delete_selected" => &self.delete_selected,
@@ -261,6 +270,7 @@ impl Keymap {
             "inspector_zset_range_query" => &self.inspector_zset_range_query,
             "inspector_stream_add" => &self.inspector_stream_add,
             "inspector_stream_groups" => &self.inspector_stream_groups,
+            "inspector_stream_trim" => &self.inspector_stream_trim,
             "inspector_toggle_view" => &self.inspector_toggle_view,
             "inspector_goto_end" => &self.inspector_goto_end,
             "set_union" => &self.set_union,
@@ -430,6 +440,9 @@ fn default_inspector_list_push() -> KeyDef {
 fn default_inspector_list_prepend() -> KeyDef {
     KeyDef { key: "p".to_string() }
 }
+fn default_inspector_list_insert() -> KeyDef {
+    KeyDef { key: "i".to_string() }
+}
 fn default_inspector_hash_add() -> KeyDef {
     KeyDef { key: "a".to_string() }
 }
@@ -453,6 +466,9 @@ fn default_inspector_stream_add() -> KeyDef {
 }
 fn default_inspector_stream_groups() -> KeyDef {
     KeyDef { key: "G".to_string() }
+}
+fn default_inspector_stream_trim() -> KeyDef {
+    KeyDef { key: "ctrl+t".to_string() }
 }
 fn default_inspector_toggle_view() -> KeyDef {
     KeyDef { key: "f".to_string() }

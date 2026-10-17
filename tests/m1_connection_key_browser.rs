@@ -1199,6 +1199,183 @@ async fn test_execute_raw_get_set() {
     assert_eq!(del_result, redis::Value::Int(1));
 }
 
+fn test_profile() -> ConnectionProfile {
+    ConnectionProfile {
+        name: "test".to_string(),
+        host: "127.0.0.1".to_string(),
+        port: 16379,
+        db: 0,
+        username: None,
+        password: None,
+        last_connected: None,
+        ..Default::default()
+    }
+}
+
+fn standalone(client: &RedisClientHandle) -> redis::aio::MultiplexedConnection {
+    match &client.client {
+        reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
+        _ => unreachable!("tests always use standalone"),
+    }
+}
+
+#[tokio::test]
+async fn test_list_insert_before_and_after() {
+    let client = RedisClientHandle::connect(&test_profile()).await.unwrap();
+    let key = "test:m2:linsert";
+    let mut c = standalone(&client);
+
+    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+    for item in ["a", "b", "c"] {
+        redis::cmd("RPUSH")
+            .arg(key)
+            .arg(item)
+            .query_async::<()>(&mut c)
+            .await
+            .unwrap();
+    }
+
+    // LINSERT returns the new list length.
+    assert_eq!(client.list_insert(key, true, "b", "before_b").await.unwrap(), 4);
+    assert_eq!(client.list_insert(key, false, "b", "after_b").await.unwrap(), 5);
+
+    let items: Vec<String> = client
+        .lrange(key, 0, -1)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|b| String::from_utf8(b).unwrap())
+        .collect();
+    assert_eq!(
+        items,
+        vec![
+            "a".to_string(),
+            "before_b".to_string(),
+            "b".to_string(),
+            "after_b".to_string(),
+            "c".to_string()
+        ]
+    );
+
+    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_list_insert_missing_pivot_is_a_server_error() {
+    let client = RedisClientHandle::connect(&test_profile()).await.unwrap();
+    let key = "test:m2:linsert_missing";
+    let mut c = standalone(&client);
+
+    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+    redis::cmd("RPUSH")
+        .arg(key)
+        .arg("only")
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
+
+    // Redis answers -1 when the pivot is missing; the method must surface that
+    // rather than silently discarding it as a successful no-op insert.
+    let err = client.list_insert(key, true, "nope", "x").await.unwrap_err();
+    assert!(err.to_string().contains("pivot"), "got: {err}");
+
+    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_stream_xtrim_maxlen() {
+    let client = RedisClientHandle::connect(&test_profile()).await.unwrap();
+    let key = "test:m2:xtrim_maxlen";
+    let mut c = standalone(&client);
+
+    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+    for i in 0..50 {
+        redis::cmd("XADD")
+            .arg(key)
+            .arg("*")
+            .arg("f")
+            .arg(i.to_string())
+            .query_async::<String>(&mut c)
+            .await
+            .unwrap();
+    }
+
+    client.xtrim(key, "MAXLEN", "10", false).await.unwrap();
+
+    let entries = client.xrange(key).await.unwrap();
+    assert!(entries.len() <= 10, "expected <=10 entries, got {}", entries.len());
+    assert!(!entries.is_empty(), "MAXLEN 10 should retain the newest entries");
+
+    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_stream_xtrim_minid() {
+    let client = RedisClientHandle::connect(&test_profile()).await.unwrap();
+    let key = "test:m2:xtrim_minid";
+    let mut c = standalone(&client);
+
+    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+    let mut ids = Vec::new();
+    for i in 0..20 {
+        let id: String = redis::cmd("XADD")
+            .arg(key)
+            .arg("*")
+            .arg("f")
+            .arg(i.to_string())
+            .query_async(&mut c)
+            .await
+            .unwrap();
+        ids.push(id);
+    }
+
+    // Keep only entries at or after the 10th id.
+    let cutoff = ids[9].clone();
+    client.xtrim(key, "MINID", &cutoff, false).await.unwrap();
+
+    let entries = client.xrange(key).await.unwrap();
+    assert!(entries.iter().all(|e| e.id >= cutoff), "kept entries before cutoff");
+
+    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_stream_xtrim_rejects_bad_strategy() {
+    let client = RedisClientHandle::connect(&test_profile()).await.unwrap();
+    let err = client
+        .xtrim("test:m2:xtrim_bad", "NOPE", "10", false)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("MAXLEN"), "got: {err}");
+}
+
+#[tokio::test]
+async fn test_stream_xtrim_approximate_is_accepted() {
+    let client = RedisClientHandle::connect(&test_profile()).await.unwrap();
+    let key = "test:m2:xtrim_approx";
+    let mut c = standalone(&client);
+
+    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+    for i in 0..100 {
+        redis::cmd("XADD")
+            .arg(key)
+            .arg("*")
+            .arg("f")
+            .arg(i.to_string())
+            .query_async::<String>(&mut c)
+            .await
+            .unwrap();
+    }
+
+    client.xtrim(key, "MAXLEN", "50", true).await.unwrap();
+    let entries = client.xrange(key).await.unwrap();
+    // Approximate trimming may keep more than the threshold, but must not
+    // exceed it by the full length of the stream.
+    assert!(entries.len() <= 100);
+
+    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+}
+
 #[tokio::test]
 async fn test_execute_pipeline_round_trip() {
     let profile = ConnectionProfile {

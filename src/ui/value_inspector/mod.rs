@@ -215,6 +215,12 @@ pub enum InspectorAction {
     ListPush { key: String, value: String, head: bool },
     ListSet { key: String, index: i64, value: String },
     ListRemove { key: String, value: String },
+    ListInsert {
+        key: String,
+        pivot: String,
+        value: String,
+        before: bool,
+    },
     HashSet { key: String, field: String, value: String },
     HashDel { key: String, field: String },
     /// Bulk delete of every currently selected hash field in one HDEL.
@@ -225,6 +231,16 @@ pub enum InspectorAction {
     ZRem { key: String, member: String },
     StreamAdd { key: String, entry_id: String, fields: Vec<(String, String)> },
     StreamRem { key: String, entry_id: String },
+    StreamTrim {
+        key: String,
+        strategy: String,
+        threshold: String,
+        approximate: bool,
+    },
+    /// Reload the current stream value (used by follow mode).
+    StreamRefresh,
+    /// Client-side validation failure; surfaces in the status bar, no I/O.
+    InvalidInput(String),
     StreamToggleGroups,
     CopyValue(String),
 }
@@ -234,6 +250,10 @@ pub enum PromptMode {
     Rpush,
     Lpush,
     Lset(usize),
+    /// Step 1 of list insert: awaiting BEFORE/AFTER choice. Holds the pivot.
+    ListInsertPosition(String),
+    /// Step 2 of list insert: awaiting the value to insert.
+    ListInsertValue { pivot: String, before: bool },
     HashAddField,
     HashAddValue(String),
     HashEdit(String, usize),
@@ -247,6 +267,10 @@ pub enum PromptMode {
     ZSetScoreMax(String),
     StreamAddId,
     StreamAddFields(String),
+    /// Step 1 of XTRIM: awaiting MAXLEN or MINID.
+    StreamTrimStrategy,
+    /// Step 2 of XTRIM: awaiting the threshold value.
+    StreamTrimThreshold(String),
     SetTtlSeconds,
 }
 
@@ -501,6 +525,22 @@ impl ValueInspector {
                         index: idx as i64,
                         value: val,
                     }),
+                    Some(PromptMode::ListInsertPosition(pivot)) => {
+                        // Accept b/B/a/A; anything else falls back to AFTER so
+                        // the two-step prompt can never dead-end.
+                        let before = matches!(val.trim(), "b" | "B" | "before");
+                        self.list_prompt = Some(InputWidget::new("Value to insert"));
+                        self.prompt_mode = Some(PromptMode::ListInsertValue { pivot, before });
+                        None
+                    }
+                    Some(PromptMode::ListInsertValue { pivot, before }) => {
+                        Some(InspectorAction::ListInsert {
+                            key,
+                            pivot,
+                            value: val,
+                            before,
+                        })
+                    }
                     Some(PromptMode::HashAddField) => {
                         // First step done, now prompt for value
                         self.list_prompt = Some(InputWidget::new(format!("Value for '{}'", val)));
@@ -560,6 +600,40 @@ impl ValueInspector {
                             }
                         }
                         Some(InspectorAction::StreamAdd { key, entry_id, fields })
+                    }
+                    Some(PromptMode::StreamTrimStrategy) => {
+                        let strategy = val.trim().to_ascii_uppercase();
+                        if strategy == "MAXLEN" || strategy == "MINID" {
+                            let label = if strategy == "MAXLEN" {
+                                "Approx max length (number)"
+                            } else {
+                                "Minimum id (e.g. 1526984818136-0)"
+                            };
+                            self.list_prompt = Some(InputWidget::new(label));
+                            self.prompt_mode = Some(PromptMode::StreamTrimThreshold(strategy));
+                            None
+                        } else {
+                            // Invalid strategy: report through the status bar
+                            // rather than silently sending a bad command.
+                            Some(InspectorAction::InvalidInput(
+                                "XTRIM strategy must be MAXLEN or MINID".to_string(),
+                            ))
+                        }
+                    }
+                    Some(PromptMode::StreamTrimThreshold(strategy)) => {
+                        let threshold = val.trim().to_string();
+                        if threshold.is_empty() {
+                            Some(InspectorAction::InvalidInput(
+                                "XTRIM requires a threshold".to_string(),
+                            ))
+                        } else {
+                            Some(InspectorAction::StreamTrim {
+                                key,
+                                strategy,
+                                threshold,
+                                approximate: false,
+                            })
+                        }
                     }
                     Some(PromptMode::SetTtlSeconds) => {
                         if val.trim().is_empty() {
@@ -634,6 +708,12 @@ impl ValueInspector {
             if keymap.matches("inspector_list_push", key) {
                 self.list_prompt = Some(InputWidget::new("Value to RPUSH"));
                 self.prompt_mode = Some(PromptMode::Rpush);
+            } else if keymap.matches("inspector_list_insert", key) {
+                if let Some(pivot) = items.get(self.list_cursor) {
+                    self.list_prompt =
+                        Some(InputWidget::new("Insert [b]efore or [a]fter this element?"));
+                    self.prompt_mode = Some(PromptMode::ListInsertPosition(pivot.clone()));
+                }
             } else if keymap.matches("inspector_list_prepend", key) {
                 self.list_prompt = Some(InputWidget::new("Value to LPUSH"));
                 self.prompt_mode = Some(PromptMode::Lpush);
@@ -840,6 +920,10 @@ impl ValueInspector {
                 }
             } else if keymap.matches("inspector_stream_groups", key) {
                 return Some(InspectorAction::StreamToggleGroups);
+            } else if keymap.matches("inspector_stream_trim", key) {
+                self.list_prompt =
+                    Some(InputWidget::new("Trim strategy: MAXLEN or MINID"));
+                self.prompt_mode = Some(PromptMode::StreamTrimStrategy);
             } else if keymap.matches("copy", key)
                 && let Some(entry) = entries.get(self.stream_cursor)
             {
@@ -978,23 +1062,20 @@ impl ValueInspector {
         }
 
         if let Some(ref prompt) = self.list_prompt {
-            let prompt_label = match self.prompt_mode {
-                Some(PromptMode::Rpush) => "RPUSH value:",
-                Some(PromptMode::Lpush) => "LPUSH value:",
-                Some(PromptMode::Lset(idx)) => &format!("LSET [{}] =", idx),
-                _ => "Input:",
-            };
-            let prompt_text = format!(
-                "{} {}{}",
-                prompt_label,
-                prompt.value,
-                if prompt.cursor >= prompt.value.len() {
-                    "_"
-                } else {
-                    " "
+            let label = match self.prompt_mode {
+                Some(PromptMode::Rpush) => "RPUSH value:".to_string(),
+                Some(PromptMode::Lpush) => "LPUSH value:".to_string(),
+                Some(PromptMode::Lset(idx)) => format!("LSET [{idx}] ="),
+                Some(PromptMode::ListInsertPosition(ref pivot)) => {
+                    format!("Insert before/after '{pivot}' (b/a): ")
                 }
-            );
-            text.push_str(&format!("\n{}", prompt_text));
+                Some(PromptMode::ListInsertValue { ref pivot, before }) => format!(
+                    "Insert {} '{pivot}': ",
+                    if before { "BEFORE" } else { "AFTER" }
+                ),
+                _ => "Input:".to_string(),
+            };
+            text.push_str(&format!("\n{} {}", label, prompt_display(prompt)));
         }
 
         let block = Block::default()
@@ -1213,15 +1294,12 @@ impl ValueInspector {
             if let Some(ref prompt) = self.list_prompt {
                 let prompt_label = match self.prompt_mode {
                     Some(PromptMode::StreamAddId) => "Entry ID: ",
+                    Some(PromptMode::StreamTrimStrategy) => "Trim strategy (MAXLEN/MINID): ",
+                    Some(PromptMode::StreamTrimThreshold(ref s)) => &format!("XTRIM {s} threshold: "),
                     Some(PromptMode::StreamAddFields(_)) => "Fields: ",
                     _ => "Input: ",
                 };
-                text.push_str(&format!(
-                    "\n{}{}{}",
-                    prompt_label,
-                    prompt.value,
-                    if prompt.cursor >= prompt.value.len() { "_" } else { " " }
-                ));
+                text.push_str(&format!("\n{} {}", prompt_label, prompt_display(prompt)));
             }
             let block = Block::default()
                 .borders(Borders::ALL)
@@ -1287,15 +1365,12 @@ impl ValueInspector {
             if let Some(ref prompt) = self.list_prompt {
                 let prompt_label = match self.prompt_mode {
                     Some(PromptMode::StreamAddId) => "Entry ID: ",
+                    Some(PromptMode::StreamTrimStrategy) => "Trim strategy (MAXLEN/MINID): ",
+                    Some(PromptMode::StreamTrimThreshold(ref s)) => &format!("XTRIM {s} threshold: "),
                     Some(PromptMode::StreamAddFields(_)) => "Fields: ",
                     _ => "Input: ",
                 };
-                text.push_str(&format!(
-                    "\n{}{}{}",
-                    prompt_label,
-                    prompt.value,
-                    if prompt.cursor >= prompt.value.len() { "_" } else { " " }
-                ));
+                text.push_str(&format!("\n{} {}", prompt_label, prompt_display(prompt)));
             }
 
             let block = Block::default()
@@ -1381,6 +1456,218 @@ fn render_value_preview(value: &RedisValue, view_mode: &StringViewMode) -> Strin
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    // ---- List insert (2.9) ----
+
+    fn list_inspector() -> ValueInspector {
+        let mut inspector = ValueInspector::new();
+        inspector.set_value(
+            "l".to_string(),
+            RedisValue::List(vec!["a".to_string(), "b".to_string()]),
+        );
+        inspector
+    }
+
+    fn stream_inspector() -> ValueInspector {
+        let mut inspector = ValueInspector::new();
+        inspector.set_value(
+            "s".to_string(),
+            RedisValue::Stream(vec![
+                StreamEntry {
+                    id: "1-0".to_string(),
+                    fields: [("f".to_string(), "v".to_string())].into(),
+                },
+                StreamEntry {
+                    id: "2-0".to_string(),
+                    fields: [("f".to_string(), "v".to_string())].into(),
+                },
+            ]),
+        );
+        inspector
+    }
+
+    #[test]
+    fn list_insert_opens_position_prompt_on_cursor_item() {
+        let mut inspector = list_inspector();
+        inspector.handle_event(&press(KeyCode::Char('i')));
+        assert_eq!(
+            inspector.prompt_mode,
+            Some(PromptMode::ListInsertPosition("a".to_string()))
+        );
+    }
+
+    #[test]
+    fn list_insert_position_b_then_value_emits_before_action() {
+        let mut inspector = list_inspector();
+        inspector.handle_event(&press(KeyCode::Char('i')));
+        inspector.handle_event(&press(KeyCode::Char('b')));
+        // Submit the position, then supply the value.
+        inspector.handle_event(&press(KeyCode::Enter));
+        assert_eq!(
+            inspector.prompt_mode,
+            Some(PromptMode::ListInsertValue {
+                pivot: "a".to_string(),
+                before: true
+            })
+        );
+        inspector.list_prompt.as_mut().unwrap().value = "x".to_string();
+        match inspector.handle_event(&press(KeyCode::Enter)) {
+            Some(InspectorAction::ListInsert {
+                key,
+                pivot,
+                value,
+                before,
+            }) => {
+                assert_eq!(key, "l");
+                assert_eq!(pivot, "a");
+                assert_eq!(value, "x");
+                assert!(before);
+            }
+            other => panic!("expected ListInsert, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn list_insert_position_a_then_value_emits_after_action() {
+        let mut inspector = list_inspector();
+        inspector.handle_event(&press(KeyCode::Char('i')));
+        inspector.handle_event(&press(KeyCode::Char('a')));
+        inspector.handle_event(&press(KeyCode::Enter));
+        inspector.list_prompt.as_mut().unwrap().value = "y".to_string();
+        match inspector.handle_event(&press(KeyCode::Enter)) {
+            Some(InspectorAction::ListInsert { before, pivot, .. }) => {
+                assert!(!before);
+                assert_eq!(pivot, "a");
+            }
+            other => panic!("expected ListInsert, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn list_insert_unrecognized_position_defaults_to_after() {
+        let mut inspector = list_inspector();
+        inspector.handle_event(&press(KeyCode::Char('i')));
+        inspector.handle_event(&press(KeyCode::Char('z')));
+        inspector.handle_event(&press(KeyCode::Enter));
+        inspector.list_prompt.as_mut().unwrap().value = "y".to_string();
+        match inspector.handle_event(&press(KeyCode::Enter)) {
+            Some(InspectorAction::ListInsert { before, .. }) => assert!(!before),
+            other => panic!("expected ListInsert, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn list_insert_targets_second_element_after_navigation() {
+        let mut inspector = list_inspector();
+        inspector.handle_event(&press(KeyCode::Char('j')));
+        inspector.handle_event(&press(KeyCode::Char('i')));
+        assert_eq!(
+            inspector.prompt_mode,
+            Some(PromptMode::ListInsertPosition("b".to_string()))
+        );
+    }
+
+    #[test]
+    fn list_insert_on_empty_list_does_nothing() {
+        let mut inspector = ValueInspector::new();
+        inspector.set_value("l".to_string(), RedisValue::List(vec![]));
+        inspector.handle_event(&press(KeyCode::Char('i')));
+        assert_eq!(inspector.prompt_mode, None);
+    }
+
+    // ---- Stream XTRIM (2.20) ----
+
+    #[test]
+    fn stream_trim_opens_strategy_prompt() {
+        let mut inspector = stream_inspector();
+        inspector.handle_event(&ctrl('t'));
+        assert_eq!(inspector.prompt_mode, Some(PromptMode::StreamTrimStrategy));
+    }
+
+    #[test]
+    fn stream_trim_maxlen_then_threshold_emits_action() {
+        let mut inspector = stream_inspector();
+        inspector.handle_event(&ctrl('t'));
+        inspector.list_prompt.as_mut().unwrap().value = "MAXLEN".to_string();
+        inspector.handle_event(&press(KeyCode::Enter));
+        inspector.list_prompt.as_mut().unwrap().value = "100".to_string();
+        match inspector.handle_event(&press(KeyCode::Enter)) {
+            Some(InspectorAction::StreamTrim {
+                key,
+                strategy,
+                threshold,
+                ..
+            }) => {
+                assert_eq!(key, "s");
+                assert_eq!(strategy, "MAXLEN");
+                assert_eq!(threshold, "100");
+            }
+            other => panic!("expected StreamTrim, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stream_trim_accepts_lowercase_strategy() {
+        let mut inspector = stream_inspector();
+        inspector.handle_event(&ctrl('t'));
+        inspector.list_prompt.as_mut().unwrap().value = "minid".to_string();
+        inspector.handle_event(&press(KeyCode::Enter));
+        inspector.list_prompt.as_mut().unwrap().value = "1000-0".to_string();
+        match inspector.handle_event(&press(KeyCode::Enter)) {
+            Some(InspectorAction::StreamTrim { strategy, threshold, .. }) => {
+                assert_eq!(strategy, "MINID");
+                assert_eq!(threshold, "1000-0");
+            }
+            other => panic!("expected StreamTrim, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stream_trim_rejects_unknown_strategy() {
+        let mut inspector = stream_inspector();
+        inspector.handle_event(&ctrl('t'));
+        inspector.list_prompt.as_mut().unwrap().value = "BOGUS".to_string();
+        match inspector.handle_event(&press(KeyCode::Enter)) {
+            Some(InspectorAction::InvalidInput(msg)) => {
+                assert!(msg.contains("MAXLEN"), "got: {msg}");
+            }
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stream_trim_rejects_empty_threshold() {
+        let mut inspector = stream_inspector();
+        inspector.handle_event(&ctrl('t'));
+        inspector.list_prompt.as_mut().unwrap().value = "MAXLEN".to_string();
+        inspector.handle_event(&press(KeyCode::Enter));
+        match inspector.handle_event(&press(KeyCode::Enter)) {
+            Some(InspectorAction::InvalidInput(msg)) => {
+                assert!(msg.contains("threshold"), "got: {msg}");
+            }
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn render_stream_with_trim_prompt_does_not_panic() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut inspector = stream_inspector();
+        inspector.handle_event(&ctrl('t'));
+        terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+    }
+
+    #[test]
+    fn render_list_with_insert_prompt_does_not_panic() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut inspector = list_inspector();
+        inspector.handle_event(&press(KeyCode::Char('i')));
+        terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+    }
 
     // ---- Hash filter + bulk select (2.11, 2.12) ----
 

@@ -809,6 +809,46 @@ impl RedisClientHandle {
         Ok(())
     }
 
+    /// Insert `value` relative to `pivot` via LINSERT.
+///
+/// `before` selects LINSERT ... BEFORE, otherwise ... AFTER.
+///
+/// Returns the resulting list length. Redis answers `-1` when `pivot` does not
+/// exist; that is surfaced as an error rather than silently discarded, since a
+/// discarded `-1` would leave the user with an insert that did nothing.
+pub async fn list_insert(
+        &self,
+        key: &str,
+        before: bool,
+        pivot: &str,
+        value: &str,
+    ) -> Result<usize> {
+        let position = if before { "BEFORE" } else { "AFTER" };
+        let mut cmd = redis::cmd("LINSERT");
+        cmd.arg(key).arg(position).arg(pivot).arg(value);
+
+        let len: i64 = match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(Duration::from_secs(5), cmd.query_async(&mut c))
+                    .await
+                    .map_err(|_| color_eyre::eyre::eyre!("LINSERT timeout"))??
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                tokio::time::timeout(Duration::from_secs(5), cmd.query_async(&mut c))
+                    .await
+                    .map_err(|_| color_eyre::eyre::eyre!("LINSERT timeout"))??
+            }
+        };
+        if len < 0 {
+            return Err(color_eyre::eyre::eyre!(
+                "LINSERT: pivot '{pivot}' not found in list '{key}'"
+            ));
+        }
+        Ok(len as usize)
+    }
+
     pub async fn list_remove(&self, key: &str, value: &str) -> Result<()> {
         match &self.client {
             RedisClient::Standalone(conn) => {
@@ -1116,6 +1156,53 @@ impl RedisClientHandle {
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("XDEL timeout"))??;
+            }
+        }
+        Ok(())
+    }
+
+    /// Trim a stream via XTRIM.
+    ///
+    /// `strategy` is `MAXLEN` or `MINID` (case-insensitive). `approximate`
+    /// prefixes the threshold with `~`, letting Redis trim at radix-tree
+    /// boundaries for lower latency.
+    pub async fn xtrim(
+        &self,
+        key: &str,
+        strategy: &str,
+        threshold: &str,
+        approximate: bool,
+    ) -> Result<()> {
+        let strategy = strategy.to_ascii_uppercase();
+        if strategy != "MAXLEN" && strategy != "MINID" {
+            return Err(color_eyre::eyre::eyre!(
+                "XTRIM strategy must be MAXLEN or MINID, got '{strategy}'"
+            ));
+        }
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let mut cmd = redis::cmd("XTRIM");
+                cmd.arg(key).arg(&strategy);
+                if approximate {
+                    cmd.arg("~");
+                }
+                cmd.arg(threshold);
+                tokio::time::timeout(Duration::from_secs(5), cmd.query_async::<()>(&mut c))
+                    .await
+                    .map_err(|_| color_eyre::eyre::eyre!("XTRIM timeout"))??;
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                let mut cmd = redis::cmd("XTRIM");
+                cmd.arg(key).arg(&strategy);
+                if approximate {
+                    cmd.arg("~");
+                }
+                cmd.arg(threshold);
+                tokio::time::timeout(Duration::from_secs(5), cmd.query_async::<()>(&mut c))
+                    .await
+                    .map_err(|_| color_eyre::eyre::eyre!("XTRIM timeout"))??;
             }
         }
         Ok(())

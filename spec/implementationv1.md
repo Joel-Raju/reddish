@@ -118,7 +118,7 @@ The original audit predated Phases A–E. The following were reported as
 | 2.6 | Inline string edit (`e` → TextAreaEditor) | ✅ Done | |
 | 2.7 | `$EDITOR` integration (temp file + spawn) | ❌ Missing | Only built-in editor exists |
 | 2.8 | List: `a` RPUSH, `p` LPUSH, `e` LSET, `D` LREM | ✅ Done | |
-| 2.9 | List: `i` insert before/after | ❌ Missing | Not implemented |
+| 2.9 | List: `i` insert before/after | ✅ Done | Two-step prompt → `LINSERT`; `i` / `ctrl+shift+i` |
 | 2.10 | Hash: `a` add, `e` edit, `D` delete | ✅ Done | |
 | 2.11 | Hash: bulk multi-select (`Space` + `Ctrl+D`) | ✅ Done | `hash_selected` + `InspectorAction::HashDelMany` (single HDEL) |
 | 2.12 | Hash: field filter (`/`) | ✅ Done | `hash_filter` substring match; Esc clears |
@@ -129,7 +129,7 @@ The original audit predated Phases A–E. The following were reported as
 | 2.17 | Stream: `a` XADD, `D` XDEL | ✅ Done | |
 | 2.18 | Stream: follow mode (`f` auto-reload on tick) | ❌ Missing | `stream_compact` toggle exists, but no tick-driven reload |
 | 2.19 | Stream: consumer group panel (`g`) | ✅ Done | `G` toggles split-pane groups table via `client.xgroups()` |
-| 2.20 | Stream: XTRIM form (`Ctrl+T`) | ❌ Missing | |
+| 2.20 | Stream: XTRIM form (`Ctrl+T`) | ✅ Done | Two-step MAXLEN/MINID prompt; strategy validated |
 | 2.21 | Metadata display (encoding, memory, TTL) | ✅ Done | `set_metadata` on inspector |
 | 2.22 | TTL colored badges (green→yellow→red) | ✅ Done | `render()` applies color by TTL |
 | 2.23 | `test_get_set_string` | ✅ Done | Integration test |
@@ -375,7 +375,7 @@ The original audit predated Phases A–E. The following were reported as
 | String: JSON syntax highlighting | ✅ Done | Per-token spans; invalid JSON falls back to plain text |
 | String: `$EDITOR` popup | ❌ Missing | |
 | List: `a` RPUSH, `p` LPUSH, `e` LSET, `D` LREM | ✅ Done | |
-| List: `i` insert before/after | ❌ Missing | |
+| List: `i` insert before/after | ✅ Done | `LINSERT`; missing pivot reported instead of silently ignored |
 | Hash: `a` add, `e` edit, `D` delete | ✅ Done | `D` deletes the whole selection when one is active |
 | Hash: bulk multi-select | ✅ Done | `Space` toggles, `Ctrl+A` selects visible, `Ctrl+D` deletes in one HDEL |
 | Hash: field filter (`/`) | ✅ Done | Case-insensitive substring; empty/Esc clears |
@@ -386,7 +386,7 @@ The original audit predated Phases A–E. The following were reported as
 | Stream: `a` XADD, `D` XDEL | ✅ Done | |
 | Stream: follow mode | ❌ Missing | |
 | Stream: consumer group panel | ❌ Missing | |
-| Stream: XTRIM | ❌ Missing | |
+| Stream: XTRIM | ✅ Done | `Ctrl+T` two-step MAXLEN/MINID prompt |
 
 ### 4.4 REPL
 

@@ -109,13 +109,18 @@ pub struct GlobalSearch {
     regex: Option<regex::Regex>,
     /// Parse error to surface when the query is an invalid regex.
     pub regex_error: Option<String>,
-    matcher: Matcher,
-    /// Dedupe set for streamed scan batches.
-    seen: HashSet<String>,
     /// Match score per entry in `filtered`, index-aligned.
     scores: Vec<u32>,
     /// Lowercased atoms for the current query, rebuilt on query/mode change.
     atoms: Vec<String>,
+    /// Previously executed queries, most recent first.
+    history: Vec<String>,
+    /// Index into `history` while browsing, or `None` when not browsing.
+    history_cursor: Option<usize>,
+    history_path: std::path::PathBuf,
+    /// Dedupe set for streamed scan batches.
+    seen: HashSet<String>,
+    matcher: Matcher,
 }
 
 impl Default for GlobalSearch {
@@ -124,8 +129,20 @@ impl Default for GlobalSearch {
     }
 }
 
+/// Cap on retained search queries.
+const MAX_HISTORY: usize = 100;
+
+fn history_path() -> std::path::PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("redis-tui")
+        .join("search_history")
+}
+
 impl GlobalSearch {
     pub fn new() -> Self {
+        let path = history_path();
+        let history = load_history(&path);
         Self {
             query: String::new(),
             results: Vec::new(),
@@ -140,6 +157,66 @@ impl GlobalSearch {
             seen: HashSet::new(),
             scores: Vec::new(),
             atoms: Vec::new(),
+            history,
+            history_cursor: None,
+            history_path: path,
+        }
+    }
+
+    /// Record an executed query. Duplicates of the most recent entry are
+    /// skipped and the list is capped at `MAX_HISTORY`.
+    pub fn push_history(&mut self, entry: &str) {
+        let entry = entry.trim();
+        if entry.is_empty() || self.history.first().is_some_and(|h| h == entry) {
+            return;
+        }
+        self.history.retain(|h| h != entry);
+        self.history.insert(0, entry.to_string());
+        self.history.truncate(MAX_HISTORY);
+        let _ = self.save_history();
+    }
+
+    fn save_history(&self) -> std::io::Result<()> {
+        if let Some(parent) = self.history_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&self.history_path, self.history.join("\n"))
+    }
+
+    pub fn history(&self) -> &[String] {
+        &self.history
+    }
+
+    pub fn reset_history_cursor(&mut self) {
+        self.history_cursor = None;
+    }
+
+    /// Step back through history, substituting the recalled query.
+    pub fn history_prev(&mut self, current_query: &str) -> String {
+        if self.history.is_empty() {
+            return current_query.to_string();
+        }
+        let idx = match self.history_cursor {
+            None => 0,
+            Some(i) => (i + 1).min(self.history.len() - 1),
+        };
+        self.history_cursor = Some(idx);
+        self.history[idx].clone()
+    }
+
+    /// Step forward through history. Returns an empty string once past the
+    /// newest entry, which clears the query.
+    pub fn history_next(&mut self) -> String {
+        match self.history_cursor {
+            None => String::new(),
+            Some(0) => {
+                self.history_cursor = None;
+                String::new()
+            }
+            Some(i) => {
+                self.history_cursor = Some(i - 1);
+                self.history[i - 1].clone()
+            }
         }
     }
 
@@ -306,6 +383,20 @@ impl GlobalSearch {
                 self.toggle_mode();
                 return Some(SearchAction::ModeToggled);
             }
+            // History navigation is bound to Alt+Up/Alt+Down so plain arrows
+            // keep driving the result list.
+            if keymap.matches("search_history_prev", key) {
+                let current = self.query.clone();
+                let recalled = self.history_prev(&current);
+                self.query = recalled;
+                self.apply_filter();
+                return Some(SearchAction::QueryChanged);
+            }
+            if keymap.matches("search_history_next", key) {
+                self.query = self.history_next();
+                self.apply_filter();
+                return Some(SearchAction::QueryChanged);
+            }
             if keymap.matches("search_execute", key) {
                 let target = self
                     .selected()
@@ -316,11 +407,13 @@ impl GlobalSearch {
             match key.code {
                 KeyCode::Char(c) => {
                     self.query.push(c);
+                    self.history_cursor = None;
                     self.apply_filter();
                     Some(SearchAction::QueryChanged)
                 }
                 KeyCode::Backspace => {
                     self.query.pop();
+                    self.history_cursor = None;
                     self.apply_filter();
                     Some(SearchAction::QueryChanged)
                 }
@@ -347,6 +440,9 @@ impl GlobalSearch {
         let mode = format!("[{}]", self.mode.label());
         if let Some(err) = &self.regex_error {
             return format!("Search {mode} — invalid regex: {err}");
+        }
+        if let Some(idx) = self.history_cursor {
+            return format!("Search {mode} — history {}/{}", idx + 1, self.history.len());
         }
         if self.scanning {
             format!(
@@ -427,6 +523,26 @@ fn first_line(s: &str) -> String {
     s.lines().next().unwrap_or(s).to_string()
 }
 
+/// Read persisted queries, most recent first.
+///
+/// A missing or unreadable file yields an empty history rather than an error:
+/// history is a convenience, not state worth blocking startup for.
+fn load_history(path: &std::path::Path) -> Vec<String> {
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<String> = contents
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+    // The file is written most-recent-first, so no reordering is needed; cap
+    // defensively in case the file was edited by hand.
+    entries.truncate(MAX_HISTORY);
+    entries
+}
+
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = ratatui::layout::Layout::default()
         .direction(ratatui::layout::Direction::Vertical)
@@ -459,6 +575,10 @@ mod tests {
 
     fn ctrl(c: char) -> Event {
         Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL))
+    }
+
+    fn alt(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::new(code, KeyModifiers::ALT))
     }
 
     #[test]
@@ -734,6 +854,171 @@ mod tests {
         s.query = "[bad".into();
         s.apply_filter();
         let _ = terminal.draw(|f| s.render(f, f.area()));
+    }
+
+    // ---- Search history (5.12) ----
+
+    #[test]
+    fn push_history_records_most_recent_first() {
+        let mut s = GlobalSearch::new();
+        s.history.clear();
+        s.push_history("user:1");
+        s.push_history("session:2");
+        assert_eq!(s.history(), ["session:2".to_string(), "user:1".to_string()]);
+    }
+
+    #[test]
+    fn push_history_ignores_empty_and_blank() {
+        let mut s = GlobalSearch::new();
+        s.history.clear();
+        s.push_history("");
+        s.push_history("   ");
+        assert!(s.history().is_empty());
+    }
+
+    #[test]
+    fn push_history_dedupes_consecutive_entries() {
+        let mut s = GlobalSearch::new();
+        s.history.clear();
+        s.push_history("a");
+        s.push_history("a");
+        assert_eq!(s.history().len(), 1);
+    }
+
+    #[test]
+    fn push_history_reorders_rather_than_duplicating() {
+        let mut s = GlobalSearch::new();
+        s.history.clear();
+        s.push_history("a");
+        s.push_history("b");
+        s.push_history("a");
+        assert_eq!(s.history(), ["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn push_history_caps_entries() {
+        let mut s = GlobalSearch::new();
+        s.history.clear();
+        for i in 0..MAX_HISTORY + 20 {
+            s.push_history(&format!("q{i}"));
+        }
+        assert_eq!(s.history().len(), MAX_HISTORY);
+        // Newest retained.
+        assert_eq!(s.history()[0], format!("q{}", MAX_HISTORY + 19));
+    }
+
+    #[test]
+    fn history_prev_walks_backwards() {
+        let mut s = GlobalSearch::new();
+        s.history.clear();
+        s.push_history("newest");
+        s.push_history("older");
+        assert_eq!(s.history_prev(""), "older");
+        assert_eq!(s.history_prev(""), "newest");
+        // Clamps at the newest entry.
+        assert_eq!(s.history_prev(""), "newest");
+    }
+
+    #[test]
+    fn history_next_walks_forwards_and_clears() {
+        let mut s = GlobalSearch::new();
+        s.history.clear();
+        s.push_history("newest");
+        s.push_history("older");
+        // push_history prepends, so the most recent push is index 0.
+        assert_eq!(s.history()[0], "older");
+        s.history_prev("");
+        s.history_prev("");
+        assert_eq!(s.history_next(), "older");
+        // Past the newest entry the query clears.
+        assert_eq!(s.history_next(), "");
+    }
+
+    #[test]
+    fn history_navigation_is_noop_when_empty() {
+        let mut s = GlobalSearch::new();
+        s.history.clear();
+        assert_eq!(s.history_prev("typed"), "typed");
+        assert_eq!(s.history_next(), "");
+    }
+
+    #[test]
+    fn typing_resets_history_cursor() {
+        let mut s = GlobalSearch::new();
+        s.history.clear();
+        s.push_history("old");
+        s.history_prev("");
+        s.handle_event(&key(KeyCode::Char('x')));
+        assert_eq!(s.history_cursor, None);
+        // A fresh Alt+Down with no browsing position does not resurrect history.
+        assert_eq!(s.history_next(), "");
+    }
+
+    #[test]
+    fn alt_up_emits_query_changed_with_recalled_query() {
+        let mut s = GlobalSearch::new();
+        s.history.clear();
+        s.push_history("user:1");
+        let action =
+            s.handle_event_with_keymap(&alt(KeyCode::Up), &crate::config::keybindings::Keymap::default());
+        assert_eq!(action, Some(SearchAction::QueryChanged));
+        assert_eq!(s.query, "user:1");
+    }
+
+    #[test]
+    fn alt_down_after_alt_up_moves_forward() {
+        let mut s = GlobalSearch::new();
+        s.history.clear();
+        s.push_history("newest");
+        s.push_history("older");
+        let km = crate::config::keybindings::Keymap::default();
+        s.handle_event_with_keymap(&alt(KeyCode::Up), &km);
+        s.handle_event_with_keymap(&alt(KeyCode::Up), &km);
+        assert_eq!(s.query, "newest");
+        s.handle_event_with_keymap(&alt(KeyCode::Down), &km);
+        assert_eq!(s.query, "older");
+    }
+
+    #[test]
+    fn plain_arrows_still_move_the_result_cursor() {
+        let mut s = GlobalSearch::new();
+        s.history.clear();
+        s.push_history("user:1");
+        s.set_results(vec!["user:1".into(), "user:2".into()]);
+        s.query = "user".into();
+        s.apply_filter();
+        // Alt+Up is consumed by history; plain Down moves the cursor.
+        s.handle_event(&key(KeyCode::Down));
+        assert_eq!(s.cursor, 1);
+    }
+
+    #[test]
+    fn history_survives_reload_from_disk() {
+        let dir = std::env::temp_dir().join("reddish-search-history-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("search_history");
+
+        let mut first = GlobalSearch::new();
+        first.history_path = path.clone();
+        first.history.clear();
+        first.push_history("alpha");
+        first.push_history("beta");
+
+        // A fresh instance reads the persisted file.
+        let mut second = GlobalSearch::new();
+        second.history_path = path.clone();
+        second.history = load_history(&path);
+        assert_eq!(second.history(), ["beta".to_string(), "alpha".to_string()]);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn load_history_tolerates_missing_file() {
+        let path = std::env::temp_dir().join("reddish-definitely-missing-history-file");
+        let _ = std::fs::remove_file(&path);
+        assert!(load_history(&path).is_empty());
     }
 
     #[test]

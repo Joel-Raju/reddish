@@ -313,6 +313,8 @@ pub enum PromptMode {
     HashEdit(String, usize),
     /// Field-name substring filter; an empty submission clears the filter.
     HashFilter,
+    /// Member search across the current value; empty submission clears it.
+    ValueFilter,
     SetAddMember,
     ZSetAddMember,
     ZSetAddScore(String),
@@ -356,6 +358,9 @@ pub struct ValueInspector {
     pub stream_follow: bool,
     pub stream_show_groups: bool,
     pub stream_groups: Option<Vec<StreamGroup>>,
+    /// Substring filter applied to the members of the current value
+    /// (list items, hash field/value pairs, set members, zset members).
+    pub value_filter: String,
     pub list_prompt: Option<InputWidget>,
     pub prompt_mode: Option<PromptMode>,
 }
@@ -391,6 +396,7 @@ impl ValueInspector {
             stream_cursor: 0,
             stream_compact: true,
             stream_follow: false,
+            value_filter: String::new(),
             stream_show_groups: false,
             stream_groups: None,
             list_prompt: None,
@@ -420,6 +426,7 @@ impl ValueInspector {
         self.stream_cursor = 0;
         self.stream_compact = true;
         self.stream_follow = false;
+        self.value_filter = String::new();
         self.stream_show_groups = false;
         self.stream_groups = None;
         self.list_prompt = None;
@@ -448,6 +455,7 @@ impl ValueInspector {
         self.stream_cursor = 0;
         self.stream_compact = true;
         self.stream_follow = false;
+        self.value_filter = String::new();
         self.stream_show_groups = false;
         self.stream_groups = None;
         self.list_prompt = None;
@@ -473,6 +481,7 @@ impl ValueInspector {
         self.stream_cursor = 0;
         self.stream_compact = true;
         self.stream_follow = false;
+        self.value_filter = String::new();
         self.stream_show_groups = false;
         self.stream_groups = None;
         self.list_prompt = None;
@@ -584,6 +593,21 @@ impl ValueInspector {
         added
     }
 
+    /// True when `haystack` contains `self.value_filter`, case-insensitively.
+    /// An empty filter matches everything.
+    pub fn value_matches_filter(&self, haystack: &str) -> bool {
+        if self.value_filter.is_empty() {
+            return true;
+        }
+        haystack
+            .to_lowercase()
+            .contains(&self.value_filter.to_lowercase())
+    }
+
+    pub fn clear_value_filter(&mut self) {
+        self.value_filter.clear();
+    }
+
     pub fn handle_event(&mut self, event: &Event) -> Option<InspectorAction> {
         self.handle_event_with_keymap(event, &crate::config::keybindings::Keymap::default())
     }
@@ -686,6 +710,15 @@ impl ValueInspector {
                             val
                         };
                         self.hash_cursor = 0;
+                        None
+                    }
+                    Some(PromptMode::ValueFilter) => {
+                        self.value_filter = val.trim().to_string();
+                        self.list_cursor = 0;
+                        self.hash_cursor = 0;
+                        self.set_cursor = 0;
+                        self.zset_cursor = 0;
+                        self.stream_cursor = 0;
                         None
                     }
                     Some(PromptMode::SetAddMember) => {
@@ -797,6 +830,9 @@ impl ValueInspector {
                     self.hash_filter = String::new();
                     self.hash_cursor = 0;
                 }
+                if self.prompt_mode == Some(PromptMode::ValueFilter) {
+                    self.clear_value_filter();
+                }
                 self.list_prompt = None;
                 self.prompt_mode = None;
             }
@@ -815,6 +851,16 @@ impl ValueInspector {
         if keymap.matches("set_ttl", key) {
             self.list_prompt = Some(InputWidget::new("TTL in seconds (blank=persist)"));
             self.prompt_mode = Some(PromptMode::SetTtlSeconds);
+        }
+        if keymap.matches("inspector_value_search", key) && !self.value_filter.is_empty() {
+            // Pressing the binding again with an active filter clears it,
+            // giving a single toggle without a separate cancel step.
+            self.clear_value_filter();
+        } else if keymap.matches("inspector_value_search", key) {
+            self.list_prompt = Some(InputWidget::new(
+                "Search value members (empty = all, Esc clears)",
+            ));
+            self.prompt_mode = Some(PromptMode::ValueFilter);
         }
         if keymap.matches("copy", key)
             && let Some(RedisValue::String(ref s)) = self.value
@@ -1205,16 +1251,37 @@ impl ValueInspector {
     }
 
     fn render_list(&self, frame: &mut Frame, area: Rect, items: &[String]) {
-        let title = self
-            .key
-            .as_deref()
-            .map(|k| format!("List [{}] (len={})", k, items.len()))
-            .unwrap_or_else(|| format!("List (len={})", items.len()));
+        let visible: Vec<&String> = items
+            .iter()
+            .filter(|item| self.value_matches_filter(item))
+            .collect();
+        let title = self.value_title("List", "len", items.len(), visible.len());
 
-        let mut text = String::new();
+        let mut lines: Vec<Line> = Vec::new();
+        if visible.is_empty() {
+            lines.push(Line::from(Span::styled(
+                if self.value_filter.is_empty() {
+                    "No items"
+                } else {
+                    "No items match the filter"
+                },
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
         for (i, item) in items.iter().enumerate() {
+            if !self.value_matches_filter(item) {
+                continue;
+            }
             let marker = if i == self.list_cursor { ">" } else { " " };
-            text.push_str(&format!("{}[{}] {}\n", marker, i, item));
+            let style = if i == self.list_cursor {
+                Style::default().add_modifier(ratatui::style::Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(
+                format!("{marker}[{i}] {item}"),
+                style,
+            )));
         }
 
         if let Some(ref prompt) = self.list_prompt {
@@ -1229,14 +1296,35 @@ impl ValueInspector {
                     "Insert {} '{pivot}': ",
                     if before { "BEFORE" } else { "AFTER" }
                 ),
-                _ => "Input:".to_string(),
+                Some(PromptMode::ValueFilter) => "Search: ".to_string(),
+                _ => "Input: ".to_string(),
             };
-            text.push_str(&format!("\n{} {}", label, prompt_display(prompt)));
+            lines.push(Line::from(Span::styled(
+                format!("{label}{}", prompt_display(prompt)),
+                Style::default().fg(Color::Yellow),
+            )));
         }
 
         let block = Block::default().borders(Borders::ALL).title(title);
-        let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
-        frame.render_widget(paragraph, area);
+        frame.render_widget(
+            Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+            area,
+        );
+    }
+
+    /// Title for a collection view, reporting the active member filter.
+    ///
+    /// `noun` is the count label ("len" for sequences, "fields" for hashes).
+    fn value_title(&self, kind: &str, noun: &str, total: usize, visible: usize) -> String {
+        let base = match self.key.as_deref() {
+            Some(k) => format!("{kind} [{k}] ({noun}={visible}"),
+            None => format!("{kind} ({noun}={visible}"),
+        };
+        if visible != total {
+            format!("{base}/{total}")
+        } else {
+            base
+        }
     }
 
     fn render_hash(
@@ -1245,31 +1333,35 @@ impl ValueInspector {
         area: Rect,
         entries: &indexmap::IndexMap<String, String>,
     ) {
-        let visible = self.visible_hash_fields();
+        let visible: Vec<&String> = self
+            .visible_hash_fields()
+            .into_iter()
+            .filter(|f| {
+                // A hash match on either the field name or its value.
+                self.value_matches_filter(f)
+                    || entries
+                        .get(*f)
+                        .is_some_and(|v| self.value_matches_filter(v))
+            })
+            .collect();
         let total = entries.len();
         let filtered = !self.hash_filter.is_empty();
 
-        let mut title = self
-            .key
-            .as_deref()
-            .map(|k| format!("Hash [{}] (fields={}", k, visible.len()))
-            .unwrap_or_else(|| format!("Hash (fields={}", visible.len()));
+        let mut title = self.value_title("Hash", "fields", total, visible.len());
         if filtered {
-            title.push_str(&format!("/{} filter:{}", total, self.hash_filter));
-        } else if total != visible.len() {
-            title.push_str(&format!("/{total}"));
-        } else {
-            title.push(')');
+            title.push_str(&format!(" field-filter:{}", self.hash_filter));
+        }
+        if !self.value_filter.is_empty() {
+            title.push_str(&format!(" filter:{}", self.value_filter));
         }
         if !self.hash_selected.is_empty() {
             title.push_str(&format!(" [{} selected]", self.hash_selected.len()));
         }
-        title.push(')');
 
         let mut lines: Vec<Line> = Vec::new();
         if visible.is_empty() {
             lines.push(Line::from(Span::styled(
-                if filtered {
+                if filtered || !self.value_filter.is_empty() {
                     "No fields match the filter"
                 } else {
                     "No fields"
@@ -1325,34 +1417,56 @@ impl ValueInspector {
         area: Rect,
         members: &std::collections::BTreeSet<String>,
     ) {
-        let title = self
-            .key
-            .as_deref()
-            .map(|k| format!("Set [{}] (len={})", k, members.len()))
-            .unwrap_or_else(|| format!("Set (len={})", members.len()));
+        let items: Vec<&String> = members
+            .iter()
+            .filter(|m| self.value_matches_filter(m))
+            .collect();
+        let title = self.value_title("Set", "len", members.len(), items.len());
 
-        let mut text = String::new();
-        let items: Vec<&String> = members.iter().collect();
-        for (i, member) in items.iter().enumerate() {
+        let mut lines: Vec<Line> = Vec::new();
+        if items.is_empty() {
+            lines.push(Line::from(Span::styled(
+                if self.value_filter.is_empty() {
+                    "No members"
+                } else {
+                    "No members match the filter"
+                },
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        for (i, member) in members.iter().enumerate() {
+            if !self.value_matches_filter(member) {
+                continue;
+            }
             let marker = if i == self.set_cursor { ">" } else { " " };
-            text.push_str(&format!("{}{}\n", marker, member));
+            let style = if i == self.set_cursor {
+                Style::default().add_modifier(ratatui::style::Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(
+                format!("{marker}{member}"),
+                style,
+            )));
         }
 
         if let Some(ref prompt) = self.list_prompt {
-            text.push_str(&format!(
-                "\nMember: {}{}",
-                prompt.value,
-                if prompt.cursor >= prompt.value.len() {
-                    "_"
-                } else {
-                    ""
-                }
-            ));
+            let label = match self.prompt_mode {
+                Some(PromptMode::SetAddMember) => "Member to SADD: ",
+                Some(PromptMode::ValueFilter) => "Search: ",
+                _ => "Input: ",
+            };
+            lines.push(Line::from(Span::styled(
+                format!("{label}{}", prompt_display(prompt)),
+                Style::default().fg(Color::Yellow),
+            )));
         }
 
         let block = Block::default().borders(Borders::ALL).title(title);
-        let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
-        frame.render_widget(paragraph, area);
+        frame.render_widget(
+            Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+            area,
+        );
     }
 
     fn render_zset(&self, frame: &mut Frame, area: Rect, entries: &[ZSetEntry]) {
@@ -1362,30 +1476,26 @@ impl ValueInspector {
             "desc"
         };
         let filtered = self.zset_score_min.is_some() || self.zset_score_max.is_some();
-        let visible: Vec<&ZSetEntry> = if filtered && !entries.is_empty() {
-            entries
-                .iter()
-                .filter(|e| {
-                    let above_min = self.zset_score_min.as_ref().is_none_or(|min| {
-                        if min == "-inf" {
-                            true
-                        } else {
-                            e.score >= min.parse::<f64>().unwrap_or(f64::NEG_INFINITY)
-                        }
-                    });
-                    let below_max = self.zset_score_max.as_ref().is_none_or(|max| {
-                        if max == "+inf" {
-                            true
-                        } else {
-                            e.score <= max.parse::<f64>().unwrap_or(f64::INFINITY)
-                        }
-                    });
-                    above_min && below_max
-                })
-                .collect()
-        } else {
-            entries.iter().collect()
-        };
+        let visible: Vec<&ZSetEntry> = entries
+            .iter()
+            .filter(|e| {
+                let above_min = self.zset_score_min.as_ref().is_none_or(|min| {
+                    if min == "-inf" {
+                        true
+                    } else {
+                        e.score >= min.parse::<f64>().unwrap_or(f64::NEG_INFINITY)
+                    }
+                });
+                let below_max = self.zset_score_max.as_ref().is_none_or(|max| {
+                    if max == "+inf" {
+                        true
+                    } else {
+                        e.score <= max.parse::<f64>().unwrap_or(f64::INFINITY)
+                    }
+                });
+                above_min && below_max && self.value_matches_filter(&e.member)
+            })
+            .collect();
         let title = self
             .key
             .as_deref()
@@ -1403,6 +1513,11 @@ impl ValueInspector {
                 }
             })
             .unwrap_or_else(|| format!("ZSet (len={})", visible.len()));
+        let title = if self.value_filter.is_empty() {
+            title
+        } else {
+            format!("{title} filter:{}", self.value_filter)
+        };
 
         let mut items: Vec<&&ZSetEntry> = visible.iter().collect();
         if self.zset_sort_score_asc {
@@ -1660,6 +1775,196 @@ fn render_value_preview(value: &RedisValue, view_mode: &StringViewMode) -> Strin
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    // ---- Value member search (5.14) ----
+
+    fn ctrl_shift_f() -> Event {
+        Event::Key(KeyEvent::new(
+            KeyCode::Char('f'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ))
+    }
+
+    #[test]
+    fn value_filter_defaults_empty_and_matches_all() {
+        let inspector = ValueInspector::new();
+        assert!(inspector.value_filter.is_empty());
+        assert!(inspector.value_matches_filter("anything"));
+    }
+
+    #[test]
+    fn value_filter_matches_substring_case_insensitively() {
+        let mut inspector = ValueInspector::new();
+        inspector.value_filter = "ERR".to_string();
+        assert!(inspector.value_matches_filter("server_error"));
+        assert!(!inspector.value_matches_filter("client"));
+    }
+
+    #[test]
+    fn value_search_opens_prompt() {
+        let mut inspector = list_inspector();
+        inspector.handle_event(&ctrl_shift_f());
+        assert_eq!(inspector.prompt_mode, Some(PromptMode::ValueFilter));
+    }
+
+    #[test]
+    fn value_search_applies_on_submit() {
+        let mut inspector = list_inspector();
+        inspector.handle_event(&ctrl_shift_f());
+        inspector.list_prompt.as_mut().unwrap().value = "b".to_string();
+        inspector.handle_event(&press(KeyCode::Enter));
+        assert_eq!(inspector.value_filter, "b");
+    }
+
+    #[test]
+    fn value_search_empty_submission_clears() {
+        let mut inspector = list_inspector();
+        inspector.value_filter = "b".to_string();
+        // Pressing the binding with an active filter clears it in one step.
+        inspector.handle_event(&ctrl_shift_f());
+        assert_eq!(inspector.prompt_mode, None);
+        assert!(inspector.value_filter.is_empty());
+
+        // With no filter active it opens the prompt, and an empty submission
+        // leaves the filter cleared.
+        inspector.handle_event(&ctrl_shift_f());
+        assert_eq!(inspector.prompt_mode, Some(PromptMode::ValueFilter));
+        inspector.handle_event(&press(KeyCode::Enter));
+        assert!(inspector.value_filter.is_empty());
+    }
+
+    #[test]
+    fn value_search_twice_toggles_filter_off() {
+        let mut inspector = list_inspector();
+        inspector.value_filter = "b".to_string();
+        inspector.handle_event(&ctrl_shift_f());
+        assert!(inspector.value_filter.is_empty());
+    }
+
+    #[test]
+    fn value_search_esc_clears_filter() {
+        let mut inspector = list_inspector();
+        inspector.value_filter = "b".to_string();
+        inspector.handle_event(&ctrl_shift_f());
+        inspector.handle_event(&press(KeyCode::Esc));
+        assert!(inspector.value_filter.is_empty());
+    }
+
+    #[test]
+    fn value_filter_reset_on_new_value() {
+        let mut inspector = list_inspector();
+        inspector.value_filter = "b".to_string();
+        inspector.set_value("l2".to_string(), RedisValue::List(vec![]));
+        assert!(inspector.value_filter.is_empty());
+    }
+
+    #[test]
+    fn render_list_respects_value_filter() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut inspector = list_inspector();
+        inspector.value_filter = "nomatch".to_string();
+        terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+        let rendered = buffer_text(&terminal);
+        assert!(
+            rendered.contains("No items match"),
+            "expected empty-filter message, got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_list_shows_only_matching_items() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut inspector = list_inspector();
+        inspector.value_filter = "a".to_string();
+        terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+        let rendered = buffer_text(&terminal);
+        assert!(rendered.contains("[0] a"));
+        assert!(!rendered.contains("[1] b"), "filtered-out item still shown");
+    }
+
+    #[test]
+    fn render_hash_value_filter_matches_values_too() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut inspector = hash_inspector();
+        // No field name contains "xyz" but one value does.
+        inspector.value_filter = "xyz".to_string();
+        terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+        let rendered = buffer_text(&terminal);
+        assert!(rendered.contains("session:token"));
+        assert!(!rendered.contains("user:name"));
+    }
+
+    #[test]
+    fn render_set_respects_value_filter() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut inspector = ValueInspector::new();
+        inspector.set_value(
+            "s".to_string(),
+            RedisValue::Set(["apple".to_string(), "banana".to_string()].into()),
+        );
+        inspector.value_filter = "app".to_string();
+        terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+        let rendered = buffer_text(&terminal);
+        assert!(rendered.contains("apple"));
+        assert!(!rendered.contains("banana"));
+    }
+
+    #[test]
+    fn render_zset_respects_value_filter() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut inspector = ValueInspector::new();
+        inspector.set_value(
+            "z".to_string(),
+            RedisValue::ZSet(vec![
+                ZSetEntry { score: 1.0, member: "alpha".to_string() },
+                ZSetEntry { score: 2.0, member: "beta".to_string() },
+            ]),
+        );
+        inspector.value_filter = "bet".to_string();
+        terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+        let rendered = buffer_text(&terminal);
+        assert!(rendered.contains("beta"));
+        assert!(!rendered.contains("alpha"));
+    }
+
+    #[test]
+    fn render_with_value_filter_prompt_does_not_panic() {
+        use ratatui::{Terminal, backend::TestBackend};
+        for value in [
+            RedisValue::List(vec!["a".into()]),
+            RedisValue::Hash(indexmap::IndexMap::from([("f".to_string(), "v".to_string())])),
+            RedisValue::Set(["a".to_string()].into()),
+            RedisValue::ZSet(vec![ZSetEntry { score: 1.0, member: "m".to_string() }]),
+        ] {
+            let backend = TestBackend::new(80, 24);
+            let mut terminal = Terminal::new(backend).unwrap();
+            let mut inspector = ValueInspector::new();
+            inspector.set_value("k".to_string(), value);
+            inspector.handle_event(&ctrl_shift_f());
+            terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+        }
+    }
+
+    /// Flatten a TestBackend buffer into one searchable string.
+    fn buffer_text(terminal: &ratatui::Terminal<ratatui::backend::TestBackend>) -> String {
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
+    }
 
     // ---- Stream follow mode (2.18) ----
 

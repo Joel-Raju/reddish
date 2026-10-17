@@ -484,6 +484,10 @@ impl App {
             {
                 match action {
                     SearchAction::Execute(key_name) => {
+                        // Record the query that produced this selection, not
+                        // the resolved key, so recall re-runs the same search.
+                        let recorded = self.search.query.clone();
+                        self.search.push_history(&recorded);
                         if self.key_browser.jump_to_key(&key_name) {
                             let rows = self.key_browser.tree.visible_rows();
                             if let Some(row) = rows.get(self.key_browser.cursor)

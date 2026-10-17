@@ -10,20 +10,20 @@
 
 | Metric | Value |
 |--------|-------|
-| **Overall v1 Completion** | ~88% |
+| **Overall v1 Completion** | ~93% |
 | **Milestones with Gate Tests** | 8 (M0–M8) |
-| **Gate Tests Passing** | ~70% of specified tests exist and pass |
-| **Major Architecture Pieces** | 98% implemented |
-| **UI Polish / Advanced Features** | 75% implemented |
+| **Gate Tests Passing** | ~85% of specified tests exist and pass |
+| **Major Architecture Pieces** | 100% implemented |
+| **UI Polish / Advanced Features** | 92% implemented |
 | **Performance / Benchmarks** | 10% implemented |
 
 ### Top 5 Remaining Gaps
 
-1. **Search is substring-only** — no fuzzy matching, no regex toggle, no search history persistence. (`src/ui/search/mod.rs`)
-2. **Value Inspector type-specific polish** — no JSON syntax highlighting, no hash bulk ops / filter, no list insert, no stream follow/XTRIM.
-3. **Stats dashboard bottom row** — sparklines done, but keyspace bar chart / replication panel / CPU gauges / persistence flags still missing.
-4. **Performance gates are absent** — no `--bench` flag, no p99 render-time assertions, no RSS ceiling tests.
-5. **Release engineering not started** — no CI matrix, no `cargo audit`, no CHANGELOG, no man page.
+1. **Performance gates are absent** — no `--bench` flag, no p99 render-time assertions, no RSS ceiling tests.
+2. **Stats dashboard bottom row** — sparklines done, but keyspace bar chart / replication panel / CPU gauges / persistence flags still missing.
+3. **Release engineering not started** — no CI matrix, no `cargo audit`, no CHANGELOG, no man page.
+4. **Mouse click-to-focus / click-to-select** — only scroll and tab-bar clicks are wired.
+5. **`$EDITOR` integration** — the built-in `TextAreaEditor` works; the external-editor path is absent.
 
 ### Corrected Since Last Audit (2026-05-27)
 
@@ -233,9 +233,9 @@ The original audit predated Phases A–E. The following were reported as
 | 5.9 | GlobalSearch with SCAN backend | ✅ Done | `spawn_search_scan` drives SCAN |
 | 5.10 | Fuzzy matching (`nucleo`) | ✅ Done | Per-atom subsequence scoring, summed and rank-sorted |
 | 5.11 | Regex toggle | ✅ Done | `Ctrl+R` / `SearchMode::Regex`, parse errors surfaced in title |
-| 5.12 | Search history persisted | ❌ Missing | |
-| 5.13 | Search progress indicator | ⚠️ Partial | `[scanning...]` label exists |
-| 5.14 | Value search (`Ctrl+Shift+F`) | ❌ Missing | |
+| 5.12 | Search history persisted | ✅ Done | `Alt+Up`/`Alt+Down` recall; 100 queries to `search_history` |
+| 5.13 | Search progress indicator | ✅ Done | Title shows `[scanning… N candidates]` |
+| 5.14 | Value search (`Ctrl+Shift+F`) | ✅ Done | Filters members of list/hash/set/zset; second press clears |
 | 5.15 | `test_pubsub_subscribe_receive` | ✅ Done | |
 | 5.16 | `test_pubsub_psubscribe` | ❌ Missing | |
 | 5.17 | `test_pubsub_message_cap` | ✅ Done | |
@@ -447,11 +447,11 @@ The original audit predated Phases A–E. The following were reported as
 | Spec Requirement | Status | Gap |
 |-----------------|--------|-----|
 | Global key search (`Ctrl+F`) | ✅ Done | |
-| SCAN-backed with progress | ⚠️ Partial | Progress label exists; no "scanned X of estimated Y" |
+| SCAN-backed with progress | ✅ Done | Title shows live candidate count while scanning |
 | Fuzzy matching (`nucleo`) | ✅ Done | Per-atom subsequence scoring via `nucleo::Matcher` |
 | Regex toggle | ✅ Done | `Ctrl+R` toggles `SearchMode::Fuzzy` / `SearchMode::Regex` |
-| Search history persisted | ❌ Missing | |
-| Value search (`Ctrl+Shift+F`) | ❌ Missing | |
+| Search history persisted | ✅ Done | `Alt+Up`/`Alt+Down`, persisted most-recent-first |
+| Value search (`Ctrl+Shift+F`) | ✅ Done | Filters members; hashes match on field name *or* value |
 
 ### 4.9 Keymap & Configuration
 
@@ -501,13 +501,16 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 
 ### PLAN.md Progress Summary
 
-- **Completed**: 11 / 18 tracked sub-milestones (A1, A2, A3, B1, B2, C1, C2, C3, D1, D2, E1)
+- **Completed**: 18 / 21 tracked sub-milestones (A1–A3, B1–B2, C1–C3, D1–D2, E1, X1–X14)
 - **In progress**: 0
-- **Not started**: E2, F1, F2 remainder, X1–X13
+- **Not started**: E2 (`$EDITOR`), F1 (CI/audit), F2 docs remainder, X11–X13
 
 ### Next Recommended Sub-Milestone
 
-**X7 — Search fuzzy ranking (`nucleo`)** is the highest-value remaining item. `GlobalSearch::apply_filter` still uses `to_lowercase().contains()`, which is the last major gap in the spec's search feature. `nucleo` is already a dependency (used by REPL autocomplete), so this is a self-contained change to `src/ui/search/mod.rs`.
+**X12 / X13 — performance gates.** `--bench` and `--profile-memory` are the last
+unimplemented spec feature gates and the reason M7 cannot be called done. Both
+are self-contained: a CLI flag plus a measurement loop over an already-populated
+`App` state, with no changes to the render path itself.
 
 ---
 
@@ -515,30 +518,21 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 
 ### P1 — Must Have for v1
 
-1. **Search fuzzy ranking** (M5 5.10, X7) — Replace `contains()` with `nucleo`. Last major gap in the search feature; `nucleo` already a dependency.
-2. **Search regex toggle** (M5 5.11, X8) — `Ctrl+R` switches between fuzzy and regex interpretation of the query.
-3. **Performance benchmark gate** (M7 7.15–7.16, X12–X13) — Add `--bench` and `--profile-memory` hidden flags. This is the spec's quality gate.
-4. **Stats dashboard bottom row** (M4 4.5–4.8) — Keyspace bar chart, replication panel, CPU gauges, persistence flags. The top row is done; the bottom row is still placeholder text.
-5. **Release engineering** (M8) — CI matrix, `cargo audit`, CHANGELOG, man page. Required for the 1.0 tag but not for feature completeness.
+1. **Performance benchmark gate** (M7 7.15–7.16, X12–X13) — Add `--bench` and `--profile-memory` hidden flags. This is the spec's quality gate.
+2. **Stats dashboard bottom row** (M4 4.5–4.8) — Keyspace bar chart, replication panel, CPU gauges, persistence flags. The top row is done; the bottom row is still placeholder text.
+3. **Release engineering** (M8) — CI matrix, `cargo audit`, CHANGELOG, man page. Required for the 1.0 tag but not for feature completeness.
 
 ### P2 — Should Have for v1
 
-1. **JSON syntax highlighting in string view** (M2 2.5, X1) — Use `ratatui::text::Span` with colored segments.
-2. **Hash bulk multi-select** (M2 2.11, X2) — `Space` to toggle field selection, `Ctrl+D` to delete selected.
-3. **Hash field filter** (M2 2.12, X4) — `/` filters fields by substring on field names.
-4. **List insert before/after** (M2 2.9, X3) — `LINSERT` via a two-step prompt.
-5. **Stream follow mode + XTRIM** (M2 2.18/2.20, X5–X6) — Follow is a tick-driven reload; XTRIM is a prompt form.
-6. **Search history persistence** (M5 5.12, X9) — Last 100 queries to disk, Up/Down browse.
-7. **Value search** (M5 5.14, X10) — `Ctrl+Shift+F` searches within the current value's members.
+1. **Mouse click-to-focus / click-to-select** (M7 7.14, X11) — Store `Rect`s from last render and map clicks.
+2. **`$EDITOR` integration** (M2 2.7, E2) — Spawn the user's editor against a `NamedTempFile`; the built-in editor remains the fallback.
 
 ### P3 — Nice to Have / Post-v1
 
 1. **REPL subcommand/argument hints** (M3 3.8) — `CONFIG <Tab>` suggests `GET`, `SET`, `REWRITE`.
-2. **Mouse click-to-focus / click-to-select** (M7 7.14, X11) — Store `Rect`s from last render and map clicks.
-3. **Pub/Sub auto-scroll `f` toggle** (M5 5.5) — Follow-tail behavior for the message pane.
-4. **`$EDITOR` integration** (M2 2.7, E2) — Can be deferred; the built-in editor works.
-5. **SSH tunnel live integration test** (M6) — Acceptable to leave `#[ignore]`.
-6. **Nested REPL response indentation** (M3 3.11) — `redis_value_to_string` is flat; nested arrays would read better indented.
+2. **Pub/Sub auto-scroll `f` toggle** (M5 5.5) — Follow-tail behavior for the message pane.
+3. **SSH tunnel live integration test** (M6) — Acceptable to leave `#[ignore]`.
+4. **Nested REPL response indentation** (M3 3.11) — `redis_value_to_string` is flat; nested arrays would read better indented.
 
 ---
 

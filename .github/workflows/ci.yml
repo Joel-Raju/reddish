@@ -1,0 +1,168 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Build artifacts shared across jobs in the same run.
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # Fast feedback: formatting, lints and unit tests need no Redis.
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+          rustup component add rustfmt clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # Unit tests are the bulk of the suite; the integration tests that need a
+  # live Redis run separately below.
+  unit-tests:
+    name: unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --lib --bins
+
+  # Redis-backed integration tests. The suite expects a server on port 16379
+  # (see tests/helpers/mod.rs and the module-level comments).
+  integration:
+    name: integration (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Both the official action and a native install fallback; the action is
+      # the reliable path on Windows.
+      - name: Start Redis on port 16379
+        shell: bash
+        run: |
+          if command -v redis-server >/dev/null 2>&1; then
+            echo "Using preinstalled redis-server"
+          else
+            echo "Installing Redis"
+            if [ "${{ runner.os }}" = "Windows" ]; then
+              choco install redis-64 -y --no-progress || true
+            else
+              brew install redis || sudo apt-get install -y redis-server
+            fi
+          fi
+          redis-server --port 16379 --daemonize yes --loglevel warning --save ''
+          for i in $(seq 1 30); do
+            if redis-cli -p 16379 ping 2>/dev/null | grep -q PONG; then
+              echo "Redis is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Redis failed to start"
+          exit 1
+
+      - name: Run integration tests
+        run: cargo test --tests
+
+  # The spec's performance gates. Release only, since a debug build is roughly
+  # 3x slower and would fail the render budget.
+  perf:
+    name: performance gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Render benchmark (p99 <= 16ms at 10K keys)
+        run: cargo run --release -- --bench
+
+      - name: Memory ceiling (RSS <= 50MB at 10K keys)
+        run: cargo run --release -- --profile-memory
+
+  # Release readiness.
+  security:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: taiki-e/install-action@cargo-audit
+
+      # Fail only on vulnerabilities, not on the tool's exit status quirks.
+      - name: Audit dependencies
+        run: cargo audit
+
+      - name: Package dry run
+        run: cargo package --allow-dirty --no-verify
+
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Verify the binary starts and exits cleanly
+        # --help must not touch the terminal or connect anywhere, so this works
+        # on a headless runner.
+        shell: bash
+        run: ./target/release/reddish-tui --help

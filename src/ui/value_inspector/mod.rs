@@ -1307,7 +1307,9 @@ impl ValueInspector {
 
         let block = Block::default().borders(Borders::ALL).title(title);
         frame.render_widget(
-            Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+            Paragraph::new(lines)
+                .block(block)
+                .wrap(Wrap { trim: false }),
             area,
         );
     }
@@ -1444,10 +1446,7 @@ impl ValueInspector {
             } else {
                 Style::default()
             };
-            lines.push(Line::from(Span::styled(
-                format!("{marker}{member}"),
-                style,
-            )));
+            lines.push(Line::from(Span::styled(format!("{marker}{member}"), style)));
         }
 
         if let Some(ref prompt) = self.list_prompt {
@@ -1464,7 +1463,9 @@ impl ValueInspector {
 
         let block = Block::default().borders(Borders::ALL).title(title);
         frame.render_widget(
-            Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+            Paragraph::new(lines)
+                .block(block)
+                .wrap(Wrap { trim: false }),
             area,
         );
     }
@@ -1926,8 +1927,14 @@ mod tests {
         inspector.set_value(
             "z".to_string(),
             RedisValue::ZSet(vec![
-                ZSetEntry { score: 1.0, member: "alpha".to_string() },
-                ZSetEntry { score: 2.0, member: "beta".to_string() },
+                ZSetEntry {
+                    score: 1.0,
+                    member: "alpha".to_string(),
+                },
+                ZSetEntry {
+                    score: 2.0,
+                    member: "beta".to_string(),
+                },
             ]),
         );
         inspector.value_filter = "bet".to_string();
@@ -1942,9 +1949,15 @@ mod tests {
         use ratatui::{Terminal, backend::TestBackend};
         for value in [
             RedisValue::List(vec!["a".into()]),
-            RedisValue::Hash(indexmap::IndexMap::from([("f".to_string(), "v".to_string())])),
+            RedisValue::Hash(indexmap::IndexMap::from([(
+                "f".to_string(),
+                "v".to_string(),
+            )])),
             RedisValue::Set(["a".to_string()].into()),
-            RedisValue::ZSet(vec![ZSetEntry { score: 1.0, member: "m".to_string() }]),
+            RedisValue::ZSet(vec![ZSetEntry {
+                score: 1.0,
+                member: "m".to_string(),
+            }]),
         ] {
             let backend = TestBackend::new(80, 24);
             let mut terminal = Terminal::new(backend).unwrap();

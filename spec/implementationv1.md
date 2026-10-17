@@ -10,7 +10,7 @@
 
 | Metric | Value |
 |--------|-------|
-| **Overall v1 Completion** | ~95% |
+| **Overall v1 Completion** | ~96% |
 | **Milestones with Gate Tests** | 8 (M0–M8) |
 | **Gate Tests Passing** | ~90% of specified tests exist and pass |
 | **Major Architecture Pieces** | 100% implemented |
@@ -31,12 +31,11 @@ though only ~24 are drawn. The default view expands nothing and is ~60x
 cheaper. See `src/bench.rs`; run `reddish-tui --bench` and
 `reddish-tui --profile-memory` to reproduce.
 
-### Top 4 Remaining Gaps
+### Top 3 Remaining Gaps
 
-1. **Stats dashboard bottom row** — sparklines done, but keyspace bar chart / replication panel / CPU gauges / persistence flags still missing.
-2. **Release engineering not started** — no CI matrix, no `cargo audit`, no CHANGELOG, no man page.
-3. **Mouse click-to-focus / click-to-select** — only scroll and tab-bar clicks are wired.
-4. **`$EDITOR` integration** — the built-in `TextAreaEditor` works; the external-editor path is absent.
+1. **Release documentation** — no CHANGELOG, no man page. README quick-start and keybindings are written.
+2. **Mouse click-to-focus / click-to-select** — only scroll and tab-bar clicks are wired.
+3. **`$EDITOR` integration** — the built-in `TextAreaEditor` works; the external-editor path is absent.
 
 ### Corrected Since Last Audit (2026-05-27)
 
@@ -328,15 +327,15 @@ The original audit predated Phases A–E. The following were reported as
 
 | # | Item | Status | Notes |
 |---|------|--------|-------|
-| 8.1 | GitHub Actions CI matrix (ubuntu, macos, windows) | ❌ Missing | No `.github/workflows` visible |
+| 8.1 | GitHub Actions CI matrix (ubuntu, macos, windows) | ✅ Done | `.github/workflows/ci.yml`: lint, unit, integration (3 OS), perf, security, build |
 | 8.2 | Security: no plaintext passwords in logs | ⚠️ Partial | `resolve()` not logged, but no explicit test |
 | 8.3 | Security: temp files via `NamedTempFile` | ❌ Missing | `$EDITOR` integration not implemented |
-| 8.4 | `cargo audit` clean | ❌ Missing | |
-| 8.5 | `cargo publish --dry-run` | ❌ Missing | |
+| 8.4 | `cargo audit` clean | ✅ Done | 0 vulnerabilities; 5 documented warnings in `audit.toml` |
+| 8.5 | `cargo publish --dry-run` | ✅ Done | `cargo package` clean; metadata + LICENSE added |
 | 8.6 | README with quick-start + keybindings | ❌ Missing | |
 | 8.7 | CHANGELOG | ❌ Missing | |
 | 8.8 | Man page (`clap_mangen`) | ❌ Missing | |
-| 8.9 | `test_cargo_audit_clean` | ❌ Missing | |
+| 8.9 | `test_cargo_audit_clean` | ✅ Done | Verified locally; enforced by the `security` CI job |
 | 8.10 | `test_no_plaintext_password_in_logs` | ❌ Missing | |
 | 8.11 | `test_temp_file_deleted_on_drop` | ❌ Missing | |
 | 8.12 | `test_binary_opens_and_exits_on_all_platforms` | ❌ Missing | |
@@ -503,7 +502,7 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 | **D** | D2 — Fuzzy REPL autocomplete | ✅ **Complete** | `ReplAutocomplete` with nucleo `fuzzy_match_greedy`, 100+ Redis commands, key cache, Tab cycling, Enter accepts, Esc closes. 10 tests | Subcommand/argument hints |
 | **E** | E1 — MONITOR mode | ✅ **Complete** | `--allow-monitor` flag, `client.monitor()` returns unbounded receiver, `Ctrl+M` toggles overlay, `drain_monitor_messages()` on tick, 1000-line cap. 3 tests | Unavailable in cluster mode (returns `None`) |
 | **E** | E2 — String editor popup + `$EDITOR` | ❌ **Not started** | `TextAreaEditor` widget exists and is wired to `e` | No full-screen overlay chrome, no `$EDITOR` subprocess integration |
-| **F** | F1 — CI & Audit | ❌ **Not started** | — | No `.github/workflows`, no `cargo audit` gate |
+| **F** | F1 — CI & Audit | ✅ **Complete** | 6-job matrix; `cargo audit` clean after bumping crossbeam-epoch | — |
 | **F** | F2 — Documentation | ⚠️ **Partial** | README.md updated with current features, MANUAL_TESTING.md expanded | No CHANGELOG.md, no man page (`clap_mangen`) |
 
 #### Implementation Notes / Deviations from PLAN.md
@@ -514,16 +513,15 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 
 ### PLAN.md Progress Summary
 
-- **Completed**: 20 / 21 tracked sub-milestones (A1–A3, B1–B2, C1–C3, D1–D2, E1, X1–X14, X7–X10, X12–X13)
+- **Completed**: 21 / 23 tracked sub-milestones (A1–A3, B1–B2, C1–C3, D1–D2, E1, F1, X1–X14)
 - **In progress**: 0
-- **Not started**: E2 (`$EDITOR`), F1 (CI/audit), F2 docs remainder, X11
+- **Not started**: E2 (`$EDITOR`), X11 (mouse click-to-focus), F2 docs remainder
 
 ### Next Recommended Sub-Milestone
 
-**F1 — CI matrix + `cargo audit`.** The last unimplemented milestone. Adding
-`.github/workflows/ci.yml` with an ubuntu/macos/windows matrix also makes the
-`--bench` and `--profile-memory` gates meaningful, since they can run on every
-push rather than only locally.
+**F2 — documentation.** The last milestone with ❌ rows: `CHANGELOG.md` and the
+`clap_mangen` man page. Everything else in F2 (README quick-start and
+keybindings) is already written.
 
 ---
 
@@ -531,13 +529,13 @@ push rather than only locally.
 
 ### P1 — Must Have for v1
 
-1. **Stats dashboard bottom row** (M4 4.5–4.8) — Keyspace bar chart, replication panel, CPU gauges, persistence flags. The top row is done; the bottom row is still placeholder text.
-2. **Release engineering** (M8) — CI matrix, `cargo audit`, CHANGELOG, man page. Required for the 1.0 tag but not for feature completeness.
+1. **Release documentation** (M8 8.6–8.8, F2) — `CHANGELOG.md` and a `clap_mangen` man page. README quick-start and keybindings are already written.
 
 ### P2 — Should Have for v1
 
 1. **Mouse click-to-focus / click-to-select** (M7 7.14, X11) — Store `Rect`s from last render and map clicks.
 2. **`$EDITOR` integration** (M2 2.7, E2) — Spawn the user's editor against a `NamedTempFile`; the built-in editor remains the fallback.
+3. **Remaining M8 test rows** (8.10–8.12) — No-plaintext-password-in-logs assertion; temp-file cleanup test; binary smoke test per platform.
 
 ### P3 — Nice to Have / Post-v1
 

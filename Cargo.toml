@@ -2,6 +2,13 @@
 name = "reddish-tui"
 version = "0.1.0"
 edition = "2024"
+description = "A terminal UI Redis client with key browser, value inspector, REPL, pub/sub and stats dashboard"
+license = "MIT"
+readme = "README.md"
+keywords = ["redis", "tui", "terminal", "client", "cli"]
+categories = ["command-line-utilities"]
+repository = "https://github.com/Joel-Raju/reddish"
+homepage = "https://github.com/Joel-Raju/reddish"
 
 [dependencies]
 anyhow = "1.0.102"

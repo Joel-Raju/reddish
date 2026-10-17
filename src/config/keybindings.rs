@@ -830,18 +830,60 @@ mod tests {
 
     /// Every action name `matches()` knows about.
     const ALL_ACTIONS: &[&str] = &[
-        "nav_up", "nav_down", "nav_left", "nav_right", "confirm", "cancel", "delete",
-        "refresh", "filter", "edit", "quit", "copy", "help", "palette", "tab_keys",
-        "tab_repl", "tab_info", "tab_pubsub", "new_key", "rename_key", "set_ttl",
-        "expire", "select_all", "toggle_select", "cycle_sort", "go_up", "repl_overlay",
-        "duplicate_key", "confirm_yes", "confirm_no", "inspector_list_push",
-        "inspector_list_prepend", "inspector_list_insert", "inspector_hash_add",
-        "inspector_hash_filter", "inspector_value_search", "delete_selected",
-        "inspector_set_add", "inspector_zset_add", "inspector_zset_range_query",
-        "inspector_stream_add", "inspector_stream_groups", "inspector_stream_trim",
-        "inspector_stream_follow", "inspector_toggle_view", "inspector_goto_end",
-        "set_union", "set_inter", "set_diff", "search_execute", "search_close",
-        "search_toggle_mode", "search_history_prev", "search_history_next",
+        "nav_up",
+        "nav_down",
+        "nav_left",
+        "nav_right",
+        "confirm",
+        "cancel",
+        "delete",
+        "refresh",
+        "filter",
+        "edit",
+        "quit",
+        "copy",
+        "help",
+        "palette",
+        "tab_keys",
+        "tab_repl",
+        "tab_info",
+        "tab_pubsub",
+        "new_key",
+        "rename_key",
+        "set_ttl",
+        "expire",
+        "select_all",
+        "toggle_select",
+        "cycle_sort",
+        "go_up",
+        "repl_overlay",
+        "duplicate_key",
+        "confirm_yes",
+        "confirm_no",
+        "inspector_list_push",
+        "inspector_list_prepend",
+        "inspector_list_insert",
+        "inspector_hash_add",
+        "inspector_hash_filter",
+        "inspector_value_search",
+        "delete_selected",
+        "inspector_set_add",
+        "inspector_zset_add",
+        "inspector_zset_range_query",
+        "inspector_stream_add",
+        "inspector_stream_groups",
+        "inspector_stream_trim",
+        "inspector_stream_follow",
+        "inspector_toggle_view",
+        "inspector_goto_end",
+        "set_union",
+        "set_inter",
+        "set_diff",
+        "search_execute",
+        "search_close",
+        "search_toggle_mode",
+        "search_history_prev",
+        "search_history_next",
     ];
 
     /// Pairs that legitimately share a key because they are dispatched in
@@ -1002,11 +1044,23 @@ mod tests {
             parse_keydef(&km.search_history_next.key),
             (KeyCode::Down, KeyModifiers::ALT)
         );
-        assert!(km.matches("search_history_prev", &KeyEvent::new(KeyCode::Up, KeyModifiers::ALT)));
-        assert!(km.matches("search_history_next", &KeyEvent::new(KeyCode::Down, KeyModifiers::ALT)));
+        assert!(km.matches(
+            "search_history_prev",
+            &KeyEvent::new(KeyCode::Up, KeyModifiers::ALT)
+        ));
+        assert!(km.matches(
+            "search_history_next",
+            &KeyEvent::new(KeyCode::Down, KeyModifiers::ALT)
+        ));
         // Plain arrows drive result navigation and must not browse history.
-        assert!(!km.matches("search_history_prev", &KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)));
-        assert!(!km.matches("search_history_next", &KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
+        assert!(!km.matches(
+            "search_history_prev",
+            &KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)
+        ));
+        assert!(!km.matches(
+            "search_history_next",
+            &KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)
+        ));
     }
 
     #[test]
@@ -1020,8 +1074,7 @@ mod tests {
 
     #[test]
     fn toml_override_applies_to_new_actions() {
-        let km: Keymap =
-            toml::from_str("[inspector_value_search]\nkey = \"ctrl+g\"\n").unwrap();
+        let km: Keymap = toml::from_str("[inspector_value_search]\nkey = \"ctrl+g\"\n").unwrap();
         assert_eq!(km.inspector_value_search.key, "ctrl+g");
     }
 
@@ -1030,9 +1083,21 @@ mod tests {
         // A drifting serde default silently overrides the preset for users
         // whose config omits the key.
         let preset = Keymap::vim();
-        assert_eq!(parse_keydef(&preset.inspector_value_search.key), parse_keydef(&default_inspector_value_search().key));
-        assert_eq!(parse_keydef(&preset.inspector_hash_filter.key), parse_keydef(&default_inspector_hash_filter().key));
-        assert_eq!(parse_keydef(&preset.search_history_prev.key), parse_keydef(&default_search_history_prev().key));
-        assert_eq!(parse_keydef(&preset.search_history_next.key), parse_keydef(&default_search_history_next().key));
+        assert_eq!(
+            parse_keydef(&preset.inspector_value_search.key),
+            parse_keydef(&default_inspector_value_search().key)
+        );
+        assert_eq!(
+            parse_keydef(&preset.inspector_hash_filter.key),
+            parse_keydef(&default_inspector_hash_filter().key)
+        );
+        assert_eq!(
+            parse_keydef(&preset.search_history_prev.key),
+            parse_keydef(&default_search_history_prev().key)
+        );
+        assert_eq!(
+            parse_keydef(&preset.search_history_next.key),
+            parse_keydef(&default_search_history_next().key)
+        );
     }
 }

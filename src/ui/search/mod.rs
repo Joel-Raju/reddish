@@ -959,8 +959,10 @@ mod tests {
         let mut s = GlobalSearch::new();
         s.history.clear();
         s.push_history("user:1");
-        let action =
-            s.handle_event_with_keymap(&alt(KeyCode::Up), &crate::config::keybindings::Keymap::default());
+        let action = s.handle_event_with_keymap(
+            &alt(KeyCode::Up),
+            &crate::config::keybindings::Keymap::default(),
+        );
         assert_eq!(action, Some(SearchAction::QueryChanged));
         assert_eq!(s.query, "user:1");
     }

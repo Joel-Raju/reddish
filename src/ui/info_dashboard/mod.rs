@@ -97,8 +97,12 @@ impl SystemStats {
             used_cpu_sys: get_val(info, "CPU", "used_cpu_sys").and_then(|s| s.parse().ok()),
             used_cpu_user: get_val(info, "CPU", "used_cpu_user").and_then(|s| s.parse().ok()),
 
-            rdb_changes_since_last_save: get_val(info, "Persistence", "rdb_changes_since_last_save")
-                .and_then(|s| s.parse().ok()),
+            rdb_changes_since_last_save: get_val(
+                info,
+                "Persistence",
+                "rdb_changes_since_last_save",
+            )
+            .and_then(|s| s.parse().ok()),
             rdb_last_save_time: get_val(info, "Persistence", "rdb_last_save_time")
                 .and_then(|s| s.parse().ok()),
             rdb_last_bgsave_ok: get_val(info, "Persistence", "rdb_last_bgsave_status")
@@ -376,9 +380,7 @@ impl InfoDashboard {
 
     /// Keyspace breakdown as proportional bars, one row per database.
     fn render_keyspace_cell(&self, frame: &mut Frame, area: Rect) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Keyspace ");
+        let block = Block::default().borders(Borders::ALL).title(" Keyspace ");
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
@@ -399,7 +401,10 @@ impl InfoDashboard {
             let filled = filled.min(bar_width);
             let bar = format!("{}{}", "█".repeat(filled), "·".repeat(bar_width - filled));
             lines.push(Line::from(vec![
-                Span::styled(format!("{} ", entry.db), Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("{} ", entry.db),
+                    Style::default().fg(Color::DarkGray),
+                ),
                 Span::styled(bar, Style::default().fg(Color::Blue)),
                 Span::styled(
                     format!(" {}", entry.keys),
@@ -470,10 +475,7 @@ impl InfoDashboard {
 
         // The cell is only four rows tall, so CPU and the remaining metadata
         // share lines rather than each claiming its own.
-        let mut cpu_spans = vec![Span::styled(
-            "cpu ",
-            Style::default().fg(Color::DarkGray),
-        )];
+        let mut cpu_spans = vec![Span::styled("cpu ", Style::default().fg(Color::DarkGray))];
         let mut cpu_count = 0usize;
         for (label, value) in [
             ("sys", self.stats.used_cpu_sys),
@@ -538,18 +540,12 @@ impl InfoDashboard {
             Color::Green
         };
         Line::from(vec![
-            Span::styled(
-                format!("{label} "),
-                Style::default().fg(Color::DarkGray),
-            ),
+            Span::styled(format!("{label} "), Style::default().fg(Color::DarkGray)),
             Span::styled(
                 format!("{}{}", "█".repeat(filled), "·".repeat(WIDTH - filled)),
                 Style::default().fg(color),
             ),
-            Span::styled(
-                format!("{clamped:.0}%"),
-                Style::default().fg(Color::White),
-            ),
+            Span::styled(format!("{clamped:.0}%"), Style::default().fg(Color::White)),
         ])
     }
 
@@ -700,10 +696,7 @@ mod tests {
 
     #[test]
     fn parse_info_empty_input_is_all_none() {
-        assert_eq!(
-            SystemStats::from_info_sections(""),
-            SystemStats::default()
-        );
+        assert_eq!(SystemStats::from_info_sections(""), SystemStats::default());
     }
 
     #[test]
@@ -731,8 +724,18 @@ mod tests {
     fn total_keys_sums_all_databases() {
         let s = SystemStats {
             keyspace: vec![
-                KeyspaceEntry { db: "db0".into(), keys: 10, expires: 0, avg_ttl: 0 },
-                KeyspaceEntry { db: "db1".into(), keys: 5, expires: 0, avg_ttl: 0 },
+                KeyspaceEntry {
+                    db: "db0".into(),
+                    keys: 10,
+                    expires: 0,
+                    avg_ttl: 0,
+                },
+                KeyspaceEntry {
+                    db: "db1".into(),
+                    keys: 5,
+                    expires: 0,
+                    avg_ttl: 0,
+                },
             ],
             ..Default::default()
         };
@@ -828,7 +831,8 @@ mod tests {
     #[test]
     fn render_dashboard_keyspace_with_single_zero_key_db() {
         // A zero-key database must not divide by zero when scaling the bar.
-        let stats = SystemStats::from_info_sections("# Keyspace\r\ndb0:keys=0,expires=0,avg_ttl=0\r\n");
+        let stats =
+            SystemStats::from_info_sections("# Keyspace\r\ndb0:keys=0,expires=0,avg_ttl=0\r\n");
         let text = rendered(&stats, 120, 40);
         assert!(text.contains("db0"), "got:\n{text}");
     }

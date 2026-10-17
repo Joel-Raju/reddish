@@ -83,7 +83,9 @@ pub fn synthetic_app(config: Config, keys: usize) -> App {
     app.value_inspector.set_metadata(
         Some("embstr".to_string()),
         Some(128_000),
-        Some(crate::redis::client::Ttl::Expires(Duration::from_secs(3600))),
+        Some(crate::redis::client::Ttl::Expires(Duration::from_secs(
+            3600,
+        ))),
     );
 
     app
@@ -117,9 +119,7 @@ pub fn populate_all_value_types(inspector: &mut ValueInspector) {
             (0..2_000)
                 .map(|i| StreamEntry {
                     id: format!("{}-0", 1_600_000_000_000u64 + i),
-                    fields: [("k".to_string(), format!("v{i}"))]
-                        .into_iter()
-                        .collect(),
+                    fields: [("k".to_string(), format!("v{i}"))].into_iter().collect(),
                 })
                 .collect(),
         ),
@@ -216,12 +216,7 @@ pub fn peak_rss_bytes() -> Option<u64> {
         let status = std::fs::read_to_string("/proc/self/status").ok()?;
         for line in status.lines() {
             if let Some(rest) = line.strip_prefix("VmHWM:") {
-                let kb: u64 = rest
-                    .trim()
-                    .trim_end_matches(" kB")
-                    .trim()
-                    .parse()
-                    .ok()?;
+                let kb: u64 = rest.trim().trim_end_matches(" kB").trim().parse().ok()?;
                 return Some(kb * 1024);
             }
         }
@@ -304,7 +299,10 @@ mod tests {
     fn synthetic_app_populates_metadata_on_entries() {
         let app = synthetic_app(Config::default(), 10);
         let rows = app.key_browser.tree.visible_rows();
-        assert!(rows.iter().any(|r| r.key.as_ref().is_some_and(|k| k.ttl.is_some())));
+        assert!(
+            rows.iter()
+                .any(|r| r.key.as_ref().is_some_and(|k| k.ttl.is_some()))
+        );
     }
 
     #[test]
@@ -337,9 +335,7 @@ mod tests {
 
     #[test]
     fn percentile_uses_nearest_rank() {
-        let samples: Vec<Duration> = (1..=100)
-            .map(Duration::from_micros)
-            .collect();
+        let samples: Vec<Duration> = (1..=100).map(Duration::from_micros).collect();
         // p50 of 1..100us -> rank 50 -> 50us
         assert_eq!(percentile(&samples, 0.50), Duration::from_micros(50));
         // p99 -> rank 99 -> 99us
@@ -362,7 +358,10 @@ mod tests {
         };
         assert!(ok.within_budget());
 
-        let over = RenderStats { p99: RENDER_P99_BUDGET + Duration::from_millis(1), ..ok };
+        let over = RenderStats {
+            p99: RENDER_P99_BUDGET + Duration::from_millis(1),
+            ..ok
+        };
         assert!(!over.within_budget());
     }
 
@@ -412,10 +411,9 @@ mod tests {
         use crate::app::Tab;
         let mut app = synthetic_app(Config::default(), 500);
         populate_all_value_types(&mut app.value_inspector);
-        app.pubsub_widget
-            .handle_event(&crate::events::Event::Key(crossterm::event::KeyEvent::from(
-                crossterm::event::KeyCode::Char('a'),
-            )));
+        app.pubsub_widget.handle_event(&crate::events::Event::Key(
+            crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('a')),
+        ));
         for tab in [Tab::Keys, Tab::Repl, Tab::Info, Tab::PubSub] {
             app.active_tab = tab;
             let backend = TestBackend::new(120, 40);

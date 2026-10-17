@@ -28,7 +28,11 @@ impl TextAreaEditor {
         } else {
             (lines.len() - 1, lines.last().unwrap().len())
         };
-        Self { text, cursor, cancelled: false }
+        Self {
+            text,
+            cursor,
+            cancelled: false,
+        }
     }
 
     pub fn cursor_line(&self) -> usize {

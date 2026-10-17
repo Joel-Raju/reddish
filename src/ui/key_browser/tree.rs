@@ -126,7 +126,11 @@ impl NamespaceTree {
                 .as_ref()
                 .map(|t| {
                     let s = t.display();
-                    if s.is_empty() { String::new() } else { format!(" {}", s) }
+                    if s.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {}", s)
+                    }
                 })
                 .unwrap_or_default();
             rows.push(TreeRow {

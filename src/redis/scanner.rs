@@ -46,12 +46,8 @@ impl Scanner {
         }
 
         match &self.client.client {
-            crate::redis::client::RedisClient::Standalone(_) => {
-                self.next_batch_standalone().await
-            }
-            crate::redis::client::RedisClient::Cluster(_) => {
-                self.next_batch_cluster().await
-            }
+            crate::redis::client::RedisClient::Standalone(_) => self.next_batch_standalone().await,
+            crate::redis::client::RedisClient::Cluster(_) => self.next_batch_cluster().await,
         }
     }
 
@@ -70,11 +66,13 @@ impl Scanner {
         };
         let mut conn = conn_clone;
 
-        let (new_cursor, keys): (u64, Vec<String>) =
-            tokio::time::timeout(SCAN_TIMEOUT, cmd.query_async::<(u64, Vec<String>)>(&mut conn))
-                .await
-                .map_err(|_| color_eyre::eyre::eyre!("SCAN timed out after {}s", SCAN_TIMEOUT.as_secs()))?
-                .map_err(|e| color_eyre::eyre::eyre!("SCAN failed: {}", e))?;
+        let (new_cursor, keys): (u64, Vec<String>) = tokio::time::timeout(
+            SCAN_TIMEOUT,
+            cmd.query_async::<(u64, Vec<String>)>(&mut conn),
+        )
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("SCAN timed out after {}s", SCAN_TIMEOUT.as_secs()))?
+        .map_err(|e| color_eyre::eyre::eyre!("SCAN failed: {}", e))?;
 
         self.standalone_cursor = new_cursor;
         if self.standalone_cursor == 0 {
@@ -94,7 +92,11 @@ impl Scanner {
             let mut nodes = Vec::with_capacity(addrs.len());
             for addr in &addrs {
                 let conn = self.client.connect_node(addr).await?;
-                nodes.push(NodeScan { conn, cursor: 0, done: false });
+                nodes.push(NodeScan {
+                    conn,
+                    cursor: 0,
+                    done: false,
+                });
             }
             self.cluster_nodes = Some(nodes);
         }
@@ -120,11 +122,13 @@ impl Scanner {
             .arg("COUNT")
             .arg(self.count);
 
-        let (new_cursor, keys): (u64, Vec<String>) =
-            tokio::time::timeout(SCAN_TIMEOUT, cmd.query_async::<(u64, Vec<String>)>(&mut node.conn))
-                .await
-                .map_err(|_| color_eyre::eyre::eyre!("SCAN timed out after {}s", SCAN_TIMEOUT.as_secs()))?
-                .map_err(|e| color_eyre::eyre::eyre!("SCAN failed: {}", e))?;
+        let (new_cursor, keys): (u64, Vec<String>) = tokio::time::timeout(
+            SCAN_TIMEOUT,
+            cmd.query_async::<(u64, Vec<String>)>(&mut node.conn),
+        )
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("SCAN timed out after {}s", SCAN_TIMEOUT.as_secs()))?
+        .map_err(|e| color_eyre::eyre::eyre!("SCAN failed: {}", e))?;
 
         node.cursor = new_cursor;
         if node.cursor == 0 {

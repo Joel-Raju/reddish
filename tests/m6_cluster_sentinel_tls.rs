@@ -238,7 +238,10 @@ fn test_danger_policy_allows_keys_prefix() {
     // KEYS with a non-wildcard pattern is not blocked by danger policy
     let stages = parse_pipeline("KEYS user:*");
     let err = reddish_tui::app::repl_policy_error_for_test(&stages, false);
-    assert!(err.is_none(), "KEYS user:* should not be blocked, got: {err:?}");
+    assert!(
+        err.is_none(),
+        "KEYS user:* should not be blocked, got: {err:?}"
+    );
 }
 
 #[test]

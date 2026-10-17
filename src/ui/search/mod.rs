@@ -416,8 +416,8 @@ impl GlobalSearch {
                 .collect::<Vec<_>>();
             frame.render_widget(Paragraph::new(preview), result_area);
         } else if !self.scanning && self.regex_error.is_none() {
-            let no_results = Paragraph::new("No matches found")
-                .style(Style::default().fg(Color::DarkGray));
+            let no_results =
+                Paragraph::new("No matches found").style(Style::default().fg(Color::DarkGray));
             frame.render_widget(no_results, result_area);
         }
     }
@@ -471,11 +471,7 @@ mod tests {
     #[test]
     fn fuzzy_subsequence_match_reorders_by_score() {
         let mut s = GlobalSearch::new();
-        s.set_results(vec![
-            "zzz_user_zzz".into(),
-            "user:1".into(),
-            "usr".into(),
-        ]);
+        s.set_results(vec!["zzz_user_zzz".into(), "user:1".into(), "usr".into()]);
         s.query = "user".into();
         s.apply_filter();
         // Every atom ("user") must match as a subsequence.
@@ -512,11 +508,7 @@ mod tests {
     fn regex_mode_matches_pattern() {
         let mut s = GlobalSearch::new();
         s.mode = SearchMode::Regex;
-        s.set_results(vec![
-            "user:1".into(),
-            "user:22".into(),
-            "session:1".into(),
-        ]);
+        s.set_results(vec!["user:1".into(), "user:22".into(), "session:1".into()]);
         s.query = "^user:[0-9]+$".into();
         s.apply_filter();
         assert_eq!(s.filtered.len(), 2, "{:?}", s.filtered);
@@ -567,7 +559,8 @@ mod tests {
     #[test]
     fn ctrl_r_emits_mode_toggled() {
         let mut s = GlobalSearch::new();
-        let action = s.handle_event_with_keymap(&ctrl('r'), &crate::config::keybindings::Keymap::default());
+        let action =
+            s.handle_event_with_keymap(&ctrl('r'), &crate::config::keybindings::Keymap::default());
         assert_eq!(action, Some(SearchAction::ModeToggled));
         assert_eq!(s.mode, SearchMode::Regex);
     }
@@ -669,8 +662,14 @@ mod tests {
 
     #[test]
     fn glob_joins_atoms_for_namespace_queries() {
-        assert_eq!(glob_pattern_for_query("user:1", SearchMode::Fuzzy), "*user*1*");
-        assert_eq!(glob_pattern_for_query("a b c", SearchMode::Fuzzy), "*a*b*c*");
+        assert_eq!(
+            glob_pattern_for_query("user:1", SearchMode::Fuzzy),
+            "*user*1*"
+        );
+        assert_eq!(
+            glob_pattern_for_query("a b c", SearchMode::Fuzzy),
+            "*a*b*c*"
+        );
         assert_eq!(glob_pattern_for_query("", SearchMode::Fuzzy), "*");
         assert_eq!(glob_pattern_for_query("***", SearchMode::Fuzzy), "*");
     }
@@ -679,7 +678,10 @@ mod tests {
     fn glob_metacharacters_cannot_widen_the_scan() {
         // `*` is consumed as a separator, so the pattern stays anchored to the
         // surrounding atoms rather than becoming a match-everything glob.
-        assert_eq!(glob_pattern_for_query("user:*", SearchMode::Fuzzy), "*user*");
+        assert_eq!(
+            glob_pattern_for_query("user:*", SearchMode::Fuzzy),
+            "*user*"
+        );
         assert_eq!(glob_pattern_for_query("?abc", SearchMode::Fuzzy), "*abc*");
     }
 

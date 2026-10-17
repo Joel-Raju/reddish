@@ -20,13 +20,13 @@ use crate::config::connections::{ConnectionMode, ConnectionProfile, ConnectionSt
 use crate::config::keybindings::Keymap;
 use crate::events::{Event, EventHandler};
 use crate::redis::client::{RedisClientHandle, RedisType};
+use crate::redis::pubsub::{PubSubClient, PubSubKind, PubSubMessage};
 use crate::redis::server::slowlog_get;
 use crate::ui::command_palette::{CommandPalette, PaletteAction};
 use crate::ui::connection_screen::{ConnectionScreen, ConnectionScreenAction};
 use crate::ui::info_dashboard::{InfoDashboard, SystemStats};
 use crate::ui::key_browser::scanner_task;
 use crate::ui::key_browser::{BrowserAction, KeyBrowser};
-use crate::redis::pubsub::{PubSubClient, PubSubKind, PubSubMessage};
 use crate::ui::pubsub::{PubSubAction, PubSubWidget};
 use crate::ui::repl::{ReplAction, ReplLineStatus, ReplWidget, parse_pipeline};
 use crate::ui::search::{GlobalSearch, SearchAction};
@@ -126,11 +126,7 @@ fn repl_policy_error(stages: &[Vec<String>], readonly: bool) -> Option<String> {
 
 fn is_dangerous_repl_command(command: &str, args: &[String]) -> bool {
     matches!(command, "FLUSHDB" | "FLUSHALL")
-        || command == "KEYS"
-            && args
-                .first()
-                .map(|arg| arg.trim() == "*")
-                .unwrap_or(false)
+        || command == "KEYS" && args.first().map(|arg| arg.trim() == "*").unwrap_or(false)
 }
 
 fn is_mutating_repl_command(command: &str, args: &[String]) -> bool {
@@ -139,17 +135,17 @@ fn is_mutating_repl_command(command: &str, args: &[String]) -> bool {
         | "BRPOPLPUSH" | "BZMPOP" | "BZPOPMAX" | "BZPOPMIN" | "COPY" | "DECR" | "DECRBY"
         | "DEL" | "EVAL" | "EVALSHA" | "EXPIRE" | "EXPIREAT" | "EXPIRETIME" | "FLUSHALL"
         | "FLUSHDB" | "GEOADD" | "GETDEL" | "GETEX" | "HDEL" | "HINCRBY" | "HINCRBYFLOAT"
-        | "HMSET" | "HSET" | "HSETNX" | "INCR" | "INCRBY" | "INCRBYFLOAT" | "LINSERT"
-        | "LMOVE" | "LMPOP" | "LPOP" | "LPOS" | "LPUSH" | "LPUSHX" | "LREM" | "LSET"
-        | "LTRIM" | "MIGRATE" | "MOVE" | "MSET" | "MSETNX" | "PERSIST" | "PEXPIRE"
-        | "PEXPIREAT" | "PFADD" | "PFMERGE" | "PUBLISH" | "RENAME" | "RENAMENX" | "RESTORE"
-        | "RPOP" | "RPOPLPUSH" | "RPUSH" | "RPUSHX" | "SADD" | "SDIFFSTORE" | "SET"
-        | "SETBIT" | "SETEX" | "SETNX" | "SETRANGE" | "SINTERSTORE" | "SMOVE" | "SORT"
-        | "SPOP" | "SREM" | "SUNIONSTORE" | "TOUCH" | "UNLINK" | "XACK"
-        | "XADD" | "XAUTOCLAIM" | "XCLAIM" | "XDEL" | "XGROUP" | "XREADGROUP" | "XSETID"
-        | "XTRIM" | "ZADD" | "ZDIFFSTORE" | "ZINCRBY" | "ZINTERSTORE" | "ZMPOP"
-        | "ZMSCORE" | "ZPOPMAX" | "ZPOPMIN" | "ZRANGESTORE" | "ZREM" | "ZREMRANGEBYLEX"
-        | "ZREMRANGEBYRANK" | "ZREMRANGEBYSCORE" | "ZUNIONSTORE" => true,
+        | "HMSET" | "HSET" | "HSETNX" | "INCR" | "INCRBY" | "INCRBYFLOAT" | "LINSERT" | "LMOVE"
+        | "LMPOP" | "LPOP" | "LPOS" | "LPUSH" | "LPUSHX" | "LREM" | "LSET" | "LTRIM"
+        | "MIGRATE" | "MOVE" | "MSET" | "MSETNX" | "PERSIST" | "PEXPIRE" | "PEXPIREAT"
+        | "PFADD" | "PFMERGE" | "PUBLISH" | "RENAME" | "RENAMENX" | "RESTORE" | "RPOP"
+        | "RPOPLPUSH" | "RPUSH" | "RPUSHX" | "SADD" | "SDIFFSTORE" | "SET" | "SETBIT" | "SETEX"
+        | "SETNX" | "SETRANGE" | "SINTERSTORE" | "SMOVE" | "SORT" | "SPOP" | "SREM"
+        | "SUNIONSTORE" | "TOUCH" | "UNLINK" | "XACK" | "XADD" | "XAUTOCLAIM" | "XCLAIM"
+        | "XDEL" | "XGROUP" | "XREADGROUP" | "XSETID" | "XTRIM" | "ZADD" | "ZDIFFSTORE"
+        | "ZINCRBY" | "ZINTERSTORE" | "ZMPOP" | "ZMSCORE" | "ZPOPMAX" | "ZPOPMIN"
+        | "ZRANGESTORE" | "ZREM" | "ZREMRANGEBYLEX" | "ZREMRANGEBYRANK" | "ZREMRANGEBYSCORE"
+        | "ZUNIONSTORE" => true,
         "ACL" => matches!(
             args.first().map(|s| s.to_ascii_uppercase()).as_deref(),
             Some("SETUSER" | "DELUSER" | "LOAD" | "SAVE" | "GENPASS")
@@ -482,7 +478,10 @@ impl App {
         }
 
         if self.mode() == &AppMode::Search {
-            if let Some(action) = self.search.handle_event_with_keymap(&Event::Key(key), &self.keymap) {
+            if let Some(action) = self
+                .search
+                .handle_event_with_keymap(&Event::Key(key), &self.keymap)
+            {
                 match action {
                     SearchAction::Execute(key_name) => {
                         if self.key_browser.jump_to_key(&key_name) {
@@ -557,9 +556,9 @@ impl App {
                         if let Err(err) = screen.store.save() {
                             screen.error = Some(format!("Failed to save: {err}"));
                         }
-                        screen.cursor = screen.cursor.min(
-                            screen.store.profiles.len().saturating_sub(1),
-                        );
+                        screen.cursor = screen
+                            .cursor
+                            .min(screen.store.profiles.len().saturating_sub(1));
                     }
                 }
             }
@@ -576,7 +575,11 @@ impl App {
                 self.overlay_input = None;
                 self.mode_stack.pop();
             } else if self.keymap.matches("confirm", &key) {
-                let cmd = self.overlay_input.as_ref().map(|o| o.value.clone()).unwrap_or_default();
+                let cmd = self
+                    .overlay_input
+                    .as_ref()
+                    .map(|o| o.value.clone())
+                    .unwrap_or_default();
                 self.overlay_input = None;
                 self.mode_stack.pop();
                 if !cmd.is_empty() {
@@ -680,7 +683,9 @@ impl App {
 
         match self.active_tab {
             Tab::Keys => {
-                let inspector_action = self.value_inspector.handle_event_with_keymap(&Event::Key(key), &self.keymap);
+                let inspector_action = self
+                    .value_inspector
+                    .handle_event_with_keymap(&Event::Key(key), &self.keymap);
                 if self.value_inspector.edit_mode {
                     if let Some(action) = inspector_action {
                         self.handle_inspector_action(action).await;
@@ -707,7 +712,9 @@ impl App {
             }
             Tab::Info => {
                 use crate::ui::info_dashboard::InfoAction;
-                if let Some(InfoAction::ExportCsv) = self.info_dashboard.handle_event(&Event::Key(key)) {
+                if let Some(InfoAction::ExportCsv) =
+                    self.info_dashboard.handle_event(&Event::Key(key))
+                {
                     match self.info_dashboard.slowlog_panel.export_csv() {
                         Ok(path) => {
                             self.error_message = Some(format!("Exported slowlog to {path}"));
@@ -868,7 +875,44 @@ impl App {
         if self.active_tab == Tab::Info && self.tick_count.is_multiple_of(4) {
             self.refresh_info_dashboard().await;
         }
+        self.stream_follow_tick().await;
         self.update_status_bar_context();
+    }
+
+    /// Append stream entries newer than the last seen id when the inspector is
+    /// following. Throttled to every 4th tick (~1s at the 250ms tick rate) so
+    /// a busy stream does not issue one XRANGE per tick.
+    async fn stream_follow_tick(&mut self) {
+        if !self.tick_count.is_multiple_of(4) {
+            return;
+        }
+        let Some(last_id) = self.value_inspector.follow_tick() else {
+            return;
+        };
+        let Some(key) = self.value_inspector.key.clone() else {
+            return;
+        };
+        let Some(client) = self.client.as_ref() else {
+            return;
+        };
+        match client.xrange_after(&key, &last_id).await {
+            Ok(new_entries) => {
+                if new_entries.is_empty() {
+                    return;
+                }
+                let followed = self.value_inspector.stream_follow;
+                let appended = self.value_inspector.append_stream_entries(new_entries);
+                if followed && appended > 0 {
+                    self.value_inspector.follow_cursor_to_tail();
+                }
+            }
+            Err(err) => {
+                // A transient error should not kill follow mode; report once
+                // via the status bar toast (which self-expires).
+                self.status_bar
+                    .push_error(format!("Stream follow failed: {err}"));
+            }
+        }
     }
 
     fn drain_monitor_messages(&mut self) {
@@ -881,7 +925,8 @@ impl App {
 
     async fn start_monitor(&mut self) {
         if !self.allow_monitor {
-            self.error_message = Some("MONITOR disabled. Use --allow-monitor to enable.".to_string());
+            self.error_message =
+                Some("MONITOR disabled. Use --allow-monitor to enable.".to_string());
             return;
         }
         let Some(ref client) = self.client else {
@@ -950,12 +995,8 @@ impl App {
                     let encoding_fut = client.object_encoding(&name);
                     let memory_fut = client.memory_usage(&name);
 
-                    let (value_res, ttl_res, encoding_res, memory_res) = tokio::join!(
-                        value_fut,
-                        ttl_fut,
-                        encoding_fut,
-                        memory_fut,
-                    );
+                    let (value_res, ttl_res, encoding_res, memory_res) =
+                        tokio::join!(value_fut, ttl_fut, encoding_fut, memory_fut,);
 
                     match value_res {
                         Ok(value) => {
@@ -963,7 +1004,8 @@ impl App {
                             let encoding = encoding_res.ok();
                             let memory_bytes = memory_res.ok();
                             let ttl = ttl_res.ok();
-                            self.value_inspector.set_metadata(encoding, memory_bytes, ttl);
+                            self.value_inspector
+                                .set_metadata(encoding, memory_bytes, ttl);
                         }
                         Err(err) => {
                             self.value_inspector
@@ -977,7 +1019,8 @@ impl App {
             }
             BrowserAction::DeleteKey(name) => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: delete blocked (press Esc)".to_string());
+                    self.error_message =
+                        Some("Read-only mode: delete blocked (press Esc)".to_string());
                     return;
                 }
                 self.pending_delete_key = Some(name.clone());
@@ -992,7 +1035,8 @@ impl App {
             }
             BrowserAction::NewKey { name, key_type } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked (press Esc)".to_string());
+                    self.error_message =
+                        Some("Read-only mode: write blocked (press Esc)".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
@@ -1002,9 +1046,7 @@ impl App {
                         RedisType::Hash => client.hash_set(&name, "", "").await,
                         RedisType::Set => client.set_add(&name, "").await,
                         RedisType::ZSet => client.zadd(&name, 0.0, "").await,
-                        RedisType::Stream => {
-                            client.xadd(&name, "*", &[]).await.map(|_| ())
-                        }
+                        RedisType::Stream => client.xadd(&name, "*", &[]).await.map(|_| ()),
                         RedisType::Unknown => {
                             self.error_message = Some("Unknown key type".to_string());
                             return;
@@ -1017,7 +1059,8 @@ impl App {
             }
             BrowserAction::RenameKey { old_name, new_name } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked (press Esc)".to_string());
+                    self.error_message =
+                        Some("Read-only mode: write blocked (press Esc)".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client
@@ -1028,7 +1071,8 @@ impl App {
             }
             BrowserAction::ExpireKey(name) => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked (press Esc)".to_string());
+                    self.error_message =
+                        Some("Read-only mode: write blocked (press Esc)".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client
@@ -1039,7 +1083,8 @@ impl App {
             }
             BrowserAction::SetTtl { key, seconds } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked (press Esc)".to_string());
+                    self.error_message =
+                        Some("Read-only mode: write blocked (press Esc)".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client
@@ -1057,27 +1102,35 @@ impl App {
             }
             BrowserAction::DuplicateKey { old_name, new_name } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked (press Esc)".to_string());
+                    self.error_message =
+                        Some("Read-only mode: write blocked (press Esc)".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
                     match client.dump(&old_name).await {
                         Ok(data) => {
                             if let Err(err) = client.restore(&new_name, 0, &data).await {
-                                self.error_message = Some(format!("Failed to duplicate key: {err}"));
+                                self.error_message =
+                                    Some(format!("Failed to duplicate key: {err}"));
                             }
                         }
                         Err(err) => {
-                            self.error_message = Some(format!("Failed to dump key '{old_name}': {err}"));
+                            self.error_message =
+                                Some(format!("Failed to dump key '{old_name}': {err}"));
                         }
                     }
                 } else {
                     self.error_message = Some("Not connected".to_string());
                 }
             }
-            BrowserAction::SetOp { op, source_keys, dest } => {
+            BrowserAction::SetOp {
+                op,
+                source_keys,
+                dest,
+            } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked (press Esc)".to_string());
+                    self.error_message =
+                        Some("Read-only mode: write blocked (press Esc)".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
@@ -1096,7 +1149,8 @@ impl App {
         match action {
             InspectorAction::WriteString { key, value } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked (press Esc)".to_string());
+                    self.error_message =
+                        Some("Read-only mode: write blocked (press Esc)".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
@@ -1277,13 +1331,20 @@ impl App {
                     self.reload_inspector_value(&key).await;
                 }
             }
-            InspectorAction::StreamAdd { key, entry_id, fields } => {
+            InspectorAction::StreamAdd {
+                key,
+                entry_id,
+                fields,
+            } => {
                 if self.readonly {
                     self.error_message = Some("Read-only mode: write blocked".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
-                    let field_refs: Vec<(&str, &str)> = fields.iter().map(|(f, v)| (f.as_str(), v.as_str())).collect();
+                    let field_refs: Vec<(&str, &str)> = fields
+                        .iter()
+                        .map(|(f, v)| (f.as_str(), v.as_str()))
+                        .collect();
                     if let Err(err) = client.xadd(&key, &entry_id, &field_refs).await {
                         self.error_message = Some(format!("Failed to add stream entry: {err}"));
                         return;
@@ -1317,7 +1378,8 @@ impl App {
                             self.value_inspector.stream_groups = Some(groups);
                         }
                         Err(err) => {
-                            self.error_message = Some(format!("Failed to fetch stream groups: {err}"));
+                            self.error_message =
+                                Some(format!("Failed to fetch stream groups: {err}"));
                         }
                     }
                 }
@@ -1333,12 +1395,8 @@ impl App {
                     return;
                 }
                 if let Some(ref client) = self.client {
-                    if let Err(err) = client
-                        .xtrim(&key, &strategy, &threshold, approximate)
-                        .await
-                    {
-                        self.error_message =
-                            Some(format!("Failed to XTRIM '{key}': {err}"));
+                    if let Err(err) = client.xtrim(&key, &strategy, &threshold, approximate).await {
+                        self.error_message = Some(format!("Failed to XTRIM '{key}': {err}"));
                         return;
                     }
                     self.reload_inspector_value(&key).await;
@@ -1378,20 +1436,13 @@ impl App {
         let encoding_fut = client.object_encoding(key);
         let memory_fut = client.memory_usage(key);
 
-        let (value_res, ttl_res, encoding_res, memory_res) = tokio::join!(
-            value_fut,
-            ttl_fut,
-            encoding_fut,
-            memory_fut,
-        );
+        let (value_res, ttl_res, encoding_res, memory_res) =
+            tokio::join!(value_fut, ttl_fut, encoding_fut, memory_fut,);
 
         if let Ok(value) = value_res {
             self.value_inspector.set_value(key.to_string(), value);
-            self.value_inspector.set_metadata(
-                encoding_res.ok(),
-                memory_res.ok(),
-                ttl_res.ok(),
-            );
+            self.value_inspector
+                .set_metadata(encoding_res.ok(), memory_res.ok(), ttl_res.ok());
         }
     }
 
@@ -1550,10 +1601,7 @@ impl App {
         self.status_bar.render(frame, main_layout[2]);
 
         if self.mode() == &AppMode::Confirm {
-            let key_name = self
-                .pending_delete_key
-                .as_deref()
-                .unwrap_or("unknown");
+            let key_name = self.pending_delete_key.as_deref().unwrap_or("unknown");
             let dialog = ConfirmDialog::new(format!("Delete key '{}'?", key_name));
             let area = centered_rect(60, 20, frame.area());
             dialog.render(frame, area);
@@ -1569,8 +1617,7 @@ impl App {
             } else {
                 String::new()
             };
-            let paragraph = Paragraph::new(prompt_text)
-                .style(Style::default().fg(Color::Yellow));
+            let paragraph = Paragraph::new(prompt_text).style(Style::default().fg(Color::Yellow));
             frame.render_widget(paragraph, area);
         }
 

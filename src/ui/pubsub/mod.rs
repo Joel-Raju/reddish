@@ -102,7 +102,9 @@ impl PubSubWidget {
                 KeyCode::Home => self.cursor = 0,
                 KeyCode::End => self.cursor = self.input.len(),
                 KeyCode::Up => {
-                    if self.input_mode == PubSubInputMode::Channel || self.input_mode == PubSubInputMode::Pattern {
+                    if self.input_mode == PubSubInputMode::Channel
+                        || self.input_mode == PubSubInputMode::Pattern
+                    {
                         if self.channel_cursor > 0 {
                             self.channel_cursor -= 1;
                         }
@@ -111,7 +113,9 @@ impl PubSubWidget {
                     }
                 }
                 KeyCode::Down => {
-                    if self.input_mode == PubSubInputMode::Channel || self.input_mode == PubSubInputMode::Pattern {
+                    if self.input_mode == PubSubInputMode::Channel
+                        || self.input_mode == PubSubInputMode::Pattern
+                    {
                         if self.channel_cursor + 1 < self.subscriptions.len() {
                             self.channel_cursor += 1;
                         }
@@ -133,7 +137,8 @@ impl PubSubWidget {
                             let kind = PubSubKind::Channel(value.clone());
                             self.active_subscription = Some(kind.clone());
                             if !self.subscriptions.iter().any(|s| s.kind == kind) {
-                                let color = COLOR_CYCLE[self.subscriptions.len() % COLOR_CYCLE.len()];
+                                let color =
+                                    COLOR_CYCLE[self.subscriptions.len() % COLOR_CYCLE.len()];
                                 self.subscriptions.push(Subscription { kind, color });
                             }
                             self.input.clear();
@@ -144,7 +149,8 @@ impl PubSubWidget {
                             let kind = PubSubKind::Pattern(value.clone());
                             self.active_subscription = Some(kind.clone());
                             if !self.subscriptions.iter().any(|s| s.kind == kind) {
-                                let color = COLOR_CYCLE[self.subscriptions.len() % COLOR_CYCLE.len()];
+                                let color =
+                                    COLOR_CYCLE[self.subscriptions.len() % COLOR_CYCLE.len()];
                                 self.subscriptions.push(Subscription { kind, color });
                             }
                             self.input.clear();
@@ -164,15 +170,19 @@ impl PubSubWidget {
                     }
                 }
                 KeyCode::Char('D') => {
-                    if (self.input_mode == PubSubInputMode::Channel || self.input_mode == PubSubInputMode::Pattern)
+                    if (self.input_mode == PubSubInputMode::Channel
+                        || self.input_mode == PubSubInputMode::Pattern)
                         && let Some(sub) = self.subscriptions.get(self.channel_cursor).cloned()
                     {
                         self.subscriptions.remove(self.channel_cursor);
-                        if self.channel_cursor >= self.subscriptions.len() && self.channel_cursor > 0 {
+                        if self.channel_cursor >= self.subscriptions.len()
+                            && self.channel_cursor > 0
+                        {
                             self.channel_cursor -= 1;
                         }
                         if self.active_subscription.as_ref() == Some(&sub.kind) {
-                            self.active_subscription = self.subscriptions.first().map(|s| s.kind.clone());
+                            self.active_subscription =
+                                self.subscriptions.first().map(|s| s.kind.clone());
                         }
                         return match sub.kind {
                             PubSubKind::Channel(ch) => Some(PubSubAction::Unsubscribe(ch)),
@@ -233,7 +243,13 @@ impl PubSubWidget {
         } else {
             let max_visible = area.height.saturating_sub(6) as usize;
             let start = self.channel_scroll as usize;
-            for (i, sub) in self.subscriptions.iter().skip(start).take(max_visible).enumerate() {
+            for (i, sub) in self
+                .subscriptions
+                .iter()
+                .skip(start)
+                .take(max_visible)
+                .enumerate()
+            {
                 let abs_idx = start + i;
                 let is_active = self.active_subscription.as_ref() == Some(&sub.kind);
                 let prefix = if abs_idx == self.channel_cursor {
@@ -269,12 +285,8 @@ impl PubSubWidget {
             Style::default().fg(Color::Green),
         )));
 
-        let para = Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" Channels "),
-            );
+        let para =
+            Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" Channels "));
         frame.render_widget(para, area);
     }
 
@@ -284,7 +296,11 @@ impl PubSubWidget {
             PubSubInputMode::Message => "message",
             PubSubInputMode::Pattern => "pattern",
         };
-        let active = self.active_subscription.as_ref().map(|k| k.name()).unwrap_or("<none>");
+        let active = self
+            .active_subscription
+            .as_ref()
+            .map(|k| k.name())
+            .unwrap_or("<none>");
 
         let mut lines: Vec<Line> = Vec::new();
 
@@ -311,14 +327,24 @@ impl PubSubWidget {
 
         let max_visible = area.height.saturating_sub(4) as usize;
 
-        for msg in self.messages.iter().rev().skip(self.scroll as usize).take(max_visible) {
+        for msg in self
+            .messages
+            .iter()
+            .rev()
+            .skip(self.scroll as usize)
+            .take(max_visible)
+        {
             let channel_tag = if let Some(ref p) = msg.pattern {
                 format!("[{}:{}]", p, msg.channel)
             } else {
                 format!("[{}]", msg.channel)
             };
-            let tag_color = self.subscriptions.iter()
-                .find(|s| s.kind.name() == msg.channel || msg.pattern.as_deref() == Some(s.kind.name()))
+            let tag_color = self
+                .subscriptions
+                .iter()
+                .find(|s| {
+                    s.kind.name() == msg.channel || msg.pattern.as_deref() == Some(s.kind.name())
+                })
                 .map(|s| s.color)
                 .unwrap_or(Color::Blue);
             lines.push(Line::from(vec![
@@ -335,8 +361,8 @@ impl PubSubWidget {
             ]));
         }
 
-        let para = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title(" Messages "));
+        let para =
+            Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" Messages "));
         frame.render_widget(para, area);
     }
 }
@@ -376,9 +402,15 @@ mod tests {
         let mut widget = PubSubWidget::new();
         widget.input = "test-chan".to_string();
         let action = widget.handle_event(&key_event(KeyCode::Enter));
-        assert_eq!(action, Some(PubSubAction::Subscribe("test-chan".to_string())));
+        assert_eq!(
+            action,
+            Some(PubSubAction::Subscribe("test-chan".to_string()))
+        );
         assert_eq!(widget.subscriptions.len(), 1);
-        assert_eq!(widget.subscriptions[0].kind, PubSubKind::Channel("test-chan".to_string()));
+        assert_eq!(
+            widget.subscriptions[0].kind,
+            PubSubKind::Channel("test-chan".to_string())
+        );
         assert_eq!(widget.subscriptions[0].color, Color::Cyan);
     }
 
@@ -390,7 +422,10 @@ mod tests {
         let action = widget.handle_event(&key_event(KeyCode::Enter));
         assert_eq!(action, Some(PubSubAction::PSubscribe("test-*".to_string())));
         assert_eq!(widget.subscriptions.len(), 1);
-        assert_eq!(widget.subscriptions[0].kind, PubSubKind::Pattern("test-*".to_string()));
+        assert_eq!(
+            widget.subscriptions[0].kind,
+            PubSubKind::Pattern("test-*".to_string())
+        );
         assert_eq!(widget.subscriptions[0].color, Color::Cyan);
     }
 
@@ -408,7 +443,10 @@ mod tests {
         let action = widget.handle_event(&key_event(KeyCode::Char('D')));
         assert_eq!(action, Some(PubSubAction::Unsubscribe("ch1".to_string())));
         assert_eq!(widget.subscriptions.len(), 1);
-        assert_eq!(widget.subscriptions[0].kind, PubSubKind::Pattern("pat*".to_string()));
+        assert_eq!(
+            widget.subscriptions[0].kind,
+            PubSubKind::Pattern("pat*".to_string())
+        );
     }
 
     #[test]
@@ -427,7 +465,10 @@ mod tests {
         let action = widget.handle_event(&key_event(KeyCode::Char('D')));
         assert_eq!(action, Some(PubSubAction::PUnsubscribe("pat*".to_string())));
         assert_eq!(widget.subscriptions.len(), 1);
-        assert_eq!(widget.subscriptions[0].kind, PubSubKind::Channel("ch1".to_string()));
+        assert_eq!(
+            widget.subscriptions[0].kind,
+            PubSubKind::Channel("ch1".to_string())
+        );
     }
 
     #[test]

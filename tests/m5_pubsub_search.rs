@@ -6,7 +6,9 @@ use reddish_tui::config::connections::ConnectionProfile;
 use reddish_tui::events::Event;
 use reddish_tui::redis::client::RedisClientHandle;
 use reddish_tui::redis::pubsub::PubSubMessage;
-use reddish_tui::ui::pubsub::{PubSubAction, PubSubWidget, PubSubInputMode, PubSubKind, Subscription};
+use reddish_tui::ui::pubsub::{
+    PubSubAction, PubSubInputMode, PubSubKind, PubSubWidget, Subscription,
+};
 use reddish_tui::ui::search::{GlobalSearch, SearchAction};
 
 fn test_profile() -> ConnectionProfile {
@@ -155,14 +157,21 @@ fn test_global_search_drain_scan_batch() {
 #[test]
 fn test_global_search_filter_with_results() {
     let mut search = GlobalSearch::new();
-    search.set_results(vec!["apple".to_string(), "banana".to_string(), "cherry".to_string()]);
+    search.set_results(vec![
+        "apple".to_string(),
+        "banana".to_string(),
+        "cherry".to_string(),
+    ]);
 
     // After set_results, filter matches all (query is "")
     assert_eq!(search.filtered.len(), 3);
 
     // Typing 'a' filters to items containing 'a'
     search.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
-    assert_eq!(search.filtered, vec!["apple".to_string(), "banana".to_string()]);
+    assert_eq!(
+        search.filtered,
+        vec!["apple".to_string(), "banana".to_string()]
+    );
 }
 
 #[test]
@@ -183,9 +192,20 @@ fn test_pubsub_subscribe_action() {
     widget.cursor = 12;
 
     let action = widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
-    assert_eq!(action, Some(PubSubAction::Subscribe("test_channel".to_string())));
-    assert!(widget.subscriptions.iter().any(|s| s.kind == PubSubKind::Channel("test_channel".to_string())));
-    assert_eq!(widget.active_subscription, Some(PubSubKind::Channel("test_channel".to_string())));
+    assert_eq!(
+        action,
+        Some(PubSubAction::Subscribe("test_channel".to_string()))
+    );
+    assert!(
+        widget
+            .subscriptions
+            .iter()
+            .any(|s| s.kind == PubSubKind::Channel("test_channel".to_string()))
+    );
+    assert_eq!(
+        widget.active_subscription,
+        Some(PubSubKind::Channel("test_channel".to_string()))
+    );
 }
 
 #[test]
@@ -209,28 +229,46 @@ fn test_pubsub_publish_action() {
 #[test]
 fn test_pubsub_unsubscribe_action() {
     let mut widget = PubSubWidget::new();
-    widget.subscriptions.push(Subscription { kind: PubSubKind::Channel("ch1".to_string()), color: Color::Cyan });
-    widget.subscriptions.push(Subscription { kind: PubSubKind::Channel("ch2".to_string()), color: Color::Magenta });
+    widget.subscriptions.push(Subscription {
+        kind: PubSubKind::Channel("ch1".to_string()),
+        color: Color::Cyan,
+    });
+    widget.subscriptions.push(Subscription {
+        kind: PubSubKind::Channel("ch2".to_string()),
+        color: Color::Magenta,
+    });
     widget.active_subscription = Some(PubSubKind::Channel("ch1".to_string()));
 
     let action = widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
     assert_eq!(action, Some(PubSubAction::Unsubscribe("ch1".to_string())));
     assert_eq!(widget.subscriptions.len(), 1);
-    assert_eq!(widget.subscriptions[0].kind, PubSubKind::Channel("ch2".to_string()));
+    assert_eq!(
+        widget.subscriptions[0].kind,
+        PubSubKind::Channel("ch2".to_string())
+    );
 }
 
 #[test]
 fn test_pubsub_unsubscribe_second_channel() {
     let mut widget = PubSubWidget::new();
-    widget.subscriptions.push(Subscription { kind: PubSubKind::Channel("ch1".to_string()), color: Color::Cyan });
-    widget.subscriptions.push(Subscription { kind: PubSubKind::Channel("ch2".to_string()), color: Color::Magenta });
+    widget.subscriptions.push(Subscription {
+        kind: PubSubKind::Channel("ch1".to_string()),
+        color: Color::Cyan,
+    });
+    widget.subscriptions.push(Subscription {
+        kind: PubSubKind::Channel("ch2".to_string()),
+        color: Color::Magenta,
+    });
     widget.channel_cursor = 1;
     widget.active_subscription = Some(PubSubKind::Channel("ch2".to_string()));
 
     let action = widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
     assert_eq!(action, Some(PubSubAction::Unsubscribe("ch2".to_string())));
     assert_eq!(widget.subscriptions.len(), 1);
-    assert_eq!(widget.subscriptions[0].kind, PubSubKind::Channel("ch1".to_string()));
+    assert_eq!(
+        widget.subscriptions[0].kind,
+        PubSubKind::Channel("ch1".to_string())
+    );
 }
 
 #[test]
@@ -258,9 +296,18 @@ fn test_pubsub_clear_messages() {
 #[test]
 fn test_pubsub_channel_navigation() {
     let mut widget = PubSubWidget::new();
-    widget.subscriptions.push(Subscription { kind: PubSubKind::Channel("ch1".to_string()), color: Color::Cyan });
-    widget.subscriptions.push(Subscription { kind: PubSubKind::Channel("ch2".to_string()), color: Color::Magenta });
-    widget.subscriptions.push(Subscription { kind: PubSubKind::Channel("ch3".to_string()), color: Color::Green });
+    widget.subscriptions.push(Subscription {
+        kind: PubSubKind::Channel("ch1".to_string()),
+        color: Color::Cyan,
+    });
+    widget.subscriptions.push(Subscription {
+        kind: PubSubKind::Channel("ch2".to_string()),
+        color: Color::Magenta,
+    });
+    widget.subscriptions.push(Subscription {
+        kind: PubSubKind::Channel("ch3".to_string()),
+        color: Color::Green,
+    });
 
     widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Down)));
     assert_eq!(widget.channel_cursor, 1);
@@ -286,7 +333,10 @@ fn test_pubsub_render_with_messages() {
     let backend = TestBackend::new(80, 24);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
     let mut widget = PubSubWidget::new();
-    widget.subscriptions.push(Subscription { kind: PubSubKind::Channel("test".to_string()), color: Color::Cyan });
+    widget.subscriptions.push(Subscription {
+        kind: PubSubKind::Channel("test".to_string()),
+        color: Color::Cyan,
+    });
     widget.active_subscription = Some(PubSubKind::Channel("test".to_string()));
     widget.push_message(PubSubMessage {
         channel: "test".to_string(),

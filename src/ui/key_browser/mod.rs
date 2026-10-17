@@ -46,8 +46,15 @@ pub enum BrowserPrompt {
     RenameKey(String),
     SetTtl(String),
     DuplicateKey(String),
-    SetOpDest { op: SetOpType, source_keys: Vec<String> },
-    SetOpAdditionalSources { op: SetOpType, source_keys: Vec<String>, dest: String },
+    SetOpDest {
+        op: SetOpType,
+        source_keys: Vec<String>,
+    },
+    SetOpAdditionalSources {
+        op: SetOpType,
+        source_keys: Vec<String>,
+        dest: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -61,13 +68,29 @@ pub enum BrowserState {
 pub enum BrowserAction {
     SelectKey(String, RedisType),
     DeleteKey(String),
-    NewKey { name: String, key_type: RedisType },
-    RenameKey { old_name: String, new_name: String },
+    NewKey {
+        name: String,
+        key_type: RedisType,
+    },
+    RenameKey {
+        old_name: String,
+        new_name: String,
+    },
     ExpireKey(String),
-    SetTtl { key: String, seconds: i64 },
+    SetTtl {
+        key: String,
+        seconds: i64,
+    },
     CopyKeyName(String),
-    DuplicateKey { old_name: String, new_name: String },
-    SetOp { op: SetOpType, source_keys: Vec<String>, dest: String },
+    DuplicateKey {
+        old_name: String,
+        new_name: String,
+    },
+    SetOp {
+        op: SetOpType,
+        source_keys: Vec<String>,
+        dest: String,
+    },
     RefreshRequested,
 }
 
@@ -122,7 +145,7 @@ impl KeyBrowser {
                             return None;
                         }
                         self.prompt = Some(InputWidget::new(
-                            "Key type? (s=String, l=List, h=Hash, z=ZSet, t=Set, x=Stream)"
+                            "Key type? (s=String, l=List, h=Hash, z=ZSet, t=Set, x=Stream)",
                         ));
                         self.prompt_mode = Some(BrowserPrompt::NewKeyType(val));
                         None
@@ -143,7 +166,10 @@ impl KeyBrowser {
                         if val.is_empty() || val == old_name {
                             return None;
                         }
-                        Some(BrowserAction::RenameKey { old_name, new_name: val })
+                        Some(BrowserAction::RenameKey {
+                            old_name,
+                            new_name: val,
+                        })
                     }
                     Some(BrowserPrompt::SetTtl(key)) => {
                         let seconds = val.parse::<i64>().ok();
@@ -153,13 +179,18 @@ impl KeyBrowser {
                         if val.is_empty() || val == old_name {
                             return None;
                         }
-                        Some(BrowserAction::DuplicateKey { old_name, new_name: val })
+                        Some(BrowserAction::DuplicateKey {
+                            old_name,
+                            new_name: val,
+                        })
                     }
                     Some(BrowserPrompt::SetOpDest { op, source_keys }) => {
                         if val.is_empty() {
                             return None;
                         }
-                        self.prompt = Some(InputWidget::new("Additional source keys (space-separated):"));
+                        self.prompt = Some(InputWidget::new(
+                            "Additional source keys (space-separated):",
+                        ));
                         self.prompt_mode = Some(BrowserPrompt::SetOpAdditionalSources {
                             op,
                             source_keys,
@@ -175,7 +206,9 @@ impl KeyBrowser {
                         if !val.is_empty() {
                             for extra in val.split_whitespace() {
                                 let trimmed = extra.trim();
-                                if !trimmed.is_empty() && !source_keys.contains(&trimmed.to_string()) {
+                                if !trimmed.is_empty()
+                                    && !source_keys.contains(&trimmed.to_string())
+                                {
                                     source_keys.push(trimmed.to_string());
                                 }
                             }
@@ -238,117 +271,117 @@ impl KeyBrowser {
                     self.tree.collapse(&path);
                 }
             } else if keymap.matches("go_up", key) || matches!(key.code, KeyCode::Backspace) {
-                    if !self.current_path.is_empty() {
-                        self.current_path.pop();
-                        self.cursor = 0;
-                    }
+                if !self.current_path.is_empty() {
+                    self.current_path.pop();
+                    self.cursor = 0;
+                }
             } else if key.code == KeyCode::Char('g') {
-                    if !self.current_path.is_empty() {
-                        self.current_path.clear();
-                        self.cursor = 0;
-                    }
+                if !self.current_path.is_empty() {
+                    self.current_path.clear();
+                    self.cursor = 0;
+                }
             } else if keymap.matches("delete", key) || matches!(key.code, KeyCode::Char('D')) {
-                    let rows = self.sorted_rows();
-                    if let Some(row) = rows.get(self.cursor)
-                        && let Some(ref key) = row.key
-                    {
-                        return Some(BrowserAction::DeleteKey(key.full_name.clone()));
-                    }
+                let rows = self.sorted_rows();
+                if let Some(row) = rows.get(self.cursor)
+                    && let Some(ref key) = row.key
+                {
+                    return Some(BrowserAction::DeleteKey(key.full_name.clone()));
+                }
             } else if keymap.matches("refresh", key) {
                 return Some(BrowserAction::RefreshRequested);
             } else if keymap.matches("new_key", key) {
-                    self.prompt = Some(InputWidget::new("New key name:"));
-                    self.prompt_mode = Some(BrowserPrompt::NewKeyName);
+                self.prompt = Some(InputWidget::new("New key name:"));
+                self.prompt_mode = Some(BrowserPrompt::NewKeyName);
             } else if keymap.matches("rename_key", key) {
-                    let rows = self.sorted_rows();
-                    if let Some(row) = rows.get(self.cursor)
-                        && let Some(ref key) = row.key
-                    {
-                        let mut prompt = InputWidget::new("New name:");
-                        prompt.value = key.full_name.clone();
-                        prompt.cursor = key.full_name.len();
-                        self.prompt = Some(prompt);
-                        self.prompt_mode = Some(BrowserPrompt::RenameKey(key.full_name.clone()));
-                    }
+                let rows = self.sorted_rows();
+                if let Some(row) = rows.get(self.cursor)
+                    && let Some(ref key) = row.key
+                {
+                    let mut prompt = InputWidget::new("New name:");
+                    prompt.value = key.full_name.clone();
+                    prompt.cursor = key.full_name.len();
+                    self.prompt = Some(prompt);
+                    self.prompt_mode = Some(BrowserPrompt::RenameKey(key.full_name.clone()));
+                }
             } else if keymap.matches("expire", key) {
-                    let rows = self.sorted_rows();
-                    if let Some(row) = rows.get(self.cursor)
-                        && let Some(ref key) = row.key
-                    {
-                        return Some(BrowserAction::ExpireKey(key.full_name.clone()));
-                    }
+                let rows = self.sorted_rows();
+                if let Some(row) = rows.get(self.cursor)
+                    && let Some(ref key) = row.key
+                {
+                    return Some(BrowserAction::ExpireKey(key.full_name.clone()));
+                }
             } else if keymap.matches("set_ttl", key) {
-                    let rows = self.sorted_rows();
-                    if let Some(row) = rows.get(self.cursor)
-                        && let Some(ref key) = row.key
-                    {
-                        self.prompt = Some(InputWidget::new("TTL in seconds:"));
-                        self.prompt_mode = Some(BrowserPrompt::SetTtl(key.full_name.clone()));
-                    }
+                let rows = self.sorted_rows();
+                if let Some(row) = rows.get(self.cursor)
+                    && let Some(ref key) = row.key
+                {
+                    self.prompt = Some(InputWidget::new("TTL in seconds:"));
+                    self.prompt_mode = Some(BrowserPrompt::SetTtl(key.full_name.clone()));
+                }
             } else if keymap.matches("copy", key) {
-                    let rows = self.sorted_rows();
-                    if let Some(row) = rows.get(self.cursor)
-                        && let Some(ref key) = row.key
-                    {
-                        return Some(BrowserAction::CopyKeyName(key.full_name.clone()));
-                    }
+                let rows = self.sorted_rows();
+                if let Some(row) = rows.get(self.cursor)
+                    && let Some(ref key) = row.key
+                {
+                    return Some(BrowserAction::CopyKeyName(key.full_name.clone()));
+                }
             } else if keymap.matches("duplicate_key", key) {
-                    let rows = self.sorted_rows();
-                    if let Some(row) = rows.get(self.cursor)
-                        && let Some(ref key) = row.key
-                    {
-                        let mut prompt = InputWidget::new("New key name:");
-                        prompt.value = format!("{}_copy", key.full_name);
-                        prompt.cursor = prompt.value.len();
-                        self.prompt = Some(prompt);
-                        self.prompt_mode = Some(BrowserPrompt::DuplicateKey(key.full_name.clone()));
-                    }
-            } else if keymap.matches("set_union", key) || keymap.matches("set_inter", key) || keymap.matches("set_diff", key) {
-                    let event_key = key;
-                    let rows = self.sorted_rows();
-                    if let Some(row) = rows.get(self.cursor)
-                        && let Some(ref key) = row.key
-                    {
-                        let op = if keymap.matches("set_union", event_key) {
-                            SetOpType::Union
-                        } else if keymap.matches("set_inter", event_key) {
-                            SetOpType::Inter
-                        } else {
-                            SetOpType::Diff
-                        };
-                        let mut source_keys = vec![key.full_name.clone()];
-                        for sel in &self.selected {
-                            if sel != &key.full_name {
-                                source_keys.push(sel.clone());
-                            }
+                let rows = self.sorted_rows();
+                if let Some(row) = rows.get(self.cursor)
+                    && let Some(ref key) = row.key
+                {
+                    let mut prompt = InputWidget::new("New key name:");
+                    prompt.value = format!("{}_copy", key.full_name);
+                    prompt.cursor = prompt.value.len();
+                    self.prompt = Some(prompt);
+                    self.prompt_mode = Some(BrowserPrompt::DuplicateKey(key.full_name.clone()));
+                }
+            } else if keymap.matches("set_union", key)
+                || keymap.matches("set_inter", key)
+                || keymap.matches("set_diff", key)
+            {
+                let event_key = key;
+                let rows = self.sorted_rows();
+                if let Some(row) = rows.get(self.cursor)
+                    && let Some(ref key) = row.key
+                {
+                    let op = if keymap.matches("set_union", event_key) {
+                        SetOpType::Union
+                    } else if keymap.matches("set_inter", event_key) {
+                        SetOpType::Inter
+                    } else {
+                        SetOpType::Diff
+                    };
+                    let mut source_keys = vec![key.full_name.clone()];
+                    for sel in &self.selected {
+                        if sel != &key.full_name {
+                            source_keys.push(sel.clone());
                         }
-                        let mut prompt = InputWidget::new("Destination key:");
-                        prompt.value = format!("{}{}", key.full_name, op.dest_suffix());
-                        prompt.cursor = prompt.value.len();
-                        self.prompt = Some(prompt);
-                        self.prompt_mode = Some(BrowserPrompt::SetOpDest {
-                            op,
-                            source_keys,
-                        });
                     }
+                    let mut prompt = InputWidget::new("Destination key:");
+                    prompt.value = format!("{}{}", key.full_name, op.dest_suffix());
+                    prompt.cursor = prompt.value.len();
+                    self.prompt = Some(prompt);
+                    self.prompt_mode = Some(BrowserPrompt::SetOpDest { op, source_keys });
+                }
             } else if keymap.matches("toggle_select", key) {
-                    let rows = self.sorted_rows();
-                    if let Some(row) = rows.get(self.cursor)
-                        && let Some(ref key) = row.key
-                    {
-                        let name = key.full_name.clone();
-                        if !self.selected.remove(&name) {
-                            self.selected.insert(name);
-                        }
+                let rows = self.sorted_rows();
+                if let Some(row) = rows.get(self.cursor)
+                    && let Some(ref key) = row.key
+                {
+                    let name = key.full_name.clone();
+                    if !self.selected.remove(&name) {
+                        self.selected.insert(name);
                     }
+                }
             } else if keymap.matches("cycle_sort", key) {
-                    self.sort_mode = self.sort_mode.next();
+                self.sort_mode = self.sort_mode.next();
             } else if keymap.matches("select_all", key) {
-                    for row in self.sorted_rows() {
-                        if let Some(ref key) = row.key {
-                            self.selected.insert(key.full_name.clone());
-                        }
+                for row in self.sorted_rows() {
+                    if let Some(ref key) = row.key {
+                        self.selected.insert(key.full_name.clone());
                     }
+                }
             }
         }
         None
@@ -381,7 +414,8 @@ impl KeyBrowser {
                         }
                         let a_type = a.key.as_ref().and_then(|k| k.redis_type.clone());
                         let b_type = b.key.as_ref().and_then(|k| k.redis_type.clone());
-                        type_order(&a_type).cmp(&type_order(&b_type))
+                        type_order(&a_type)
+                            .cmp(&type_order(&b_type))
                             .then(a.label.cmp(&b.label))
                     }
                     SortMode::ByTtl => {
@@ -395,16 +429,21 @@ impl KeyBrowser {
                         }
                         let a_ttl = a.key.as_ref().and_then(|k| k.ttl.clone());
                         let b_ttl = b.key.as_ref().and_then(|k| k.ttl.clone());
-                        ttl_order(&a_ttl).cmp(&ttl_order(&b_ttl))
+                        ttl_order(&a_ttl)
+                            .cmp(&ttl_order(&b_ttl))
                             .then_with(|| {
-                                let a_secs: u64 = a_ttl.and_then(|t| match t {
-                                    crate::redis::client::Ttl::Expires(d) => Some(d.as_secs()),
-                                    _ => None,
-                                }).unwrap_or(0);
-                                let b_secs: u64 = b_ttl.and_then(|t| match t {
-                                    crate::redis::client::Ttl::Expires(d) => Some(d.as_secs()),
-                                    _ => None,
-                                }).unwrap_or(0);
+                                let a_secs: u64 = a_ttl
+                                    .and_then(|t| match t {
+                                        crate::redis::client::Ttl::Expires(d) => Some(d.as_secs()),
+                                        _ => None,
+                                    })
+                                    .unwrap_or(0);
+                                let b_secs: u64 = b_ttl
+                                    .and_then(|t| match t {
+                                        crate::redis::client::Ttl::Expires(d) => Some(d.as_secs()),
+                                        _ => None,
+                                    })
+                                    .unwrap_or(0);
                                 a_secs.cmp(&b_secs)
                             })
                             .then(a.label.cmp(&b.label))
@@ -437,8 +476,7 @@ impl KeyBrowser {
             format!(" > {}", path)
         };
         let breadcrumb_style = Style::default().fg(Color::Cyan).bg(Color::Black);
-        let breadcrumb = ratatui::widgets::Paragraph::new(breadcrumb_text)
-            .style(breadcrumb_style);
+        let breadcrumb = ratatui::widgets::Paragraph::new(breadcrumb_text).style(breadcrumb_style);
         frame.render_widget(breadcrumb, chunks[0]);
 
         // Key list
@@ -472,9 +510,11 @@ impl KeyBrowser {
         let mut state = ListState::default();
         state.select(Some(self.cursor));
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!("Keys ({}) [sort: {}] ", self.tree.total_keys(), self.sort_mode.label()));
+        let block = Block::default().borders(Borders::ALL).title(format!(
+            "Keys ({}) [sort: {}] ",
+            self.tree.total_keys(),
+            self.sort_mode.label()
+        ));
         let list = List::new(items).block(block);
         frame.render_stateful_widget(list, chunks[1], &mut state);
 
@@ -494,7 +534,11 @@ impl KeyBrowser {
                 "{}{}{}",
                 prompt_label,
                 prompt.value,
-                if prompt.cursor >= prompt.value.len() { "_" } else { " " }
+                if prompt.cursor >= prompt.value.len() {
+                    "_"
+                } else {
+                    " "
+                }
             );
             let overlay = ratatui::widgets::Paragraph::new(prompt_text)
                 .style(Style::default().fg(Color::White).bg(Color::Black));

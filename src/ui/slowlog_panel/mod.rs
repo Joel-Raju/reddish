@@ -145,7 +145,12 @@ impl SlowLogPanel {
             return;
         }
 
-        let max_dur = filtered.iter().map(|e| e.duration_us).max().unwrap_or(1).max(1);
+        let max_dur = filtered
+            .iter()
+            .map(|e| e.duration_us)
+            .max()
+            .unwrap_or(1)
+            .max(1);
         let start = self.scroll as usize;
         let max_visible = area.height.saturating_sub(4) as usize; // header + borders
 
@@ -193,12 +198,15 @@ impl SlowLogPanel {
                 })
                 .collect();
 
-            let table = Table::new(rows, &[
-                Constraint::Length(8),
-                Constraint::Length(10),
-                Constraint::Length(24),
-                Constraint::Min(20),
-            ])
+            let table = Table::new(
+                rows,
+                &[
+                    Constraint::Length(8),
+                    Constraint::Length(10),
+                    Constraint::Length(24),
+                    Constraint::Min(20),
+                ],
+            )
             .header(header)
             .block(Block::default().borders(Borders::ALL).title(title));
 
@@ -345,10 +353,7 @@ mod tests {
     #[test]
     fn test_slowlog_panel_export_csv() {
         let mut panel = SlowLogPanel::new();
-        panel.set_entries(vec![
-            sample_entry(1, 100),
-            sample_entry(2, 200),
-        ]);
+        panel.set_entries(vec![sample_entry(1, 100), sample_entry(2, 200)]);
         let path = panel.export_csv().unwrap();
         assert!(std::path::Path::new(&path).exists());
         let content = std::fs::read_to_string(&path).unwrap();

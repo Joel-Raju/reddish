@@ -33,8 +33,7 @@ impl SystemStats {
                 .and_then(|s| s.parse().ok()),
             connected_clients: get_val(info, "Clients", "connected_clients")
                 .and_then(|s| s.parse().ok()),
-            used_memory: get_val(info, "Memory", "used_memory")
-                .and_then(|s| s.parse().ok()),
+            used_memory: get_val(info, "Memory", "used_memory").and_then(|s| s.parse().ok()),
             used_memory_human: get_val(info, "Memory", "used_memory_human"),
             total_commands_processed: get_val(info, "Stats", "total_commands_processed")
                 .and_then(|s| s.parse().ok()),
@@ -103,7 +102,10 @@ impl InfoDashboard {
             if let (Some(new), Some(_old)) = (new_stats.connected_clients, p.connected_clients) {
                 self.buf_clients.push(new as f64);
             }
-            if let (Some(new), Some(_old)) = (new_stats.instantaneous_ops_per_sec, p.instantaneous_ops_per_sec) {
+            if let (Some(new), Some(_old)) = (
+                new_stats.instantaneous_ops_per_sec,
+                p.instantaneous_ops_per_sec,
+            ) {
                 self.buf_ops.push(new as f64);
             }
             if let (Some(new_hits), Some(old_hits)) = (new_stats.keyspace_hits, p.keyspace_hits) {
@@ -125,7 +127,8 @@ impl InfoDashboard {
             if let Some(v) = new_stats.instantaneous_ops_per_sec {
                 self.buf_ops.push(v as f64);
             }
-            if let (Some(hits), Some(misses)) = (new_stats.keyspace_hits, new_stats.keyspace_misses) {
+            if let (Some(hits), Some(misses)) = (new_stats.keyspace_hits, new_stats.keyspace_misses)
+            {
                 self.buf_hits.push((hits + misses) as f64);
             }
         }
@@ -192,33 +195,82 @@ impl InfoDashboard {
         // Row 1: Memory, Clients, Ops/sec sparklines
         let mem_val = self.stats.used_memory_human.as_deref().unwrap_or("N/A");
         let mem_delta = self.delta_label(&self.buf_memory);
-        self.render_sparkline_cell(frame, top[0], "Memory", &format!("{}{}", mem_val, mem_delta), &self.buf_memory, Color::Green);
+        self.render_sparkline_cell(
+            frame,
+            top[0],
+            "Memory",
+            &format!("{}{}", mem_val, mem_delta),
+            &self.buf_memory,
+            Color::Green,
+        );
 
-        let clients_val = self.stats.connected_clients.map_or("N/A".to_string(), |v| v.to_string());
+        let clients_val = self
+            .stats
+            .connected_clients
+            .map_or("N/A".to_string(), |v| v.to_string());
         let clients_delta = self.delta_label(&self.buf_clients);
-        self.render_sparkline_cell(frame, top[1], "Clients", &format!("{}{}", clients_val, clients_delta), &self.buf_clients, Color::Cyan);
+        self.render_sparkline_cell(
+            frame,
+            top[1],
+            "Clients",
+            &format!("{}{}", clients_val, clients_delta),
+            &self.buf_clients,
+            Color::Cyan,
+        );
 
-        let ops_val = self.stats.instantaneous_ops_per_sec.map_or("N/A".to_string(), |v| v.to_string());
+        let ops_val = self
+            .stats
+            .instantaneous_ops_per_sec
+            .map_or("N/A".to_string(), |v| v.to_string());
         let ops_delta = self.delta_label(&self.buf_ops);
-        self.render_sparkline_cell(frame, top[2], "Ops/sec", &format!("{}{}", ops_val, ops_delta), &self.buf_ops, Color::Yellow);
+        self.render_sparkline_cell(
+            frame,
+            top[2],
+            "Ops/sec",
+            &format!("{}{}", ops_val, ops_delta),
+            &self.buf_ops,
+            Color::Yellow,
+        );
 
         // Row 2: Hit Rate, Uptime, Version text cells
         let hit_ratio = match (self.stats.keyspace_hits, self.stats.keyspace_misses) {
-            (Some(h), Some(m)) if h + m > 0 => format!("{:.1}%", (h as f64 / (h + m) as f64) * 100.0),
+            (Some(h), Some(m)) if h + m > 0 => {
+                format!("{:.1}%", (h as f64 / (h + m) as f64) * 100.0)
+            }
             _ => "N/A".to_string(),
         };
         let hits_delta = self.delta_label(&self.buf_hits);
-        self.render_sparkline_cell(frame, bot[0], "Hit Rate", &format!("{}{}", hit_ratio, hits_delta), &self.buf_hits, Color::Magenta);
+        self.render_sparkline_cell(
+            frame,
+            bot[0],
+            "Hit Rate",
+            &format!("{}{}", hit_ratio, hits_delta),
+            &self.buf_hits,
+            Color::Magenta,
+        );
 
-        let uptime = self.stats.uptime_in_seconds.map_or("N/A".to_string(), Self::format_uptime);
+        let uptime = self
+            .stats
+            .uptime_in_seconds
+            .map_or("N/A".to_string(), Self::format_uptime);
         self.render_text_cell(frame, bot[1], "Uptime", &uptime, Color::Blue);
 
         let version = self.stats.redis_version.as_deref().unwrap_or("N/A");
         self.render_text_cell(frame, bot[2], "Version", version, Color::White);
     }
 
-    fn render_sparkline_cell(&self, frame: &mut Frame, area: Rect, title: &str, value: &str, buf: &SparklineBuffer, color: Color) {
-        let block = Block::default().borders(Borders::ALL).title(format!(" {} ", title));
+    fn render_sparkline_cell(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        title: &str,
+        value: &str,
+        buf: &SparklineBuffer,
+        color: Color,
+    ) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" {} ", title));
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
@@ -226,20 +278,43 @@ impl InfoDashboard {
         let sparkline = Sparkline::default()
             .data(&data)
             .style(Style::default().fg(color))
-            .max(if data.is_empty() { 1 } else { *data.iter().max().unwrap_or(&1) });
+            .max(if data.is_empty() {
+                1
+            } else {
+                *data.iter().max().unwrap_or(&1)
+            });
         frame.render_widget(sparkline, inner);
 
-        let val_line = Line::from(Span::styled(value, Style::default().fg(color).add_modifier(ratatui::style::Modifier::BOLD)));
+        let val_line = Line::from(Span::styled(
+            value,
+            Style::default()
+                .fg(color)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ));
         let para = Paragraph::new(vec![val_line]);
         frame.render_widget(para, inner);
     }
 
-    fn render_text_cell(&self, frame: &mut Frame, area: Rect, title: &str, value: &str, color: Color) {
-        let block = Block::default().borders(Borders::ALL).title(format!(" {} ", title));
+    fn render_text_cell(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        title: &str,
+        value: &str,
+        color: Color,
+    ) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" {} ", title));
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        let val_line = Line::from(Span::styled(value, Style::default().fg(color).add_modifier(ratatui::style::Modifier::BOLD)));
+        let val_line = Line::from(Span::styled(
+            value,
+            Style::default()
+                .fg(color)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ));
         let para = Paragraph::new(vec![val_line]);
         frame.render_widget(para, inner);
     }

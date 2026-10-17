@@ -155,7 +155,11 @@ impl ReplWidget {
         if let Some(suggestion) = self.ac_suggestions.get(self.ac_selected) {
             let trimmed = self.input.trim_start();
             if !trimmed.contains(' ') {
-                let leading_ws: String = self.input.chars().take_while(|c| c.is_whitespace()).collect();
+                let leading_ws: String = self
+                    .input
+                    .chars()
+                    .take_while(|c| c.is_whitespace())
+                    .collect();
                 self.input = format!("{}{} ", leading_ws, suggestion);
                 self.cursor = self.input.len();
             } else {
@@ -473,10 +477,7 @@ mod tests {
     #[test]
     fn test_repl_key_cache_suggestions() {
         let mut repl = ReplWidget::new();
-        repl.update_key_cache(vec![
-            "user:123".to_string(),
-            "user:456".to_string(),
-        ]);
+        repl.update_key_cache(vec!["user:123".to_string(), "user:456".to_string()]);
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('G'))));
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('E'))));
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('T'))));

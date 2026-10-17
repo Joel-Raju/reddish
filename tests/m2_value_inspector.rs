@@ -100,7 +100,10 @@ fn test_value_inspector_renders_with_metadata() {
     use std::time::Duration;
 
     let mut inspector = reddish_tui::ui::value_inspector::ValueInspector::new();
-    inspector.set_value("testkey".to_string(), RedisValue::String("hello".to_string()));
+    inspector.set_value(
+        "testkey".to_string(),
+        RedisValue::String("hello".to_string()),
+    );
     inspector.set_metadata(
         Some("embstr".to_string()),
         Some(512),
@@ -118,7 +121,10 @@ fn test_value_inspector_enter_edit_mode_on_e() {
     use reddish_tui::ui::value_inspector::ValueInspector;
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value("testkey".to_string(), RedisValue::String("hello".to_string()));
+    inspector.set_value(
+        "testkey".to_string(),
+        RedisValue::String("hello".to_string()),
+    );
 
     let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
     assert!(action.is_none());
@@ -133,7 +139,10 @@ fn test_value_inspector_edit_mode_ignores_non_string() {
     use reddish_tui::ui::value_inspector::ValueInspector;
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value("testkey".to_string(), RedisValue::List(vec!["a".to_string()]));
+    inspector.set_value(
+        "testkey".to_string(),
+        RedisValue::List(vec!["a".to_string()]),
+    );
 
     let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
     assert!(action.is_none());
@@ -146,7 +155,10 @@ fn test_value_inspector_edit_mode_esc_cancels() {
     use reddish_tui::ui::value_inspector::ValueInspector;
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value("testkey".to_string(), RedisValue::String("hello".to_string()));
+    inspector.set_value(
+        "testkey".to_string(),
+        RedisValue::String("hello".to_string()),
+    );
 
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
     let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Esc)));
@@ -157,11 +169,14 @@ fn test_value_inspector_edit_mode_esc_cancels() {
 
 #[test]
 fn test_value_inspector_edit_mode_ctrl_s_saves() {
-    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
     use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value("testkey".to_string(), RedisValue::String("hello".to_string()));
+    inspector.set_value(
+        "testkey".to_string(),
+        RedisValue::String("hello".to_string()),
+    );
 
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
     for c in " world".chars() {
@@ -185,11 +200,14 @@ fn test_value_inspector_edit_mode_ctrl_s_saves() {
 
 #[test]
 fn test_value_inspector_edit_mode_ctrl_x_cancels() {
-    use reddish_tui::ui::value_inspector::ValueInspector;
     use reddish_tui::redis::types::RedisValue;
+    use reddish_tui::ui::value_inspector::ValueInspector;
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value("testkey".to_string(), RedisValue::String("hello".to_string()));
+    inspector.set_value(
+        "testkey".to_string(),
+        RedisValue::String("hello".to_string()),
+    );
 
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
     let action = inspector.handle_event(&Event::Key(KeyEvent::new(
@@ -256,7 +274,10 @@ fn test_list_editor_a_rpush() {
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value("mylist".to_string(), RedisValue::List(vec!["a".to_string()]));
+    inspector.set_value(
+        "mylist".to_string(),
+        RedisValue::List(vec!["a".to_string()]),
+    );
 
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
     for c in "new_item".chars() {
@@ -280,7 +301,10 @@ fn test_list_editor_p_lpush() {
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value("mylist".to_string(), RedisValue::List(vec!["a".to_string()]));
+    inspector.set_value(
+        "mylist".to_string(),
+        RedisValue::List(vec!["a".to_string()]),
+    );
 
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('p'))));
     for c in "first".chars() {
@@ -303,7 +327,10 @@ fn test_list_editor_d_remove() {
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value("mylist".to_string(), RedisValue::List(vec!["a".to_string(), "b".to_string()]));
+    inspector.set_value(
+        "mylist".to_string(),
+        RedisValue::List(vec!["a".to_string(), "b".to_string()]),
+    );
 
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
     let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
@@ -323,7 +350,10 @@ fn test_list_editor_e_edit() {
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value("mylist".to_string(), RedisValue::List(vec!["hello".to_string()]));
+    inspector.set_value(
+        "mylist".to_string(),
+        RedisValue::List(vec!["hello".to_string()]),
+    );
 
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
     inspector.handle_event(&Event::Key(KeyEvent::new(
@@ -367,9 +397,9 @@ fn test_list_editor_renders_without_panic() {
 
 #[test]
 fn test_set_editor_navigation() {
-    use std::collections::BTreeSet;
     use reddish_tui::redis::types::RedisValue;
     use reddish_tui::ui::value_inspector::ValueInspector;
+    use std::collections::BTreeSet;
 
     let mut members = BTreeSet::new();
     members.insert("a".to_string());
@@ -388,9 +418,9 @@ fn test_set_editor_navigation() {
 
 #[test]
 fn test_set_editor_a_add() {
-    use std::collections::BTreeSet;
     use reddish_tui::redis::types::RedisValue;
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+    use std::collections::BTreeSet;
 
     let mut members = BTreeSet::new();
     members.insert("a".to_string());
@@ -415,9 +445,9 @@ fn test_set_editor_a_add() {
 
 #[test]
 fn test_set_editor_d_remove() {
-    use std::collections::BTreeSet;
     use reddish_tui::redis::types::RedisValue;
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+    use std::collections::BTreeSet;
 
     let mut members = BTreeSet::new();
     members.insert("a".to_string());
@@ -440,10 +470,10 @@ fn test_set_editor_d_remove() {
 
 #[test]
 fn test_set_editor_renders_without_panic() {
-    use std::collections::BTreeSet;
     use ratatui::backend::TestBackend;
     use reddish_tui::redis::types::RedisValue;
     use reddish_tui::ui::value_inspector::ValueInspector;
+    use std::collections::BTreeSet;
 
     let mut members = BTreeSet::new();
     members.insert("a".to_string());
@@ -463,9 +493,18 @@ fn test_zset_editor_navigation() {
     use reddish_tui::ui::value_inspector::ValueInspector;
 
     let entries = vec![
-        ZSetEntry { member: "a".into(), score: 1.0 },
-        ZSetEntry { member: "b".into(), score: 2.0 },
-        ZSetEntry { member: "c".into(), score: 3.0 },
+        ZSetEntry {
+            member: "a".into(),
+            score: 1.0,
+        },
+        ZSetEntry {
+            member: "b".into(),
+            score: 2.0,
+        },
+        ZSetEntry {
+            member: "c".into(),
+            score: 3.0,
+        },
     ];
 
     let mut inspector = ValueInspector::new();
@@ -488,9 +527,13 @@ fn test_zset_editor_a_add() {
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value("myzset".to_string(), RedisValue::ZSet(vec![
-        ZSetEntry { member: "a".into(), score: 1.0 },
-    ]));
+    inspector.set_value(
+        "myzset".to_string(),
+        RedisValue::ZSet(vec![ZSetEntry {
+            member: "a".into(),
+            score: 1.0,
+        }]),
+    );
 
     // First step: enter member name
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
@@ -522,9 +565,13 @@ fn test_zset_editor_e_edit_score() {
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value("myzset".to_string(), RedisValue::ZSet(vec![
-        ZSetEntry { member: "a".into(), score: 1.0 },
-    ]));
+    inspector.set_value(
+        "myzset".to_string(),
+        RedisValue::ZSet(vec![ZSetEntry {
+            member: "a".into(),
+            score: 1.0,
+        }]),
+    );
 
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
     for c in "3".chars() {
@@ -552,10 +599,19 @@ fn test_zset_editor_d_remove() {
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value("myzset".to_string(), RedisValue::ZSet(vec![
-        ZSetEntry { member: "a".into(), score: 1.0 },
-        ZSetEntry { member: "b".into(), score: 2.0 },
-    ]));
+    inspector.set_value(
+        "myzset".to_string(),
+        RedisValue::ZSet(vec![
+            ZSetEntry {
+                member: "a".into(),
+                score: 1.0,
+            },
+            ZSetEntry {
+                member: "b".into(),
+                score: 2.0,
+            },
+        ]),
+    );
 
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
     let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
@@ -576,10 +632,19 @@ fn test_zset_editor_renders_without_panic() {
     use reddish_tui::ui::value_inspector::ValueInspector;
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value("myzset".to_string(), RedisValue::ZSet(vec![
-        ZSetEntry { member: "a".into(), score: 1.0 },
-        ZSetEntry { member: "b".into(), score: 2.0 },
-    ]));
+    inspector.set_value(
+        "myzset".to_string(),
+        RedisValue::ZSet(vec![
+            ZSetEntry {
+                member: "a".into(),
+                score: 1.0,
+            },
+            ZSetEntry {
+                member: "b".into(),
+                score: 2.0,
+            },
+        ]),
+    );
 
     let backend = TestBackend::new(80, 24);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
@@ -592,14 +657,23 @@ fn test_zset_editor_renders_without_panic() {
 
 #[test]
 fn test_stream_editor_navigation() {
+    use indexmap::IndexMap;
     use reddish_tui::redis::types::{RedisValue, StreamEntry};
     use reddish_tui::ui::value_inspector::ValueInspector;
-    use indexmap::IndexMap;
 
     let entries = vec![
-        StreamEntry { id: "1-0".into(), fields: IndexMap::new() },
-        StreamEntry { id: "2-0".into(), fields: IndexMap::new() },
-        StreamEntry { id: "3-0".into(), fields: IndexMap::new() },
+        StreamEntry {
+            id: "1-0".into(),
+            fields: IndexMap::new(),
+        },
+        StreamEntry {
+            id: "2-0".into(),
+            fields: IndexMap::new(),
+        },
+        StreamEntry {
+            id: "3-0".into(),
+            fields: IndexMap::new(),
+        },
     ];
 
     let mut inspector = ValueInspector::new();
@@ -618,14 +692,18 @@ fn test_stream_editor_navigation() {
 
 #[test]
 fn test_stream_editor_a_add() {
+    use indexmap::IndexMap;
     use reddish_tui::redis::types::{RedisValue, StreamEntry};
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
-    use indexmap::IndexMap;
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value("mystream".to_string(), RedisValue::Stream(vec![
-        StreamEntry { id: "1-0".into(), fields: IndexMap::new() },
-    ]));
+    inspector.set_value(
+        "mystream".to_string(),
+        RedisValue::Stream(vec![StreamEntry {
+            id: "1-0".into(),
+            fields: IndexMap::new(),
+        }]),
+    );
 
     // First step: Entry ID (empty = auto *)
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('a'))));
@@ -638,7 +716,11 @@ fn test_stream_editor_a_add() {
     }
     let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
     match action {
-        Some(InspectorAction::StreamAdd { key, entry_id, fields }) => {
+        Some(InspectorAction::StreamAdd {
+            key,
+            entry_id,
+            fields,
+        }) => {
             assert_eq!(key, "mystream");
             assert_eq!(entry_id, "*");
             assert_eq!(fields, vec![("temp".to_string(), "25".to_string())]);
@@ -649,18 +731,27 @@ fn test_stream_editor_a_add() {
 
 #[test]
 fn test_stream_editor_d_remove() {
+    use indexmap::IndexMap;
     use reddish_tui::redis::types::{RedisValue, StreamEntry};
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
-    use indexmap::IndexMap;
 
     let mut fields = IndexMap::new();
     fields.insert("temp".to_string(), "25".to_string());
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value("mystream".to_string(), RedisValue::Stream(vec![
-        StreamEntry { id: "1-0".into(), fields: fields.clone() },
-        StreamEntry { id: "2-0".into(), fields },
-    ]));
+    inspector.set_value(
+        "mystream".to_string(),
+        RedisValue::Stream(vec![
+            StreamEntry {
+                id: "1-0".into(),
+                fields: fields.clone(),
+            },
+            StreamEntry {
+                id: "2-0".into(),
+                fields,
+            },
+        ]),
+    );
 
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
     let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
@@ -676,14 +767,23 @@ fn test_stream_editor_d_remove() {
 
 #[test]
 fn test_stream_editor_g_jumps_to_end() {
+    use indexmap::IndexMap;
     use reddish_tui::redis::types::{RedisValue, StreamEntry};
     use reddish_tui::ui::value_inspector::ValueInspector;
-    use indexmap::IndexMap;
 
     let entries = vec![
-        StreamEntry { id: "1-0".into(), fields: IndexMap::new() },
-        StreamEntry { id: "2-0".into(), fields: IndexMap::new() },
-        StreamEntry { id: "3-0".into(), fields: IndexMap::new() },
+        StreamEntry {
+            id: "1-0".into(),
+            fields: IndexMap::new(),
+        },
+        StreamEntry {
+            id: "2-0".into(),
+            fields: IndexMap::new(),
+        },
+        StreamEntry {
+            id: "3-0".into(),
+            fields: IndexMap::new(),
+        },
     ];
 
     let mut inspector = ValueInspector::new();
@@ -704,10 +804,19 @@ fn test_stream_editor_renders_without_panic() {
     fields.insert("temp".to_string(), "25".to_string());
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value("mystream".to_string(), RedisValue::Stream(vec![
-        StreamEntry { id: "1-0".into(), fields: fields.clone() },
-        StreamEntry { id: "2-0".into(), fields },
-    ]));
+    inspector.set_value(
+        "mystream".to_string(),
+        RedisValue::Stream(vec![
+            StreamEntry {
+                id: "1-0".into(),
+                fields: fields.clone(),
+            },
+            StreamEntry {
+                id: "2-0".into(),
+                fields,
+            },
+        ]),
+    );
 
     let backend = TestBackend::new(80, 24);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
@@ -1139,7 +1248,10 @@ fn test_inspector_y_copy_list() {
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
 
     let mut inspector = ValueInspector::new();
-    inspector.set_value("mylist".to_string(), RedisValue::List(vec!["a".to_string(), "b".to_string()]));
+    inspector.set_value(
+        "mylist".to_string(),
+        RedisValue::List(vec!["a".to_string(), "b".to_string()]),
+    );
 
     let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('y'))));
     match action {
@@ -1172,9 +1284,9 @@ fn test_inspector_y_copy_hash() {
 
 #[test]
 fn test_inspector_y_copy_set() {
-    use std::collections::BTreeSet;
     use reddish_tui::redis::types::RedisValue;
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
+    use std::collections::BTreeSet;
 
     let mut members = BTreeSet::new();
     members.insert("member1".to_string());
@@ -1195,7 +1307,10 @@ fn test_inspector_y_copy_zset() {
     use reddish_tui::redis::types::{RedisValue, ZSetEntry};
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
 
-    let entries = vec![ZSetEntry { member: "zmember".to_string(), score: 1.0 }];
+    let entries = vec![ZSetEntry {
+        member: "zmember".to_string(),
+        score: 1.0,
+    }];
     let mut inspector = ValueInspector::new();
     inspector.set_value("myzset".to_string(), RedisValue::ZSet(entries));
 
@@ -1214,7 +1329,10 @@ fn test_inspector_y_copy_stream() {
     use reddish_tui::redis::types::{RedisValue, StreamEntry};
     use reddish_tui::ui::value_inspector::{InspectorAction, ValueInspector};
 
-    let entries = vec![StreamEntry { id: "123-0".to_string(), fields: IndexMap::new() }];
+    let entries = vec![StreamEntry {
+        id: "123-0".to_string(),
+        fields: IndexMap::new(),
+    }];
     let mut inspector = ValueInspector::new();
     inspector.set_value("mystream".to_string(), RedisValue::Stream(entries));
 

@@ -1,9 +1,9 @@
 use ratatui::{
     Frame,
-    layout::{Direction, Layout, Rect, Constraint},
-    text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap, Table, Row as TableRow, Cell},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Cell, Paragraph, Row as TableRow, Table, Wrap},
 };
 
 use crate::events::Event;
@@ -145,11 +145,15 @@ fn json_scalar_spans(value: &serde_json::Value) -> Vec<Span<'static>> {
 fn highlight_json(value: &serde_json::Value) -> Vec<Line<'static>> {
     let mut out = Vec::new();
     if json_is_expanded(value) {
-        out.push(Line::from(vec![
-            styled(json_open_token(value), JSON_PUNCT_COLOR),
-        ]));
+        out.push(Line::from(vec![styled(
+            json_open_token(value),
+            JSON_PUNCT_COLOR,
+        )]));
         write_json_entries(&mut out, value, 1);
-        out.push(Line::from(vec![styled(json_close_token(value), JSON_PUNCT_COLOR)]));
+        out.push(Line::from(vec![styled(
+            json_close_token(value),
+            JSON_PUNCT_COLOR,
+        )]));
     } else {
         out.push(Line::from(json_scalar_spans(value)));
     }
@@ -210,27 +214,74 @@ fn append_comma(out: &mut Vec<Line<'static>>) {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InspectorAction {
-    WriteString { key: String, value: String },
-    SetTtl { key: String, seconds: i64 },
-    ListPush { key: String, value: String, head: bool },
-    ListSet { key: String, index: i64, value: String },
-    ListRemove { key: String, value: String },
+    WriteString {
+        key: String,
+        value: String,
+    },
+    SetTtl {
+        key: String,
+        seconds: i64,
+    },
+    ListPush {
+        key: String,
+        value: String,
+        head: bool,
+    },
+    ListSet {
+        key: String,
+        index: i64,
+        value: String,
+    },
+    ListRemove {
+        key: String,
+        value: String,
+    },
     ListInsert {
         key: String,
         pivot: String,
         value: String,
         before: bool,
     },
-    HashSet { key: String, field: String, value: String },
-    HashDel { key: String, field: String },
+    HashSet {
+        key: String,
+        field: String,
+        value: String,
+    },
+    HashDel {
+        key: String,
+        field: String,
+    },
     /// Bulk delete of every currently selected hash field in one HDEL.
-    HashDelMany { key: String, fields: Vec<String> },
-    SetAdd { key: String, member: String },
-    SetRem { key: String, member: String },
-    ZAdd { key: String, score: f64, member: String },
-    ZRem { key: String, member: String },
-    StreamAdd { key: String, entry_id: String, fields: Vec<(String, String)> },
-    StreamRem { key: String, entry_id: String },
+    HashDelMany {
+        key: String,
+        fields: Vec<String>,
+    },
+    SetAdd {
+        key: String,
+        member: String,
+    },
+    SetRem {
+        key: String,
+        member: String,
+    },
+    ZAdd {
+        key: String,
+        score: f64,
+        member: String,
+    },
+    ZRem {
+        key: String,
+        member: String,
+    },
+    StreamAdd {
+        key: String,
+        entry_id: String,
+        fields: Vec<(String, String)>,
+    },
+    StreamRem {
+        key: String,
+        entry_id: String,
+    },
     StreamTrim {
         key: String,
         strategy: String,
@@ -253,7 +304,10 @@ pub enum PromptMode {
     /// Step 1 of list insert: awaiting BEFORE/AFTER choice. Holds the pivot.
     ListInsertPosition(String),
     /// Step 2 of list insert: awaiting the value to insert.
-    ListInsertValue { pivot: String, before: bool },
+    ListInsertValue {
+        pivot: String,
+        before: bool,
+    },
     HashAddField,
     HashAddValue(String),
     HashEdit(String, usize),
@@ -298,6 +352,8 @@ pub struct ValueInspector {
     pub zset_score_max: Option<String>,
     pub stream_cursor: usize,
     pub stream_compact: bool,
+    /// When true, the tick handler reloads the stream so new entries appear.
+    pub stream_follow: bool,
     pub stream_show_groups: bool,
     pub stream_groups: Option<Vec<StreamGroup>>,
     pub list_prompt: Option<InputWidget>,
@@ -334,6 +390,7 @@ impl ValueInspector {
             zset_score_max: None,
             stream_cursor: 0,
             stream_compact: true,
+            stream_follow: false,
             stream_show_groups: false,
             stream_groups: None,
             list_prompt: None,
@@ -362,6 +419,7 @@ impl ValueInspector {
         self.zset_score_max = None;
         self.stream_cursor = 0;
         self.stream_compact = true;
+        self.stream_follow = false;
         self.stream_show_groups = false;
         self.stream_groups = None;
         self.list_prompt = None;
@@ -389,6 +447,7 @@ impl ValueInspector {
         self.zset_score_max = None;
         self.stream_cursor = 0;
         self.stream_compact = true;
+        self.stream_follow = false;
         self.stream_show_groups = false;
         self.stream_groups = None;
         self.list_prompt = None;
@@ -413,13 +472,19 @@ impl ValueInspector {
         self.zset_score_max = None;
         self.stream_cursor = 0;
         self.stream_compact = true;
+        self.stream_follow = false;
         self.stream_show_groups = false;
         self.stream_groups = None;
         self.list_prompt = None;
         self.prompt_mode = None;
     }
 
-    pub fn set_metadata(&mut self, encoding: Option<String>, memory_bytes: Option<u64>, ttl: Option<Ttl>) {
+    pub fn set_metadata(
+        &mut self,
+        encoding: Option<String>,
+        memory_bytes: Option<u64>,
+        ttl: Option<Ttl>,
+    ) {
         self.encoding = encoding;
         self.memory_bytes = memory_bytes;
         self.ttl = ttl;
@@ -460,18 +525,74 @@ impl ValueInspector {
     }
 
     pub fn select_all_visible_hash_fields(&mut self) {
-        self.hash_selected = self
-            .visible_hash_fields()
-            .into_iter()
-            .cloned()
-            .collect();
+        self.hash_selected = self.visible_hash_fields().into_iter().cloned().collect();
+    }
+
+    /// Called on each tick while follow mode is active.
+    ///
+    /// Returns the last known entry id so the caller can fetch only entries newer
+    /// than it, or `None` when no reload is needed (follow off, or the inspector
+    /// is not showing a stream).
+    pub fn follow_tick(&self) -> Option<String> {
+        if !self.stream_follow {
+            return None;
+        }
+        let entries = match self.value.as_ref() {
+            Some(RedisValue::Stream(entries)) => entries,
+            _ => return None,
+        };
+        entries.last().map(|e| e.id.clone())
+    }
+
+    /// Pin the cursor to the newest entry, used after a follow-mode reload.
+    pub fn follow_cursor_to_tail(&mut self) {
+        if let Some(RedisValue::Stream(entries)) = self.value.as_ref() {
+            self.stream_cursor = entries.len().saturating_sub(1);
+        }
+    }
+
+    /// Append newly fetched entries to the currently displayed stream.
+    ///
+    /// Returns how many were actually appended. Entries are deduplicated by id
+    /// so a repeated fetch cannot grow the list, and the buffer is capped so a
+    /// long-lived follow session cannot grow without bound.
+    pub fn append_stream_entries(&mut self, incoming: Vec<StreamEntry>) -> usize {
+        /// Cap on retained stream entries while following.
+        const MAX_FOLLOW_ENTRIES: usize = 5_000;
+
+        let Some(RedisValue::Stream(entries)) = self.value.as_mut() else {
+            return 0;
+        };
+        let existing: std::collections::HashSet<String> =
+            entries.iter().map(|e| e.id.clone()).collect();
+
+        let mut added = 0usize;
+        for entry in incoming {
+            if existing.contains(&entry.id) {
+                continue;
+            }
+            entries.push(entry);
+            added += 1;
+        }
+        if added > 0 {
+            let overflow = entries.len().saturating_sub(MAX_FOLLOW_ENTRIES);
+            if overflow > 0 {
+                entries.drain(0..overflow);
+                self.stream_cursor = self.stream_cursor.saturating_sub(overflow);
+            }
+        }
+        added
     }
 
     pub fn handle_event(&mut self, event: &Event) -> Option<InspectorAction> {
         self.handle_event_with_keymap(event, &crate::config::keybindings::Keymap::default())
     }
 
-    pub fn handle_event_with_keymap(&mut self, event: &Event, keymap: &crate::config::keybindings::Keymap) -> Option<InspectorAction> {
+    pub fn handle_event_with_keymap(
+        &mut self,
+        event: &Event,
+        keymap: &crate::config::keybindings::Keymap,
+    ) -> Option<InspectorAction> {
         use crossterm::event::KeyCode;
         let Event::Key(key) = event else {
             return None;
@@ -567,10 +688,9 @@ impl ValueInspector {
                         self.hash_cursor = 0;
                         None
                     }
-                    Some(PromptMode::SetAddMember) => Some(InspectorAction::SetAdd {
-                        key,
-                        member: val,
-                    }),
+                    Some(PromptMode::SetAddMember) => {
+                        Some(InspectorAction::SetAdd { key, member: val })
+                    }
                     Some(PromptMode::ZSetAddMember) => {
                         self.list_prompt = Some(InputWidget::new("Score for member"));
                         self.prompt_mode = Some(PromptMode::ZSetAddScore(val));
@@ -599,7 +719,11 @@ impl ValueInspector {
                                 fields.push((f, v));
                             }
                         }
-                        Some(InspectorAction::StreamAdd { key, entry_id, fields })
+                        Some(InspectorAction::StreamAdd {
+                            key,
+                            entry_id,
+                            fields,
+                        })
                     }
                     Some(PromptMode::StreamTrimStrategy) => {
                         let strategy = val.trim().to_ascii_uppercase();
@@ -644,13 +768,21 @@ impl ValueInspector {
                         }
                     }
                     Some(PromptMode::ZSetScoreMin) => {
-                        let min = if val.trim().is_empty() { "-inf".to_string() } else { val.trim().to_string() };
+                        let min = if val.trim().is_empty() {
+                            "-inf".to_string()
+                        } else {
+                            val.trim().to_string()
+                        };
                         self.list_prompt = Some(InputWidget::new("Max score (empty=+inf):"));
                         self.prompt_mode = Some(PromptMode::ZSetScoreMax(min));
                         None
                     }
                     Some(PromptMode::ZSetScoreMax(min)) => {
-                        let max = if val.trim().is_empty() { "+inf".to_string() } else { val.trim().to_string() };
+                        let max = if val.trim().is_empty() {
+                            "+inf".to_string()
+                        } else {
+                            val.trim().to_string()
+                        };
                         self.zset_score_min = Some(min);
                         self.zset_score_max = Some(max);
                         None
@@ -762,9 +894,8 @@ impl ValueInspector {
             let current_val = current.as_ref().and_then(|f| entries.get(f)).cloned();
 
             if keymap.matches("inspector_hash_filter", key) {
-                self.list_prompt = Some(InputWidget::new(
-                    "Filter fields (empty = all, Esc clears)",
-                ));
+                self.list_prompt =
+                    Some(InputWidget::new("Filter fields (empty = all, Esc clears)"));
                 self.prompt_mode = Some(PromptMode::HashFilter);
             } else if keymap.matches("select_all", key) {
                 self.select_all_visible_hash_fields();
@@ -821,10 +952,14 @@ impl ValueInspector {
             let items: Vec<&String> = members.iter().collect();
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
-                    if self.set_cursor > 0 { self.set_cursor -= 1; }
+                    if self.set_cursor > 0 {
+                        self.set_cursor -= 1;
+                    }
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    if self.set_cursor + 1 < items.len() { self.set_cursor += 1; }
+                    if self.set_cursor + 1 < items.len() {
+                        self.set_cursor += 1;
+                    }
                 }
                 _ => {}
             }
@@ -849,10 +984,14 @@ impl ValueInspector {
         if let Some(RedisValue::ZSet(ref entries)) = self.value {
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
-                    if self.zset_cursor > 0 { self.zset_cursor -= 1; }
+                    if self.zset_cursor > 0 {
+                        self.zset_cursor -= 1;
+                    }
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    if self.zset_cursor + 1 < entries.len() { self.zset_cursor += 1; }
+                    if self.zset_cursor + 1 < entries.len() {
+                        self.zset_cursor += 1;
+                    }
                 }
                 _ => {}
             }
@@ -865,7 +1004,10 @@ impl ValueInspector {
                     prompt.value = entry.score.to_string();
                     prompt.cursor = entry.score.to_string().len();
                     self.list_prompt = Some(prompt);
-                    self.prompt_mode = Some(PromptMode::ZSetEditScore(entry.member.clone(), self.zset_cursor));
+                    self.prompt_mode = Some(PromptMode::ZSetEditScore(
+                        entry.member.clone(),
+                        self.zset_cursor,
+                    ));
                 }
             } else if keymap.matches("delete", key)
                 && let Some(entry) = entries.get(self.zset_cursor)
@@ -895,10 +1037,14 @@ impl ValueInspector {
         if let Some(RedisValue::Stream(ref entries)) = self.value {
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
-                    if self.stream_cursor > 0 { self.stream_cursor -= 1; }
+                    if self.stream_cursor > 0 {
+                        self.stream_cursor -= 1;
+                    }
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    if self.stream_cursor + 1 < entries.len() { self.stream_cursor += 1; }
+                    if self.stream_cursor + 1 < entries.len() {
+                        self.stream_cursor += 1;
+                    }
                 }
                 _ => {}
             }
@@ -912,6 +1058,15 @@ impl ValueInspector {
                     key: self.key.clone().unwrap_or_default(),
                     entry_id: entry.id.clone(),
                 });
+            } else if keymap.matches("inspector_stream_follow", key) {
+                self.stream_follow = !self.stream_follow;
+                if self.stream_follow {
+                    // Jump to the tail so follow mode tracks new entries.
+                    if !entries.is_empty() {
+                        self.stream_cursor = entries.len() - 1;
+                    }
+                    return Some(InspectorAction::StreamRefresh);
+                }
             } else if keymap.matches("inspector_toggle_view", key) {
                 self.stream_compact = !self.stream_compact;
             } else if keymap.matches("inspector_goto_end", key) {
@@ -921,8 +1076,7 @@ impl ValueInspector {
             } else if keymap.matches("inspector_stream_groups", key) {
                 return Some(InspectorAction::StreamToggleGroups);
             } else if keymap.matches("inspector_stream_trim", key) {
-                self.list_prompt =
-                    Some(InputWidget::new("Trim strategy: MAXLEN or MINID"));
+                self.list_prompt = Some(InputWidget::new("Trim strategy: MAXLEN or MINID"));
                 self.prompt_mode = Some(PromptMode::StreamTrimStrategy);
             } else if keymap.matches("copy", key)
                 && let Some(entry) = entries.get(self.stream_cursor)
@@ -935,7 +1089,9 @@ impl ValueInspector {
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
-        if self.edit_mode && let Some(ref editor) = self.text_editor {
+        if self.edit_mode
+            && let Some(ref editor) = self.text_editor
+        {
             editor.render(frame, area);
             return;
         }
@@ -1078,16 +1234,17 @@ impl ValueInspector {
             text.push_str(&format!("\n{} {}", label, prompt_display(prompt)));
         }
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title);
-        let paragraph = Paragraph::new(text)
-            .block(block)
-            .wrap(Wrap { trim: false });
+        let block = Block::default().borders(Borders::ALL).title(title);
+        let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
         frame.render_widget(paragraph, area);
     }
 
-    fn render_hash(&self, frame: &mut Frame, area: Rect, entries: &indexmap::IndexMap<String, String>) {
+    fn render_hash(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        entries: &indexmap::IndexMap<String, String>,
+    ) {
         let visible = self.visible_hash_fields();
         let total = entries.len();
         let filtered = !self.hash_filter.is_empty();
@@ -1098,10 +1255,7 @@ impl ValueInspector {
             .map(|k| format!("Hash [{}] (fields={}", k, visible.len()))
             .unwrap_or_else(|| format!("Hash (fields={}", visible.len()));
         if filtered {
-            title.push_str(&format!(
-                "/{} filter:{}",
-                total, self.hash_filter
-            ));
+            title.push_str(&format!("/{} filter:{}", total, self.hash_filter));
         } else if total != visible.len() {
             title.push_str(&format!("/{total}"));
         } else {
@@ -1165,7 +1319,12 @@ impl ValueInspector {
         );
     }
 
-    fn render_set(&self, frame: &mut Frame, area: Rect, members: &std::collections::BTreeSet<String>) {
+    fn render_set(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        members: &std::collections::BTreeSet<String>,
+    ) {
         let title = self
             .key
             .as_deref()
@@ -1183,32 +1342,47 @@ impl ValueInspector {
             text.push_str(&format!(
                 "\nMember: {}{}",
                 prompt.value,
-                if prompt.cursor >= prompt.value.len() { "_" } else { "" }
+                if prompt.cursor >= prompt.value.len() {
+                    "_"
+                } else {
+                    ""
+                }
             ));
         }
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title);
-        let paragraph = Paragraph::new(text)
-            .block(block)
-            .wrap(Wrap { trim: false });
+        let block = Block::default().borders(Borders::ALL).title(title);
+        let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
         frame.render_widget(paragraph, area);
     }
 
     fn render_zset(&self, frame: &mut Frame, area: Rect, entries: &[ZSetEntry]) {
-        let mode_label = if self.zset_sort_score_asc { "asc" } else { "desc" };
+        let mode_label = if self.zset_sort_score_asc {
+            "asc"
+        } else {
+            "desc"
+        };
         let filtered = self.zset_score_min.is_some() || self.zset_score_max.is_some();
         let visible: Vec<&ZSetEntry> = if filtered && !entries.is_empty() {
-            entries.iter().filter(|e| {
-                let above_min = self.zset_score_min.as_ref().is_none_or(|min| {
-                    if min == "-inf" { true } else { e.score >= min.parse::<f64>().unwrap_or(f64::NEG_INFINITY) }
-                });
-                let below_max = self.zset_score_max.as_ref().is_none_or(|max| {
-                    if max == "+inf" { true } else { e.score <= max.parse::<f64>().unwrap_or(f64::INFINITY) }
-                });
-                above_min && below_max
-            }).collect()
+            entries
+                .iter()
+                .filter(|e| {
+                    let above_min = self.zset_score_min.as_ref().is_none_or(|min| {
+                        if min == "-inf" {
+                            true
+                        } else {
+                            e.score >= min.parse::<f64>().unwrap_or(f64::NEG_INFINITY)
+                        }
+                    });
+                    let below_max = self.zset_score_max.as_ref().is_none_or(|max| {
+                        if max == "+inf" {
+                            true
+                        } else {
+                            e.score <= max.parse::<f64>().unwrap_or(f64::INFINITY)
+                        }
+                    });
+                    above_min && below_max
+                })
+                .collect()
         } else {
             entries.iter().collect()
         };
@@ -1218,7 +1392,12 @@ impl ValueInspector {
             .map(|k| {
                 let base = format!("ZSet [{}] (len={}, score:{})", k, visible.len(), mode_label);
                 if filtered {
-                    format!("{} filter:{}~{}", base, self.zset_score_min.as_deref().unwrap_or("-inf"), self.zset_score_max.as_deref().unwrap_or("+inf"))
+                    format!(
+                        "{} filter:{}~{}",
+                        base,
+                        self.zset_score_min.as_deref().unwrap_or("-inf"),
+                        self.zset_score_max.as_deref().unwrap_or("+inf")
+                    )
                 } else {
                     base
                 }
@@ -1227,15 +1406,26 @@ impl ValueInspector {
 
         let mut items: Vec<&&ZSetEntry> = visible.iter().collect();
         if self.zset_sort_score_asc {
-            items.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+            items.sort_by(|a, b| {
+                a.score
+                    .partial_cmp(&b.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         } else {
-            items.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            items.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
         }
 
         let mut text = String::new();
         for (i, entry) in items.iter().enumerate() {
             let marker = if i == self.zset_cursor { ">" } else { " " };
-            text.push_str(&format!("{}[{}] {} {}\n", marker, i, entry.score, entry.member));
+            text.push_str(&format!(
+                "{}[{}] {} {}\n",
+                marker, i, entry.score, entry.member
+            ));
         }
 
         if let Some(ref prompt) = self.list_prompt {
@@ -1249,21 +1439,30 @@ impl ValueInspector {
                 "\n{}{}{}",
                 prompt_label,
                 prompt.value,
-                if prompt.cursor >= prompt.value.len() { "_" } else { " " }
+                if prompt.cursor >= prompt.value.len() {
+                    "_"
+                } else {
+                    " "
+                }
             ));
         }
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title);
-        let paragraph = Paragraph::new(text)
-            .block(block)
-            .wrap(Wrap { trim: false });
+        let block = Block::default().borders(Borders::ALL).title(title);
+        let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
         frame.render_widget(paragraph, area);
     }
 
     fn render_stream(&self, frame: &mut Frame, area: Rect, entries: &[StreamEntry]) {
-        let mode = if self.stream_compact { "compact" } else { "full" };
+        let mode = if self.stream_compact {
+            "compact"
+        } else {
+            "full"
+        };
+        let follow = if self.stream_follow { ", follow" } else { "" };
+        let title = |k: Option<&str>| match k {
+            Some(k) => format!("Stream [{k}] (len={}, {mode}{follow})", entries.len()),
+            None => format!("Stream (len={}, {mode}{follow})", entries.len()),
+        };
 
         if self.stream_show_groups {
             let chunks = Layout::default()
@@ -1274,16 +1473,18 @@ impl ValueInspector {
             let right = chunks[1];
 
             // Left: stream messages
-            let title_left = self
-                .key
-                .as_deref()
-                .map(|k| format!("Stream [{}] (len={}, {})", k, entries.len(), mode))
-                .unwrap_or_else(|| format!("Stream (len={})", entries.len()));
+            let title_left = title(self.key.as_deref());
             let mut text = String::new();
             for (i, entry) in entries.iter().enumerate() {
                 let marker = if i == self.stream_cursor { ">" } else { " " };
                 if self.stream_compact {
-                    text.push_str(&format!("{}[{}] {} ({} fields)\n", marker, i, entry.id, entry.fields.len()));
+                    text.push_str(&format!(
+                        "{}[{}] {} ({} fields)\n",
+                        marker,
+                        i,
+                        entry.id,
+                        entry.fields.len()
+                    ));
                 } else {
                     text.push_str(&format!("{}[{}] {}\n", marker, i, entry.id));
                     for (field, val) in &entry.fields {
@@ -1295,18 +1496,16 @@ impl ValueInspector {
                 let prompt_label = match self.prompt_mode {
                     Some(PromptMode::StreamAddId) => "Entry ID: ",
                     Some(PromptMode::StreamTrimStrategy) => "Trim strategy (MAXLEN/MINID): ",
-                    Some(PromptMode::StreamTrimThreshold(ref s)) => &format!("XTRIM {s} threshold: "),
+                    Some(PromptMode::StreamTrimThreshold(ref s)) => {
+                        &format!("XTRIM {s} threshold: ")
+                    }
                     Some(PromptMode::StreamAddFields(_)) => "Fields: ",
                     _ => "Input: ",
                 };
                 text.push_str(&format!("\n{} {}", prompt_label, prompt_display(prompt)));
             }
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .title(title_left);
-            let paragraph = Paragraph::new(text)
-                .block(block)
-                .wrap(Wrap { trim: false });
+            let block = Block::default().borders(Borders::ALL).title(title_left);
+            let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
             frame.render_widget(paragraph, left);
 
             // Right: consumer groups
@@ -1317,43 +1516,50 @@ impl ValueInspector {
                     Cell::from("Consumers"),
                     Cell::from("Pending"),
                     Cell::from("Last ID"),
-                ]).style(Style::default().fg(Color::Yellow));
-                let rows: Vec<TableRow> = groups.iter().map(|g| {
-                    TableRow::new(vec![
-                        Cell::from(g.name.clone()),
-                        Cell::from(g.consumers.to_string()),
-                        Cell::from(g.pending.to_string()),
-                        Cell::from(g.last_delivered_id.clone()),
-                    ])
-                }).collect();
-                let table = Table::new(rows, vec![
-                    Constraint::Percentage(30),
-                    Constraint::Percentage(20),
-                    Constraint::Percentage(20),
-                    Constraint::Percentage(30),
                 ])
+                .style(Style::default().fg(Color::Yellow));
+                let rows: Vec<TableRow> = groups
+                    .iter()
+                    .map(|g| {
+                        TableRow::new(vec![
+                            Cell::from(g.name.clone()),
+                            Cell::from(g.consumers.to_string()),
+                            Cell::from(g.pending.to_string()),
+                            Cell::from(g.last_delivered_id.clone()),
+                        ])
+                    })
+                    .collect();
+                let table = Table::new(
+                    rows,
+                    vec![
+                        Constraint::Percentage(30),
+                        Constraint::Percentage(20),
+                        Constraint::Percentage(20),
+                        Constraint::Percentage(30),
+                    ],
+                )
                 .header(header)
                 .block(Block::default().borders(Borders::ALL).title(title_right));
                 frame.render_widget(table, right);
             } else {
-                let block = Block::default()
-                    .borders(Borders::ALL)
-                    .title(title_right);
+                let block = Block::default().borders(Borders::ALL).title(title_right);
                 let paragraph = Paragraph::new("Loading groups...").block(block);
                 frame.render_widget(paragraph, right);
             }
         } else {
-            let title = self
-                .key
-                .as_deref()
-                .map(|k| format!("Stream [{}] (len={}, {})", k, entries.len(), mode))
-                .unwrap_or_else(|| format!("Stream (len={})", entries.len()));
+            let title = title(self.key.as_deref());
 
             let mut text = String::new();
             for (i, entry) in entries.iter().enumerate() {
                 let marker = if i == self.stream_cursor { ">" } else { " " };
                 if self.stream_compact {
-                    text.push_str(&format!("{}[{}] {} ({} fields)\n", marker, i, entry.id, entry.fields.len()));
+                    text.push_str(&format!(
+                        "{}[{}] {} ({} fields)\n",
+                        marker,
+                        i,
+                        entry.id,
+                        entry.fields.len()
+                    ));
                 } else {
                     text.push_str(&format!("{}[{}] {}\n", marker, i, entry.id));
                     for (field, val) in &entry.fields {
@@ -1366,19 +1572,17 @@ impl ValueInspector {
                 let prompt_label = match self.prompt_mode {
                     Some(PromptMode::StreamAddId) => "Entry ID: ",
                     Some(PromptMode::StreamTrimStrategy) => "Trim strategy (MAXLEN/MINID): ",
-                    Some(PromptMode::StreamTrimThreshold(ref s)) => &format!("XTRIM {s} threshold: "),
+                    Some(PromptMode::StreamTrimThreshold(ref s)) => {
+                        &format!("XTRIM {s} threshold: ")
+                    }
                     Some(PromptMode::StreamAddFields(_)) => "Fields: ",
                     _ => "Input: ",
                 };
                 text.push_str(&format!("\n{} {}", prompt_label, prompt_display(prompt)));
             }
 
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .title(title);
-            let paragraph = Paragraph::new(text)
-                .block(block)
-                .wrap(Wrap { trim: false });
+            let block = Block::default().borders(Borders::ALL).title(title);
+            let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
             frame.render_widget(paragraph, area);
         }
     }
@@ -1456,6 +1660,180 @@ fn render_value_preview(value: &RedisValue, view_mode: &StringViewMode) -> Strin
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    // ---- Stream follow mode (2.18) ----
+
+    fn entry(id: &str) -> StreamEntry {
+        StreamEntry {
+            id: id.to_string(),
+            fields: [("f".to_string(), id.to_string())].into(),
+        }
+    }
+
+    #[test]
+    fn follow_defaults_off() {
+        let inspector = ValueInspector::new();
+        assert!(!inspector.stream_follow);
+    }
+
+    #[test]
+    fn follow_key_toggles_and_requests_refresh() {
+        let mut inspector = stream_inspector();
+        let action = inspector.handle_event(&press(KeyCode::Char('F')));
+        assert!(inspector.stream_follow);
+        assert_eq!(action, Some(InspectorAction::StreamRefresh));
+    }
+
+    #[test]
+    fn follow_key_off_does_not_request_refresh() {
+        let mut inspector = stream_inspector();
+        inspector.handle_event(&press(KeyCode::Char('F')));
+        assert_eq!(inspector.handle_event(&press(KeyCode::Char('F'))), None);
+        assert!(!inspector.stream_follow);
+    }
+
+    #[test]
+    fn follow_jumps_cursor_to_tail_when_enabled() {
+        let mut inspector = stream_inspector();
+        inspector.handle_event(&press(KeyCode::Char('F')));
+        assert_eq!(inspector.stream_cursor, 1);
+    }
+
+    #[test]
+    fn follow_leaves_compact_toggle_on_f_untouched() {
+        let mut inspector = stream_inspector();
+        let before = inspector.stream_compact;
+        inspector.handle_event(&press(KeyCode::Char('f')));
+        assert!(inspector.stream_compact != before);
+        assert!(!inspector.stream_follow);
+    }
+
+    #[test]
+    fn follow_tick_returns_last_id_when_following() {
+        let mut inspector = stream_inspector();
+        inspector.stream_follow = true;
+        assert_eq!(inspector.follow_tick(), Some("2-0".to_string()));
+    }
+
+    #[test]
+    fn follow_tick_returns_none_when_not_following() {
+        let inspector = stream_inspector();
+        assert_eq!(inspector.follow_tick(), None);
+    }
+
+    #[test]
+    fn follow_tick_returns_none_for_non_stream_value() {
+        let mut inspector = ValueInspector::new();
+        inspector.set_value("l".into(), RedisValue::List(vec!["a".into()]));
+        inspector.stream_follow = true;
+        assert_eq!(inspector.follow_tick(), None);
+    }
+
+    #[test]
+    fn follow_tick_returns_none_for_empty_stream() {
+        let mut inspector = ValueInspector::new();
+        inspector.set_value("s".into(), RedisValue::Stream(vec![]));
+        inspector.stream_follow = true;
+        assert_eq!(inspector.follow_tick(), None);
+    }
+
+    #[test]
+    fn append_stream_entries_adds_new_entries() {
+        let mut inspector = stream_inspector();
+        let added = inspector.append_stream_entries(vec![entry("3-0"), entry("4-0")]);
+        assert_eq!(added, 2);
+        match inspector.value.as_ref().unwrap() {
+            RedisValue::Stream(entries) => assert_eq!(entries.len(), 4),
+            other => panic!("expected stream, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn append_stream_entries_dedupes_by_id() {
+        let mut inspector = stream_inspector();
+        // Re-fetching the same tail must not duplicate rows.
+        let added = inspector.append_stream_entries(vec![entry("2-0"), entry("3-0")]);
+        assert_eq!(added, 1);
+        match inspector.value.as_ref().unwrap() {
+            RedisValue::Stream(entries) => assert_eq!(entries.len(), 3),
+            other => panic!("expected stream, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn append_stream_entries_caps_buffer() {
+        let mut inspector = ValueInspector::new();
+        let initial: Vec<StreamEntry> = (0..5_000).map(|i| entry(&format!("{i}-0"))).collect();
+        inspector.set_value("s".to_string(), RedisValue::Stream(initial));
+        let added = inspector.append_stream_entries(vec![entry("9999-0")]);
+        assert_eq!(added, 1);
+        match inspector.value.as_ref().unwrap() {
+            RedisValue::Stream(entries) => {
+                assert_eq!(entries.len(), 5_000, "buffer must stay capped");
+                // Oldest entries dropped, newest retained.
+                assert_eq!(entries.last().unwrap().id, "9999-0");
+            }
+            other => panic!("expected stream, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn append_stream_entries_on_non_stream_is_a_noop() {
+        let mut inspector = ValueInspector::new();
+        inspector.set_value("l".into(), RedisValue::List(vec!["a".into()]));
+        assert_eq!(inspector.append_stream_entries(vec![entry("1-0")]), 0);
+    }
+
+    #[test]
+    fn follow_cursor_to_tail_pins_newest() {
+        let mut inspector = stream_inspector();
+        inspector.append_stream_entries(vec![entry("3-0")]);
+        inspector.stream_cursor = 0;
+        inspector.follow_cursor_to_tail();
+        assert_eq!(inspector.stream_cursor, 2);
+    }
+
+    #[test]
+    fn follow_reset_on_new_value() {
+        let mut inspector = stream_inspector();
+        inspector.stream_follow = true;
+        inspector.set_value("s2".to_string(), RedisValue::Stream(vec![]));
+        assert!(!inspector.stream_follow);
+    }
+
+    #[test]
+    fn render_stream_shows_follow_indicator() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut inspector = stream_inspector();
+        inspector.stream_follow = true;
+        inspector.append_stream_entries(vec![entry("3-0")]);
+        terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        let rendered: String = buffer
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>();
+        assert!(
+            rendered.contains("follow"),
+            "title should show follow state"
+        );
+    }
+
+    #[test]
+    fn render_stream_follow_with_groups_does_not_panic() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut inspector = stream_inspector();
+        inspector.stream_follow = true;
+        inspector.stream_show_groups = true;
+        inspector.stream_groups = Some(Vec::new());
+        terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+    }
 
     // ---- List insert (2.9) ----
 
@@ -1614,7 +1992,11 @@ mod tests {
         inspector.handle_event(&press(KeyCode::Enter));
         inspector.list_prompt.as_mut().unwrap().value = "1000-0".to_string();
         match inspector.handle_event(&press(KeyCode::Enter)) {
-            Some(InspectorAction::StreamTrim { strategy, threshold, .. }) => {
+            Some(InspectorAction::StreamTrim {
+                strategy,
+                threshold,
+                ..
+            }) => {
                 assert_eq!(strategy, "MINID");
                 assert_eq!(threshold, "1000-0");
             }
@@ -1747,7 +2129,10 @@ mod tests {
         let mut inspector = hash_inspector();
         inspector.hash_filter = "user".to_string();
         inspector.hash_selected.push("user:name".to_string());
-        inspector.set_value("h2".to_string(), RedisValue::Hash(indexmap::IndexMap::new()));
+        inspector.set_value(
+            "h2".to_string(),
+            RedisValue::Hash(indexmap::IndexMap::new()),
+        );
         assert_eq!(inspector.hash_filter, "");
         assert!(inspector.hash_selected.is_empty());
     }
@@ -1969,8 +2354,7 @@ mod tests {
 
     #[test]
     fn json_highlight_colors_literals() {
-        let parsed: serde_json::Value =
-            serde_json::from_str("{\"a\":true,\"b\":null}").unwrap();
+        let parsed: serde_json::Value = serde_json::from_str("{\"a\":true,\"b\":null}").unwrap();
         let lines = highlight_json(&parsed);
         let all: Vec<&Span> = lines.iter().flat_map(|l| l.spans.iter()).collect();
         for literal in ["true", "null"] {
@@ -2021,7 +2405,11 @@ mod tests {
     fn json_highlight_arrays_have_no_keys() {
         let parsed: serde_json::Value = serde_json::from_str("{\"a\":[1,2]}").unwrap();
         let lines = highlight_json(&parsed);
-        let joined: String = lines.iter().flat_map(|l| l.spans.iter()).map(|s| s.content.as_ref()).collect();
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
         assert!(joined.contains('['));
         assert!(joined.contains(']'));
         assert!(joined.contains("1"));
@@ -2063,21 +2451,39 @@ mod tests {
     fn render_lines_json_mode_produces_spans() {
         let lines = StringViewMode::Json.render_lines("{\"a\":1}");
         assert!(lines.len() > 1);
-        assert!(lines.iter().flat_map(|l| l.spans.iter()).any(|s| s.style.fg.is_some()));
+        assert!(
+            lines
+                .iter()
+                .flat_map(|l| l.spans.iter())
+                .any(|s| s.style.fg.is_some())
+        );
     }
 
     #[test]
     fn render_lines_non_json_modes_are_unstyled() {
-        for mode in [StringViewMode::Raw, StringViewMode::Base64, StringViewMode::Hex] {
+        for mode in [
+            StringViewMode::Raw,
+            StringViewMode::Base64,
+            StringViewMode::Hex,
+        ] {
             let lines = mode.render_lines("hello");
-            assert!(lines.iter().flat_map(|l| l.spans.iter()).all(|s| s.style.fg.is_none()));
+            assert!(
+                lines
+                    .iter()
+                    .flat_map(|l| l.spans.iter())
+                    .all(|s| s.style.fg.is_none())
+            );
         }
     }
 
     #[test]
     fn render_lines_invalid_json_is_plain_but_readable() {
         let lines = StringViewMode::Json.render_lines("<html>not json</html>");
-        let joined: String = lines.iter().flat_map(|l| l.spans.iter()).map(|s| s.content.as_ref()).collect();
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
         assert_eq!(joined, "<html>not json</html>");
     }
 
@@ -2093,7 +2499,10 @@ mod tests {
             StringViewMode::Hex,
         ] {
             let mut inspector = ValueInspector::new();
-            inspector.set_value("k".into(), RedisValue::String(r#"{"a":[1,2],"b":null}"#.into()));
+            inspector.set_value(
+                "k".into(),
+                RedisValue::String(r#"{"a":[1,2],"b":null}"#.into()),
+            );
             inspector.string_view = mode;
             terminal.draw(|f| inspector.render(f, f.area())).unwrap();
         }
@@ -2208,10 +2617,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut inspector = ValueInspector::new();
-        inspector.set_value(
-            "events".to_string(),
-            RedisValue::Stream(vec![]),
-        );
+        inspector.set_value("events".to_string(), RedisValue::Stream(vec![]));
         inspector.stream_show_groups = true;
         inspector.stream_groups = Some(vec![]);
         terminal.draw(|f| inspector.render(f, f.area())).unwrap();

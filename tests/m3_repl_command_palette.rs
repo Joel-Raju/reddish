@@ -95,7 +95,7 @@ fn test_palette_renders_without_panic() {
 }
 
 #[test]
- fn test_app_repl_tab_switch() {
+fn test_app_repl_tab_switch() {
     let mut app = reddish_tui::app::App::new(reddish_tui::config::Config::default());
     assert_eq!(app.active_tab, reddish_tui::app::Tab::Keys);
     // Simulate tab switch to REPL
@@ -146,8 +146,8 @@ fn test_app_repl_overlay_enter_executes() {
 
 #[test]
 fn test_app_repl_overlay_typing() {
-    use reddish_tui::app::AppMode;
     use crossterm::event::KeyCode;
+    use reddish_tui::app::AppMode;
     use reddish_tui::events::Event;
     use reddish_tui::ui::widgets::input::InputWidget;
 
@@ -156,10 +156,18 @@ fn test_app_repl_overlay_typing() {
     app.overlay_input = Some(InputWidget::new(""));
 
     if let Some(ref mut overlay) = app.overlay_input {
-        overlay.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('P'))));
-        overlay.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('I'))));
-        overlay.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('N'))));
-        overlay.handle_event(&Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('G'))));
+        overlay.handle_event(&Event::Key(crossterm::event::KeyEvent::from(
+            KeyCode::Char('P'),
+        )));
+        overlay.handle_event(&Event::Key(crossterm::event::KeyEvent::from(
+            KeyCode::Char('I'),
+        )));
+        overlay.handle_event(&Event::Key(crossterm::event::KeyEvent::from(
+            KeyCode::Char('N'),
+        )));
+        overlay.handle_event(&Event::Key(crossterm::event::KeyEvent::from(
+            KeyCode::Char('G'),
+        )));
         assert_eq!(overlay.value, "PING");
     } else {
         panic!("overlay_input should be Some");

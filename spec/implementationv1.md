@@ -127,7 +127,7 @@ The original audit predated Phases A–E. The following were reported as
 | 2.15 | ZSet: `a` ZADD, `e` edit score, `D` ZREM | ✅ Done | |
 | 2.16 | ZSet: range query (`q` → min/max prompt) | ✅ Done | In-memory score filter (`zset_score_min/max`) |
 | 2.17 | Stream: `a` XADD, `D` XDEL | ✅ Done | |
-| 2.18 | Stream: follow mode (`f` auto-reload on tick) | ❌ Missing | `stream_compact` toggle exists, but no tick-driven reload |
+| 2.18 | Stream: follow mode (`F` auto-reload on tick) | ✅ Done | Tick-driven XRANGE from last id; `f` still toggles compact |
 | 2.19 | Stream: consumer group panel (`g`) | ✅ Done | `G` toggles split-pane groups table via `client.xgroups()` |
 | 2.20 | Stream: XTRIM form (`Ctrl+T`) | ✅ Done | Two-step MAXLEN/MINID prompt; strategy validated |
 | 2.21 | Metadata display (encoding, memory, TTL) | ✅ Done | `set_metadata` on inspector |
@@ -384,7 +384,7 @@ The original audit predated Phases A–E. The following were reported as
 | ZSet: `a` ZADD, `e` edit score, `D` ZREM | ✅ Done | |
 | ZSet: range query | ✅ Done | |
 | Stream: `a` XADD, `D` XDEL | ✅ Done | |
-| Stream: follow mode | ❌ Missing | |
+| Stream: follow mode | ✅ Done | `F` toggles; tick reload throttled to ~1s; buffer capped at 5000 |
 | Stream: consumer group panel | ❌ Missing | |
 | Stream: XTRIM | ✅ Done | `Ctrl+T` two-step MAXLEN/MINID prompt |
 

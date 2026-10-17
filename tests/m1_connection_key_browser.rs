@@ -293,8 +293,16 @@ fn test_tree_row_has_badges_when_set() {
     });
     let rows = tree.visible_rows();
     // Key is at root, no .rsplit_once match, so label uses full name directly
-    assert!(rows[0].label.contains("[S]"), "expected type badge [S] in label, got: {}", rows[0].label);
-    assert!(rows[0].label.contains("2m0s"), "expected TTL badge in label, got: {}", rows[0].label);
+    assert!(
+        rows[0].label.contains("[S]"),
+        "expected type badge [S] in label, got: {}",
+        rows[0].label
+    );
+    assert!(
+        rows[0].label.contains("2m0s"),
+        "expected TTL badge in label, got: {}",
+        rows[0].label
+    );
 }
 
 #[test]
@@ -328,13 +336,11 @@ fn test_breadcrumb_renders_path() {
 
     let mut browser = KeyBrowser::new(':', 500_000);
     browser.current_path = vec!["prod".to_string(), "user".to_string()];
-    browser.apply_scan_batch(vec![
-        KeyEntry {
-            full_name: "prod:user:abc".to_string(),
-            redis_type: Some(RedisType::String),
-            ttl: None,
-        },
-    ]);
+    browser.apply_scan_batch(vec![KeyEntry {
+        full_name: "prod:user:abc".to_string(),
+        redis_type: Some(RedisType::String),
+        ttl: None,
+    }]);
 
     let backend = TestBackend::new(80, 24);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
@@ -360,16 +366,13 @@ fn test_key_browser_delete_returns_action() {
     use reddish_tui::events::Event;
 
     let mut browser = KeyBrowser::new(':', 500_000);
-    browser.apply_scan_batch(vec![
-        KeyEntry {
-            full_name: "testkey".to_string(),
-            redis_type: None,
-            ttl: None,
-        },
-    ]);
+    browser.apply_scan_batch(vec![KeyEntry {
+        full_name: "testkey".to_string(),
+        redis_type: None,
+        ttl: None,
+    }]);
 
-    let action = browser
-        .handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
     assert!(matches!(action, Some(BrowserAction::DeleteKey(ref name)) if name == "testkey"));
 }
 
@@ -378,8 +381,7 @@ fn test_key_browser_delete_on_empty_cursor_does_nothing() {
     use reddish_tui::events::Event;
 
     let mut browser = KeyBrowser::new(':', 500_000);
-    let action = browser
-        .handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
     assert!(action.is_none(), "Delete on empty tree should return None");
 }
 
@@ -556,15 +558,13 @@ fn test_connection_screen_new_profile_creates_action() {
 
     let store = ConnectionStore {
         path: std::path::PathBuf::from("/tmp/test_connections.toml"),
-        profiles: vec![
-            ConnectionProfile {
-                name: "local".to_string(),
-                host: "127.0.0.1".to_string(),
-                port: 6379,
-                db: 0,
-                ..Default::default()
-            },
-        ],
+        profiles: vec![ConnectionProfile {
+            name: "local".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 6379,
+            db: 0,
+            ..Default::default()
+        }],
     };
     let mut screen = ConnectionScreen::new(store);
 
@@ -616,15 +616,13 @@ fn test_connection_screen_delete_profile() {
 
     let store = ConnectionStore {
         path: std::path::PathBuf::from("/tmp/test_connections.toml"),
-        profiles: vec![
-            ConnectionProfile {
-                name: "local".to_string(),
-                host: "127.0.0.1".to_string(),
-                port: 6379,
-                db: 0,
-                ..Default::default()
-            },
-        ],
+        profiles: vec![ConnectionProfile {
+            name: "local".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 6379,
+            db: 0,
+            ..Default::default()
+        }],
     };
     let mut screen = ConnectionScreen::new(store);
 
@@ -634,7 +632,10 @@ fn test_connection_screen_delete_profile() {
 
     // Press y to confirm
     let action = screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('y'))));
-    assert_eq!(action, Some(ConnectionScreenAction::Delete("local".to_string())));
+    assert_eq!(
+        action,
+        Some(ConnectionScreenAction::Delete("local".to_string()))
+    );
 }
 
 #[test]
@@ -643,15 +644,13 @@ fn test_connection_screen_delete_cancelled() {
 
     let store = ConnectionStore {
         path: std::path::PathBuf::from("/tmp/test_connections.toml"),
-        profiles: vec![
-            ConnectionProfile {
-                name: "local".to_string(),
-                host: "127.0.0.1".to_string(),
-                port: 6379,
-                db: 0,
-                ..Default::default()
-            },
-        ],
+        profiles: vec![ConnectionProfile {
+            name: "local".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 6379,
+            db: 0,
+            ..Default::default()
+        }],
     };
     let mut screen = ConnectionScreen::new(store);
 
@@ -669,15 +668,13 @@ fn test_connection_screen_edit_profile() {
 
     let store = ConnectionStore {
         path: std::path::PathBuf::from("/tmp/test_connections.toml"),
-        profiles: vec![
-            ConnectionProfile {
-                name: "local".to_string(),
-                host: "127.0.0.1".to_string(),
-                port: 6379,
-                db: 0,
-                ..Default::default()
-            },
-        ],
+        profiles: vec![ConnectionProfile {
+            name: "local".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 6379,
+            db: 0,
+            ..Default::default()
+        }],
     };
     let mut screen = ConnectionScreen::new(store);
 
@@ -686,7 +683,10 @@ fn test_connection_screen_edit_profile() {
     assert!(action.is_none()); // Enters form mode
 
     // Clear name field with Ctrl+U and type new name
-    screen.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char('u'), crossterm::event::KeyModifiers::CONTROL)));
+    screen.handle_event(&Event::Key(KeyEvent::new(
+        KeyCode::Char('u'),
+        crossterm::event::KeyModifiers::CONTROL,
+    )));
     for c in "staging".chars() {
         screen.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
     }
@@ -710,15 +710,13 @@ fn test_connection_screen_edit_cancelled() {
 
     let store = ConnectionStore {
         path: std::path::PathBuf::from("/tmp/test_connections.toml"),
-        profiles: vec![
-            ConnectionProfile {
-                name: "local".to_string(),
-                host: "127.0.0.1".to_string(),
-                port: 6379,
-                db: 0,
-                ..Default::default()
-            },
-        ],
+        profiles: vec![ConnectionProfile {
+            name: "local".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 6379,
+            db: 0,
+            ..Default::default()
+        }],
     };
     let mut screen = ConnectionScreen::new(store);
 
@@ -736,15 +734,13 @@ fn test_connection_screen_connect_from_list() {
 
     let store = ConnectionStore {
         path: std::path::PathBuf::from("/tmp/test_connections.toml"),
-        profiles: vec![
-            ConnectionProfile {
-                name: "local".to_string(),
-                host: "127.0.0.1".to_string(),
-                port: 6379,
-                db: 0,
-                ..Default::default()
-            },
-        ],
+        profiles: vec![ConnectionProfile {
+            name: "local".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 6379,
+            db: 0,
+            ..Default::default()
+        }],
     };
     let mut screen = ConnectionScreen::new(store);
 
@@ -768,15 +764,13 @@ fn test_connection_screen_cancel() {
 
     let store = ConnectionStore {
         path: std::path::PathBuf::from("/tmp/test_connections.toml"),
-        profiles: vec![
-            ConnectionProfile {
-                name: "local".to_string(),
-                host: "127.0.0.1".to_string(),
-                port: 6379,
-                db: 0,
-                ..Default::default()
-            },
-        ],
+        profiles: vec![ConnectionProfile {
+            name: "local".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 6379,
+            db: 0,
+            ..Default::default()
+        }],
     };
     let mut screen = ConnectionScreen::new(store);
 
@@ -792,15 +786,13 @@ fn test_connection_screen_renders_without_panic() {
 
     let store = ConnectionStore {
         path: std::path::PathBuf::from("/tmp/test_connections.toml"),
-        profiles: vec![
-            ConnectionProfile {
-                name: "local".to_string(),
-                host: "127.0.0.1".to_string(),
-                port: 6379,
-                db: 0,
-                ..Default::default()
-            },
-        ],
+        profiles: vec![ConnectionProfile {
+            name: "local".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 6379,
+            db: 0,
+            ..Default::default()
+        }],
     };
     let screen = ConnectionScreen::new(store);
 
@@ -815,7 +807,10 @@ fn test_key_browser_n_new_key_starts_prompt() {
     let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('n'))));
     assert!(action.is_none());
     assert!(browser.prompt.is_some());
-    assert_eq!(browser.prompt_mode, Some(reddish_tui::ui::key_browser::BrowserPrompt::NewKeyName));
+    assert_eq!(
+        browser.prompt_mode,
+        Some(reddish_tui::ui::key_browser::BrowserPrompt::NewKeyName)
+    );
 }
 
 #[test]
@@ -833,7 +828,10 @@ fn test_key_browser_n_new_key_full_flow() {
     // Submit name → should transition to type prompt
     let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
     assert!(action.is_none());
-    assert_eq!(browser.prompt_mode, Some(BrowserPrompt::NewKeyType("mynewkey".to_string())));
+    assert_eq!(
+        browser.prompt_mode,
+        Some(BrowserPrompt::NewKeyType("mynewkey".to_string()))
+    );
 
     // Enter type 's' for string
     let _ = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
@@ -862,22 +860,31 @@ fn test_key_browser_n_new_key_esc_cancels() {
 #[test]
 fn test_key_browser_r_rename_starts_prompt() {
     let mut browser = KeyBrowser::new(':', 500_000);
-    browser.apply_scan_batch(vec![
-        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
-    ]);
+    browser.apply_scan_batch(vec![KeyEntry {
+        full_name: "mykey".to_string(),
+        redis_type: None,
+        ttl: None,
+    }]);
 
     let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('r'))));
     assert!(action.is_none());
     assert!(browser.prompt.is_some());
-    assert_eq!(browser.prompt_mode, Some(reddish_tui::ui::key_browser::BrowserPrompt::RenameKey("mykey".to_string())));
+    assert_eq!(
+        browser.prompt_mode,
+        Some(reddish_tui::ui::key_browser::BrowserPrompt::RenameKey(
+            "mykey".to_string()
+        ))
+    );
 }
 
 #[test]
 fn test_key_browser_r_rename_submit() {
     let mut browser = KeyBrowser::new(':', 500_000);
-    browser.apply_scan_batch(vec![
-        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
-    ]);
+    browser.apply_scan_batch(vec![KeyEntry {
+        full_name: "mykey".to_string(),
+        redis_type: None,
+        ttl: None,
+    }]);
 
     browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('r'))));
     // Clear pre-filled "mykey" and type new name
@@ -900,9 +907,11 @@ fn test_key_browser_r_rename_submit() {
 #[test]
 fn test_key_browser_e_expire_returns_action() {
     let mut browser = KeyBrowser::new(':', 500_000);
-    browser.apply_scan_batch(vec![
-        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
-    ]);
+    browser.apply_scan_batch(vec![KeyEntry {
+        full_name: "mykey".to_string(),
+        redis_type: None,
+        ttl: None,
+    }]);
 
     let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
     assert_eq!(action, Some(BrowserAction::ExpireKey("mykey".to_string())));
@@ -911,33 +920,47 @@ fn test_key_browser_e_expire_returns_action() {
 #[test]
 fn test_key_browser_y_copy_returns_action() {
     let mut browser = KeyBrowser::new(':', 500_000);
-    browser.apply_scan_batch(vec![
-        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
-    ]);
+    browser.apply_scan_batch(vec![KeyEntry {
+        full_name: "mykey".to_string(),
+        redis_type: None,
+        ttl: None,
+    }]);
 
     let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('y'))));
-    assert_eq!(action, Some(BrowserAction::CopyKeyName("mykey".to_string())));
+    assert_eq!(
+        action,
+        Some(BrowserAction::CopyKeyName("mykey".to_string()))
+    );
 }
 
 #[test]
 fn test_key_browser_t_ttl_starts_prompt() {
     let mut browser = KeyBrowser::new(':', 500_000);
-    browser.apply_scan_batch(vec![
-        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
-    ]);
+    browser.apply_scan_batch(vec![KeyEntry {
+        full_name: "mykey".to_string(),
+        redis_type: None,
+        ttl: None,
+    }]);
 
     let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('t'))));
     assert!(action.is_none());
     assert!(browser.prompt.is_some());
-    assert_eq!(browser.prompt_mode, Some(reddish_tui::ui::key_browser::BrowserPrompt::SetTtl("mykey".to_string())));
+    assert_eq!(
+        browser.prompt_mode,
+        Some(reddish_tui::ui::key_browser::BrowserPrompt::SetTtl(
+            "mykey".to_string()
+        ))
+    );
 }
 
 #[test]
 fn test_key_browser_t_ttl_submit() {
     let mut browser = KeyBrowser::new(':', 500_000);
-    browser.apply_scan_batch(vec![
-        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
-    ]);
+    browser.apply_scan_batch(vec![KeyEntry {
+        full_name: "mykey".to_string(),
+        redis_type: None,
+        ttl: None,
+    }]);
 
     browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('t'))));
     for c in "3600".chars() {
@@ -957,8 +980,16 @@ fn test_key_browser_t_ttl_submit() {
 fn test_key_browser_space_selects_key() {
     let mut browser = KeyBrowser::new(':', 500_000);
     browser.apply_scan_batch(vec![
-        KeyEntry { full_name: "key1".to_string(), redis_type: None, ttl: None },
-        KeyEntry { full_name: "key2".to_string(), redis_type: None, ttl: None },
+        KeyEntry {
+            full_name: "key1".to_string(),
+            redis_type: None,
+            ttl: None,
+        },
+        KeyEntry {
+            full_name: "key2".to_string(),
+            redis_type: None,
+            ttl: None,
+        },
     ]);
 
     assert!(browser.selected.is_empty());
@@ -975,8 +1006,16 @@ fn test_key_browser_space_selects_key() {
 fn test_key_browser_space_on_different_keys() {
     let mut browser = KeyBrowser::new(':', 500_000);
     browser.apply_scan_batch(vec![
-        KeyEntry { full_name: "key1".to_string(), redis_type: None, ttl: None },
-        KeyEntry { full_name: "key2".to_string(), redis_type: None, ttl: None },
+        KeyEntry {
+            full_name: "key1".to_string(),
+            redis_type: None,
+            ttl: None,
+        },
+        KeyEntry {
+            full_name: "key2".to_string(),
+            redis_type: None,
+            ttl: None,
+        },
     ]);
 
     browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(' '))));
@@ -996,12 +1035,27 @@ fn test_key_browser_ctrl_a_selects_all() {
 
     let mut browser = KeyBrowser::new(':', 500_000);
     browser.apply_scan_batch(vec![
-        KeyEntry { full_name: "key1".to_string(), redis_type: None, ttl: None },
-        KeyEntry { full_name: "key2".to_string(), redis_type: None, ttl: None },
-        KeyEntry { full_name: "key3".to_string(), redis_type: None, ttl: None },
+        KeyEntry {
+            full_name: "key1".to_string(),
+            redis_type: None,
+            ttl: None,
+        },
+        KeyEntry {
+            full_name: "key2".to_string(),
+            redis_type: None,
+            ttl: None,
+        },
+        KeyEntry {
+            full_name: "key3".to_string(),
+            redis_type: None,
+            ttl: None,
+        },
     ]);
 
-    browser.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)));
+    browser.handle_event(&Event::Key(KeyEvent::new(
+        KeyCode::Char('a'),
+        KeyModifiers::CONTROL,
+    )));
     assert_eq!(browser.selected.len(), 3);
     assert!(browser.selected.contains("key1"));
     assert!(browser.selected.contains("key2"));
@@ -1011,22 +1065,40 @@ fn test_key_browser_ctrl_a_selects_all() {
 #[test]
 fn test_key_browser_s_cycles_sort_mode() {
     let mut browser = KeyBrowser::new(':', 500_000);
-    assert_eq!(browser.sort_mode, reddish_tui::ui::key_browser::SortMode::Alpha);
+    assert_eq!(
+        browser.sort_mode,
+        reddish_tui::ui::key_browser::SortMode::Alpha
+    );
 
     browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
-    assert_eq!(browser.sort_mode, reddish_tui::ui::key_browser::SortMode::ByType);
+    assert_eq!(
+        browser.sort_mode,
+        reddish_tui::ui::key_browser::SortMode::ByType
+    );
 
     browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
-    assert_eq!(browser.sort_mode, reddish_tui::ui::key_browser::SortMode::ByTtl);
+    assert_eq!(
+        browser.sort_mode,
+        reddish_tui::ui::key_browser::SortMode::ByTtl
+    );
 
     browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
-    assert_eq!(browser.sort_mode, reddish_tui::ui::key_browser::SortMode::Alpha);
+    assert_eq!(
+        browser.sort_mode,
+        reddish_tui::ui::key_browser::SortMode::Alpha
+    );
 }
 
 #[test]
 fn test_key_browser_sort_mode_label() {
-    assert_eq!(reddish_tui::ui::key_browser::SortMode::Alpha.label(), "alpha");
-    assert_eq!(reddish_tui::ui::key_browser::SortMode::ByType.label(), "type");
+    assert_eq!(
+        reddish_tui::ui::key_browser::SortMode::Alpha.label(),
+        "alpha"
+    );
+    assert_eq!(
+        reddish_tui::ui::key_browser::SortMode::ByType.label(),
+        "type"
+    );
     assert_eq!(reddish_tui::ui::key_browser::SortMode::ByTtl.label(), "ttl");
 }
 
@@ -1034,13 +1106,32 @@ fn test_key_browser_sort_mode_label() {
 fn test_key_browser_sorted_rows_alpha() {
     let mut browser = KeyBrowser::new(':', 500_000);
     browser.apply_scan_batch(vec![
-        KeyEntry { full_name: "zeta".to_string(), redis_type: None, ttl: None },
-        KeyEntry { full_name: "alpha".to_string(), redis_type: None, ttl: None },
-        KeyEntry { full_name: "beta".to_string(), redis_type: None, ttl: None },
+        KeyEntry {
+            full_name: "zeta".to_string(),
+            redis_type: None,
+            ttl: None,
+        },
+        KeyEntry {
+            full_name: "alpha".to_string(),
+            redis_type: None,
+            ttl: None,
+        },
+        KeyEntry {
+            full_name: "beta".to_string(),
+            redis_type: None,
+            ttl: None,
+        },
     ]);
 
-    let rows: Vec<String> = browser.sorted_rows().iter().map(|r| r.label.clone()).collect();
-    assert_eq!(browser.sort_mode, reddish_tui::ui::key_browser::SortMode::Alpha);
+    let rows: Vec<String> = browser
+        .sorted_rows()
+        .iter()
+        .map(|r| r.label.clone())
+        .collect();
+    assert_eq!(
+        browser.sort_mode,
+        reddish_tui::ui::key_browser::SortMode::Alpha
+    );
     // Alpha sort preserves tree insertion order (zeta, alpha, beta)
     assert_eq!(rows[0], "zeta");
     assert_eq!(rows[1], "alpha");
@@ -1053,14 +1144,29 @@ fn test_key_browser_sorted_rows_by_type() {
 
     let mut browser = KeyBrowser::new(':', 500_000);
     browser.apply_scan_batch(vec![
-        KeyEntry { full_name: "list1".to_string(), redis_type: Some(RedisType::List), ttl: None },
-        KeyEntry { full_name: "str1".to_string(), redis_type: Some(RedisType::String), ttl: None },
+        KeyEntry {
+            full_name: "list1".to_string(),
+            redis_type: Some(RedisType::List),
+            ttl: None,
+        },
+        KeyEntry {
+            full_name: "str1".to_string(),
+            redis_type: Some(RedisType::String),
+            ttl: None,
+        },
     ]);
 
     browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
-    assert_eq!(browser.sort_mode, reddish_tui::ui::key_browser::SortMode::ByType);
+    assert_eq!(
+        browser.sort_mode,
+        reddish_tui::ui::key_browser::SortMode::ByType
+    );
 
-    let rows: Vec<String> = browser.sorted_rows().iter().map(|r| r.label.clone()).collect();
+    let rows: Vec<String> = browser
+        .sorted_rows()
+        .iter()
+        .map(|r| r.label.clone())
+        .collect();
     // String (type_order=1) before List (type_order=2)
     assert_eq!(rows[0], "[S] str1");
     assert_eq!(rows[1], "[L] list1");
@@ -1069,15 +1175,19 @@ fn test_key_browser_sorted_rows_by_type() {
 #[test]
 fn test_key_browser_d_duplicate_starts_prompt() {
     let mut browser = KeyBrowser::new(':', 500_000);
-    browser.apply_scan_batch(vec![
-        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
-    ]);
+    browser.apply_scan_batch(vec![KeyEntry {
+        full_name: "mykey".to_string(),
+        redis_type: None,
+        ttl: None,
+    }]);
 
     browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('d'))));
     assert!(browser.prompt.is_some());
     assert_eq!(
         browser.prompt_mode,
-        Some(reddish_tui::ui::key_browser::BrowserPrompt::DuplicateKey("mykey".to_string()))
+        Some(reddish_tui::ui::key_browser::BrowserPrompt::DuplicateKey(
+            "mykey".to_string()
+        ))
     );
     // Pre-filled with "mykey_copy" as the default new name
     assert_eq!(browser.prompt.as_ref().unwrap().value, "mykey_copy");
@@ -1086,9 +1196,11 @@ fn test_key_browser_d_duplicate_starts_prompt() {
 #[test]
 fn test_key_browser_duplicate_submit_new_name() {
     let mut browser = KeyBrowser::new(':', 500_000);
-    browser.apply_scan_batch(vec![
-        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
-    ]);
+    browser.apply_scan_batch(vec![KeyEntry {
+        full_name: "mykey".to_string(),
+        redis_type: None,
+        ttl: None,
+    }]);
 
     // Open prompt (pre-fills with "mykey_copy")
     browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('d'))));
@@ -1114,9 +1226,11 @@ fn test_key_browser_duplicate_submit_new_name() {
 #[test]
 fn test_key_browser_duplicate_empty_name_returns_none() {
     let mut browser = KeyBrowser::new(':', 500_000);
-    browser.apply_scan_batch(vec![
-        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
-    ]);
+    browser.apply_scan_batch(vec![KeyEntry {
+        full_name: "mykey".to_string(),
+        redis_type: None,
+        ttl: None,
+    }]);
 
     // Open prompt
     browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('d'))));
@@ -1133,9 +1247,11 @@ fn test_key_browser_duplicate_empty_name_returns_none() {
 #[test]
 fn test_key_browser_duplicate_same_name_returns_none() {
     let mut browser = KeyBrowser::new(':', 500_000);
-    browser.apply_scan_batch(vec![
-        KeyEntry { full_name: "mykey".to_string(), redis_type: None, ttl: None },
-    ]);
+    browser.apply_scan_batch(vec![KeyEntry {
+        full_name: "mykey".to_string(),
+        redis_type: None,
+        ttl: None,
+    }]);
 
     // Open prompt
     browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('d'))));
@@ -1168,7 +1284,11 @@ async fn test_execute_raw_get_set() {
 
     // SET via execute_raw
     let set_result = client
-        .execute_raw(&["SET".to_string(), "raw_test_key".to_string(), "hello".to_string()])
+        .execute_raw(&[
+            "SET".to_string(),
+            "raw_test_key".to_string(),
+            "hello".to_string(),
+        ])
         .await
         .unwrap();
     // Redis 7 replies to SET with +OK (SimpleString); Redis 8 replies with the
@@ -1225,7 +1345,11 @@ async fn test_list_insert_before_and_after() {
     let key = "test:m2:linsert";
     let mut c = standalone(&client);
 
-    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+    redis::cmd("DEL")
+        .arg(key)
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
     for item in ["a", "b", "c"] {
         redis::cmd("RPUSH")
             .arg(key)
@@ -1236,8 +1360,20 @@ async fn test_list_insert_before_and_after() {
     }
 
     // LINSERT returns the new list length.
-    assert_eq!(client.list_insert(key, true, "b", "before_b").await.unwrap(), 4);
-    assert_eq!(client.list_insert(key, false, "b", "after_b").await.unwrap(), 5);
+    assert_eq!(
+        client
+            .list_insert(key, true, "b", "before_b")
+            .await
+            .unwrap(),
+        4
+    );
+    assert_eq!(
+        client
+            .list_insert(key, false, "b", "after_b")
+            .await
+            .unwrap(),
+        5
+    );
 
     let items: Vec<String> = client
         .lrange(key, 0, -1)
@@ -1257,7 +1393,11 @@ async fn test_list_insert_before_and_after() {
         ]
     );
 
-    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+    redis::cmd("DEL")
+        .arg(key)
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -1266,7 +1406,11 @@ async fn test_list_insert_missing_pivot_is_a_server_error() {
     let key = "test:m2:linsert_missing";
     let mut c = standalone(&client);
 
-    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+    redis::cmd("DEL")
+        .arg(key)
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
     redis::cmd("RPUSH")
         .arg(key)
         .arg("only")
@@ -1276,10 +1420,17 @@ async fn test_list_insert_missing_pivot_is_a_server_error() {
 
     // Redis answers -1 when the pivot is missing; the method must surface that
     // rather than silently discarding it as a successful no-op insert.
-    let err = client.list_insert(key, true, "nope", "x").await.unwrap_err();
+    let err = client
+        .list_insert(key, true, "nope", "x")
+        .await
+        .unwrap_err();
     assert!(err.to_string().contains("pivot"), "got: {err}");
 
-    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+    redis::cmd("DEL")
+        .arg(key)
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -1288,7 +1439,11 @@ async fn test_stream_xtrim_maxlen() {
     let key = "test:m2:xtrim_maxlen";
     let mut c = standalone(&client);
 
-    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+    redis::cmd("DEL")
+        .arg(key)
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
     for i in 0..50 {
         redis::cmd("XADD")
             .arg(key)
@@ -1303,10 +1458,21 @@ async fn test_stream_xtrim_maxlen() {
     client.xtrim(key, "MAXLEN", "10", false).await.unwrap();
 
     let entries = client.xrange(key).await.unwrap();
-    assert!(entries.len() <= 10, "expected <=10 entries, got {}", entries.len());
-    assert!(!entries.is_empty(), "MAXLEN 10 should retain the newest entries");
+    assert!(
+        entries.len() <= 10,
+        "expected <=10 entries, got {}",
+        entries.len()
+    );
+    assert!(
+        !entries.is_empty(),
+        "MAXLEN 10 should retain the newest entries"
+    );
 
-    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+    redis::cmd("DEL")
+        .arg(key)
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -1315,7 +1481,11 @@ async fn test_stream_xtrim_minid() {
     let key = "test:m2:xtrim_minid";
     let mut c = standalone(&client);
 
-    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+    redis::cmd("DEL")
+        .arg(key)
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
     let mut ids = Vec::new();
     for i in 0..20 {
         let id: String = redis::cmd("XADD")
@@ -1334,9 +1504,16 @@ async fn test_stream_xtrim_minid() {
     client.xtrim(key, "MINID", &cutoff, false).await.unwrap();
 
     let entries = client.xrange(key).await.unwrap();
-    assert!(entries.iter().all(|e| e.id >= cutoff), "kept entries before cutoff");
+    assert!(
+        entries.iter().all(|e| e.id >= cutoff),
+        "kept entries before cutoff"
+    );
 
-    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+    redis::cmd("DEL")
+        .arg(key)
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -1350,12 +1527,72 @@ async fn test_stream_xtrim_rejects_bad_strategy() {
 }
 
 #[tokio::test]
+async fn test_stream_xrange_after_returns_only_newer_entries() {
+    let client = RedisClientHandle::connect(&test_profile()).await.unwrap();
+    let key = "test:m2:xrange_after";
+    let mut c = standalone(&client);
+
+    redis::cmd("DEL")
+        .arg(key)
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
+    let mut ids = Vec::new();
+    for i in 0..10 {
+        let id: String = redis::cmd("XADD")
+            .arg(key)
+            .arg("*")
+            .arg("f")
+            .arg(i.to_string())
+            .query_async(&mut c)
+            .await
+            .unwrap();
+        ids.push(id);
+    }
+
+    // From the 5th entry onward: entries 5..9 (exclusive of the id itself).
+    let newer = client.xrange_after(key, &ids[4]).await.unwrap();
+    assert_eq!(newer.len(), 5, "expected entries after {:?}", ids[4]);
+    assert_eq!(newer[0].id, ids[5]);
+    assert_eq!(newer.last().unwrap().id, ids[9]);
+
+    // From the newest id: nothing new.
+    assert!(client.xrange_after(key, &ids[9]).await.unwrap().is_empty());
+
+    // An empty id short-circuits rather than scanning the whole stream.
+    assert!(client.xrange_after(key, "").await.unwrap().is_empty());
+
+    // Newly appended entries are picked up.
+    let fresh: String = redis::cmd("XADD")
+        .arg(key)
+        .arg("*")
+        .arg("f")
+        .arg("new")
+        .query_async(&mut c)
+        .await
+        .unwrap();
+    let newer = client.xrange_after(key, &ids[9]).await.unwrap();
+    assert_eq!(newer.len(), 1);
+    assert_eq!(newer[0].id, fresh);
+
+    redis::cmd("DEL")
+        .arg(key)
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn test_stream_xtrim_approximate_is_accepted() {
     let client = RedisClientHandle::connect(&test_profile()).await.unwrap();
     let key = "test:m2:xtrim_approx";
     let mut c = standalone(&client);
 
-    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+    redis::cmd("DEL")
+        .arg(key)
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
     for i in 0..100 {
         redis::cmd("XADD")
             .arg(key)
@@ -1373,7 +1610,11 @@ async fn test_stream_xtrim_approximate_is_accepted() {
     // exceed it by the full length of the stream.
     assert!(entries.len() <= 100);
 
-    redis::cmd("DEL").arg(key).query_async::<()>(&mut c).await.unwrap();
+    redis::cmd("DEL")
+        .arg(key)
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -1393,7 +1634,11 @@ async fn test_execute_pipeline_round_trip() {
     let cmds = vec![
         vec!["SET".to_string(), "pipe_a".to_string(), "1".to_string()],
         vec!["SET".to_string(), "pipe_b".to_string(), "2".to_string()],
-        vec!["MGET".to_string(), "pipe_a".to_string(), "pipe_b".to_string()],
+        vec![
+            "MGET".to_string(),
+            "pipe_a".to_string(),
+            "pipe_b".to_string(),
+        ],
     ];
 
     let results = client.execute_pipeline(&cmds).await.unwrap();
@@ -1419,7 +1664,11 @@ async fn test_execute_pipeline_round_trip() {
 
     // Cleanup
     client
-        .execute_raw(&["DEL".to_string(), "pipe_a".to_string(), "pipe_b".to_string()])
+        .execute_raw(&[
+            "DEL".to_string(),
+            "pipe_a".to_string(),
+            "pipe_b".to_string(),
+        ])
         .await
         .unwrap();
 }

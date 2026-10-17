@@ -203,7 +203,7 @@ impl RedisClientHandle {
         let tunnel = if let Some(cfg) = &profile.ssh_tunnel {
             let t = SshTunnel::open(cfg, &profile.host, profile.port)
                 .await
-                .map_err(|e| RedisError::ConnectionFailed(format!("SSH tunnel: {e}")))? ;
+                .map_err(|e| RedisError::ConnectionFailed(format!("SSH tunnel: {e}")))?;
             Some(t)
         } else {
             None
@@ -810,13 +810,13 @@ impl RedisClientHandle {
     }
 
     /// Insert `value` relative to `pivot` via LINSERT.
-///
-/// `before` selects LINSERT ... BEFORE, otherwise ... AFTER.
-///
-/// Returns the resulting list length. Redis answers `-1` when `pivot` does not
-/// exist; that is surfaced as an error rather than silently discarded, since a
-/// discarded `-1` would leave the user with an insert that did nothing.
-pub async fn list_insert(
+    ///
+    /// `before` selects LINSERT ... BEFORE, otherwise ... AFTER.
+    ///
+    /// Returns the resulting list length. Redis answers `-1` when `pivot` does not
+    /// exist; that is surfaced as an error rather than silently discarded, since a
+    /// discarded `-1` would leave the user with an insert that did nothing.
+    pub async fn list_insert(
         &self,
         key: &str,
         before: bool,
@@ -1208,6 +1208,48 @@ pub async fn list_insert(
         Ok(())
     }
 
+    /// Fetch stream entries strictly newer than `last_id`.
+    ///
+    /// Used by follow mode so a reload costs one XRANGE rather than re-reading the
+    /// whole stream on every tick. An empty `last_id` returns nothing, since
+    /// stream ids always have the `<millis>-<seq>` form.
+    pub async fn xrange_after(&self, key: &str, last_id: &str) -> Result<Vec<StreamEntry>> {
+        if last_id.is_empty() {
+            return Ok(Vec::new());
+        }
+        macro_rules! do_xrange_after {
+            ($c:expr) => {{
+                let raw: Vec<(String, std::collections::HashMap<String, redis::Value>)> =
+                    tokio::time::timeout(
+                        Duration::from_secs(5),
+                        redis::cmd("XRANGE")
+                            .arg(key)
+                            .arg(format!("({last_id}"))
+                            .arg("+")
+                            .query_async($c),
+                    )
+                    .await
+                    .map_err(|_| color_eyre::eyre::eyre!("XRANGE timeout"))??;
+                raw.into_iter()
+                    .map(|(id, fields)| StreamEntry {
+                        id,
+                        fields: stream_fields_from_map(fields),
+                    })
+                    .collect()
+            }};
+        }
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                Ok(do_xrange_after!(&mut c))
+            }
+            RedisClient::Cluster(conn) => {
+                let mut c = conn.clone();
+                Ok(do_xrange_after!(&mut c))
+            }
+        }
+    }
+
     pub async fn xrange(&self, key: &str) -> Result<Vec<StreamEntry>> {
         macro_rules! do_xrange {
             ($c:expr) => {{
@@ -1247,10 +1289,7 @@ pub async fn list_insert(
             ($c:expr) => {{
                 let rows: Vec<Vec<String>> = tokio::time::timeout(
                     Duration::from_secs(5),
-                    redis::cmd("XINFO")
-                        .arg("GROUPS")
-                        .arg(key)
-                        .query_async($c),
+                    redis::cmd("XINFO").arg("GROUPS").arg(key).query_async($c),
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("XINFO GROUPS timeout"))??;
@@ -1342,7 +1381,12 @@ pub async fn list_insert(
         }
     }
 
-    pub async fn scan_keys(&self, cursor: u64, pattern: &str, count: u32) -> Result<(u64, Vec<String>)> {
+    pub async fn scan_keys(
+        &self,
+        cursor: u64,
+        pattern: &str,
+        count: u32,
+    ) -> Result<(u64, Vec<String>)> {
         match &self.client {
             RedisClient::Standalone(conn) => {
                 let mut c = conn.clone();
@@ -1406,7 +1450,9 @@ pub async fn list_insert(
                 let mut c = conn.clone();
                 tokio::time::timeout(
                     Duration::from_secs(5),
-                    redis::cmd("DUMP").arg(key).query_async::<redis::Value>(&mut c),
+                    redis::cmd("DUMP")
+                        .arg(key)
+                        .query_async::<redis::Value>(&mut c),
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("DUMP timeout"))??
@@ -1415,7 +1461,9 @@ pub async fn list_insert(
                 let mut c = conn.clone();
                 tokio::time::timeout(
                     Duration::from_secs(5),
-                    redis::cmd("DUMP").arg(key).query_async::<redis::Value>(&mut c),
+                    redis::cmd("DUMP")
+                        .arg(key)
+                        .query_async::<redis::Value>(&mut c),
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("DUMP timeout"))??
@@ -1423,8 +1471,7 @@ pub async fn list_insert(
         };
         match val {
             redis::Value::BulkString(bytes) => Ok(bytes),
-            redis::Value::Nil =>
-                Err(color_eyre::eyre::eyre!("Key '{}' not found for DUMP", key)),
+            redis::Value::Nil => Err(color_eyre::eyre::eyre!("Key '{}' not found for DUMP", key)),
             _ => Err(color_eyre::eyre::eyre!("Unexpected DUMP response")),
         }
     }
@@ -1437,7 +1484,9 @@ pub async fn list_insert(
                 let mut c = conn.clone();
                 tokio::time::timeout(
                     Duration::from_secs(5),
-                    redis::cmd("CLUSTER").arg("NODES").query_async::<String>(&mut c),
+                    redis::cmd("CLUSTER")
+                        .arg("NODES")
+                        .query_async::<String>(&mut c),
                 )
                 .await
                 .map_err(|_| color_eyre::eyre::eyre!("CLUSTER NODES timeout"))?
@@ -1526,22 +1575,18 @@ pub async fn list_insert(
         match &self.client {
             RedisClient::Standalone(conn) => {
                 let mut c = conn.clone();
-                let val: redis::Value = tokio::time::timeout(
-                    Duration::from_secs(5),
-                    redis_cmd.query_async(&mut c),
-                )
-                .await
-                .map_err(|_| color_eyre::eyre::eyre!("{cmd_name} timeout"))??;
+                let val: redis::Value =
+                    tokio::time::timeout(Duration::from_secs(5), redis_cmd.query_async(&mut c))
+                        .await
+                        .map_err(|_| color_eyre::eyre::eyre!("{cmd_name} timeout"))??;
                 Ok(val)
             }
             RedisClient::Cluster(conn) => {
                 let mut c = conn.clone();
-                let val: redis::Value = tokio::time::timeout(
-                    Duration::from_secs(5),
-                    redis_cmd.query_async(&mut c),
-                )
-                .await
-                .map_err(|_| color_eyre::eyre::eyre!("{cmd_name} timeout"))??;
+                let val: redis::Value =
+                    tokio::time::timeout(Duration::from_secs(5), redis_cmd.query_async(&mut c))
+                        .await
+                        .map_err(|_| color_eyre::eyre::eyre!("{cmd_name} timeout"))??;
                 Ok(val)
             }
         }
@@ -1558,27 +1603,23 @@ pub async fn list_insert(
     /// Open a separate MONITOR connection and return a stream of raw command strings.
     /// Returns `None` if the profile uses cluster mode (MONITOR is node-specific).
     #[allow(deprecated)]
-    pub async fn monitor(&self) -> RedisResult<Option<tokio::sync::mpsc::UnboundedReceiver<String>>> {
+    pub async fn monitor(
+        &self,
+    ) -> RedisResult<Option<tokio::sync::mpsc::UnboundedReceiver<String>>> {
         // MONITOR only makes sense on standalone/sentinel connections
         let url = build_redis_url(&self.profile, &self.profile.host, self.profile.port)?;
         let client = redis::Client::open(url.as_str())
             .map_err(|e| RedisError::ConnectionFailed(format!("monitor client: {e}")))?;
-        let conn = tokio::time::timeout(
-            Duration::from_secs(5),
-            client.get_async_connection(),
-        )
-        .await
-        .map_err(|_| RedisError::Timeout("monitor connect"))?
-        .map_err(|e| RedisError::ConnectionFailed(format!("monitor connect: {e}")))?;
+        let conn = tokio::time::timeout(Duration::from_secs(5), client.get_async_connection())
+            .await
+            .map_err(|_| RedisError::Timeout("monitor connect"))?
+            .map_err(|e| RedisError::ConnectionFailed(format!("monitor connect: {e}")))?;
 
         let mut monitor = redis::aio::Monitor::new(conn);
-        tokio::time::timeout(
-            Duration::from_secs(5),
-            monitor.monitor(),
-        )
-        .await
-        .map_err(|_| RedisError::Timeout("monitor command"))?
-        .map_err(|e| RedisError::CommandFailed(format!("monitor: {e}")))?;
+        tokio::time::timeout(Duration::from_secs(5), monitor.monitor())
+            .await
+            .map_err(|_| RedisError::Timeout("monitor command"))?
+            .map_err(|e| RedisError::CommandFailed(format!("monitor: {e}")))?;
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         tokio::spawn(async move {

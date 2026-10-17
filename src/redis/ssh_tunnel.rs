@@ -16,11 +16,7 @@ pub struct SshTunnel {
 impl SshTunnel {
     /// Spawn `ssh -N -L local_port:redis_host:redis_port jump_host` and wait
     /// until the local port is accepting connections (up to `timeout`).
-    pub async fn open(
-        cfg: &SshTunnelConfig,
-        redis_host: &str,
-        redis_port: u16,
-    ) -> Result<Self> {
+    pub async fn open(cfg: &SshTunnelConfig, redis_host: &str, redis_port: u16) -> Result<Self> {
         let forward = format!("{}:{}:{}", cfg.local_port, redis_host, redis_port);
         let destination = format!("{}@{}", cfg.user, cfg.host);
 

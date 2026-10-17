@@ -152,7 +152,9 @@ impl ConnectionForm {
         } else {
             let raw = &self.fields[5].value;
             if let Some(env_var) = raw.strip_prefix("env:") {
-                Some(crate::config::connections::PasswordRef::Env(env_var.to_string()))
+                Some(crate::config::connections::PasswordRef::Env(
+                    env_var.to_string(),
+                ))
             } else if let Some(rest) = raw.strip_prefix("keychain:") {
                 let parts: Vec<&str> = rest.splitn(2, ':').collect();
                 if parts.len() == 2 {
@@ -161,10 +163,14 @@ impl ConnectionForm {
                         account: parts[1].to_string(),
                     })
                 } else {
-                    Some(crate::config::connections::PasswordRef::Plaintext(raw.clone()))
+                    Some(crate::config::connections::PasswordRef::Plaintext(
+                        raw.clone(),
+                    ))
                 }
             } else {
-                Some(crate::config::connections::PasswordRef::Plaintext(raw.clone()))
+                Some(crate::config::connections::PasswordRef::Plaintext(
+                    raw.clone(),
+                ))
             }
         };
 
@@ -289,9 +295,7 @@ impl ConnectionScreen {
                 KeyCode::Char('e') | KeyCode::Char('E') => {
                     if !self.store.profiles.is_empty() {
                         self.mode = ScreenMode::Edit(self.cursor);
-                        self.form = Some(ConnectionForm::new(
-                            self.store.profiles.get(self.cursor),
-                        ));
+                        self.form = Some(ConnectionForm::new(self.store.profiles.get(self.cursor)));
                     }
                     None
                 }
@@ -407,9 +411,7 @@ impl ConnectionScreen {
         frame.render_stateful_widget(list, chunks[0], &mut state);
 
         // Quick-connect bar
-        let qc_block = Block::default()
-            .borders(Borders::NONE)
-            .title("");
+        let qc_block = Block::default().borders(Borders::NONE).title("");
         let qc_text = Paragraph::new("Quick connect: press n to add a new profile")
             .style(Style::default().fg(Color::DarkGray))
             .block(qc_block);

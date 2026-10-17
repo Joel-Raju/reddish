@@ -39,3 +39,6 @@ tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tui-textarea = "0.7.0"
 xdg = "3.0.0"
+
+[dev-dependencies]
+clap_mangen = "0.2"

@@ -65,6 +65,24 @@ cargo build --release
 
 Binary will be available at `target/release/reddish-tui`.
 
+### Man page
+
+A pre-generated roff man page lives at `man/redis-tui.1`. Install it with:
+
+```bash
+sudo install -Dm644 man/redis-tui.1 /usr/local/share/man/man1/redis-tui.1
+```
+
+It is built from the same `Cli` definition the binary parses, so it cannot
+drift. Regenerate after changing a flag:
+
+```bash
+cargo run --example generate-man > man/redis-tui.1
+```
+
+A unit test compares the committed page against a freshly generated one and
+fails if they differ.
+
 ## Usage
 
 ```bash

@@ -1,0 +1,114 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH redis-tui 1 2026-10-17 "reddish-tui 0.1.0" "Redis Terminal User Interface"
+.SH NAME
+redis\-tui \- A Redis TUI client
+.SH SYNOPSIS
+\fBredis\-tui\fR [\fB\-\-url\fR] [\fB\-\-profile\fR] [\fB\-\-readonly\fR] [\fB\-\-log\-level\fR] [\fB\-\-theme\fR] [\fB\-\-allow\-monitor\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] 
+.SH DESCRIPTION
+A Redis TUI client
+.SH OPTIONS
+.TP
+\fB\-\-url\fR \fI<URL>\fR
+Connect to this Redis URL (e.g. redis://localhost:6379/0)
+.TP
+\fB\-\-profile\fR \fI<NAME>\fR
+Connect using a named profile from connections.toml
+.TP
+\fB\-\-readonly\fR
+Block all write operations
+.TP
+\fB\-\-log\-level\fR \fI<LEVEL>\fR
+Log level: error, warn, info, debug, trace
+.TP
+\fB\-\-theme\fR \fI<THEME>\fR
+Color theme: default, dracula, nord, solarized, gruvbox
+.TP
+\fB\-\-allow\-monitor\fR
+Allow MONITOR mode (opens a separate connection)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH VERSION
+v0.1.0
+
+.SH FILES
+.TP
+.I ~/.config/redis\-tui/config.toml
+Application settings: namespace separator, scan count, refresh interval,
+theme, and per\-action keybinding overrides.
+.TP
+.I ~/.config/redis\-tui/connections.toml
+Saved connection profiles, including password references (plaintext,
+environment variable, or system keychain) and TLS / SSH tunnel settings.
+.TP
+.I ~/.local/share/redis\-tui/history
+REPL command history, most recent last, capped at 1000 entries.
+.TP
+.I ~/.local/share/redis\-tui/search\_history
+Recent global search queries, most recent first, capped at 100 entries.
+.SH ENVIRONMENT
+.TP
+.B $EDITOR
+Ignored in v0.1.0; string values are edited with the built\-in editor.
+.TP
+.B REDIS\_URL, REDIS\_PASSWORD
+Convenience values for a password reference of kind environment.
+
+.SH KEYBOARD
+.SS Global
+.TP
+.B 1 2 3 4
+Switch to Keys, REPL, Info and Pub/Sub tabs.
+.TP
+.B :
+Open the REPL command overlay.
+.TP
+.B Ctrl+P
+Command palette.
+.TP
+.B Ctrl+\\
+Open the connection screen.
+.TP
+.B Ctrl+R
+Force reconnect.
+.TP
+.B /
+Global fuzzy search (in the search overlay, Ctrl+R toggles regex mode).
+.TP
+.B ?
+Help overlay.
+.TP
+.B q
+Quit.
+.SS Value inspector
+The active binding depends on the value type: list, hash, set, zset or
+stream. See the README for the complete table.
+.TP
+.B a / p / I
+Append, prepend and insert relative to the element under the cursor (lists).
+.TP
+.B Ctrl+f / Ctrl+d
+Filter hash fields; delete the selected fields.
+.TP
+.B Q
+Filter a zset by score range.
+.TP
+.B F / Ctrl+T / G
+Stream follow mode, XTRIM, and the consumer groups panel.
+.TP
+.B Tab
+Cycle string view mode: Raw, JSON, Base64, Hex.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+A performance gate failed (--bench or --profile-memory), or a runtime error
+occurred.
+.SH SEE ALSO
+Full documentation: https://github.com/Joel\-Raju/reddish

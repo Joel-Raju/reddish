@@ -3,6 +3,7 @@ use color_eyre::Result;
 use reddish_tui::{
     app::App,
     bench,
+    cli::Cli,
     config::{
         Config,
         connections::{ConnectionMode, ConnectionProfile, ConnectionStore, PasswordRef},
@@ -10,32 +11,6 @@ use reddish_tui::{
     logging, terminal,
 };
 use redis::IntoConnectionInfo;
-
-#[derive(Parser, Debug)]
-#[command(name = "redis-tui")]
-#[command(about = "A Redis TUI client")]
-struct Cli {
-    #[arg(long, value_name = "URL")]
-    url: Option<String>,
-    #[arg(long, value_name = "NAME")]
-    profile: Option<String>,
-    #[arg(long)]
-    readonly: bool,
-    #[arg(long, value_name = "LEVEL")]
-    log_level: Option<String>,
-    #[arg(long, value_name = "THEME")]
-    theme: Option<String>,
-    #[arg(long, help = "Allow MONITOR mode (opens a separate connection)")]
-    allow_monitor: bool,
-    /// Run 1000 render cycles against a synthetic 10K-key state and report
-    /// render-time percentiles. Exits non-zero if p99 exceeds the budget.
-    #[arg(long, hide = true)]
-    bench: bool,
-    /// Populate 10K keys and report peak resident set size. Exits non-zero if
-    /// RSS exceeds the budget.
-    #[arg(long, hide = true)]
-    profile_memory: bool,
-}
 
 fn main() -> Result<()> {
     let cli = Cli::parse();

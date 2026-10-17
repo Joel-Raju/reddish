@@ -515,6 +515,12 @@ impl App {
                         self.cancel_search_scan();
                         self.start_search_scan();
                     }
+                    SearchAction::ModeToggled => {
+                        // Re-scan: the server-side glob pattern depends on the mode.
+                        self.search.start_scan();
+                        self.cancel_search_scan();
+                        self.start_search_scan();
+                    }
                 }
             }
             return;
@@ -1385,13 +1391,14 @@ impl App {
             None => return,
         };
         let query = self.search.query.clone();
+        let mode = self.search.mode;
         let count = self.config.scan_count();
         let (tx, rx) = mpsc::channel::<Vec<String>>(64);
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
         self.search_scan_rx = Some(rx);
         self.search_scan_cancel = Some(cancel);
-        spawn_search_scan(client, query, count, tx, cancel_clone);
+        spawn_search_scan(client, query, mode, count, tx, cancel_clone);
     }
 
     fn cancel_search_scan(&mut self) {
@@ -1548,16 +1555,13 @@ fn centered_rect(
 fn spawn_search_scan(
     client: crate::redis::client::RedisClientHandle,
     query: String,
+    mode: crate::ui::search::SearchMode,
     count: u32,
     tx: tokio::sync::mpsc::Sender<Vec<String>>,
     cancel: tokio_util::sync::CancellationToken,
 ) {
     tokio::spawn(async move {
-        let pattern = if query.is_empty() {
-            "*".to_string()
-        } else {
-            format!("*{}*", query)
-        };
+        let pattern = crate::ui::search::glob_pattern_for_query(&query, mode);
         let mut cursor: u64 = 0;
         loop {
             if cancel.is_cancelled() {

@@ -93,6 +93,8 @@ pub struct Keymap {
     pub search_execute: KeyDef,
     #[serde(default = "default_search_close")]
     pub search_close: KeyDef,
+    #[serde(default = "default_search_toggle_mode")]
+    pub search_toggle_mode: KeyDef,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -154,6 +156,7 @@ impl Keymap {
             set_diff: KeyDef { key: "x".to_string() },
             search_execute: KeyDef { key: "Enter".to_string() },
             search_close: KeyDef { key: "Esc".to_string() },
+            search_toggle_mode: KeyDef { key: "ctrl+r".to_string() },
         }
     }
 
@@ -204,6 +207,7 @@ impl Keymap {
             set_diff: KeyDef { key: "ctrl+d".to_string() },
             search_execute: KeyDef { key: "Enter".to_string() },
             search_close: KeyDef { key: "ctrl+g".to_string() },
+            search_toggle_mode: KeyDef { key: "ctrl+alt+r".to_string() },
         }
     }
 
@@ -254,6 +258,7 @@ impl Keymap {
             "set_diff" => &self.set_diff,
             "search_execute" => &self.search_execute,
             "search_close" => &self.search_close,
+            "search_toggle_mode" => &self.search_toggle_mode,
             _ => return false,
         };
         let (expected_code, expected_mods) = parse_keydef(&def.key);
@@ -453,4 +458,7 @@ fn default_search_execute() -> KeyDef {
 }
 fn default_search_close() -> KeyDef {
     KeyDef { key: "Esc".to_string() }
+}
+fn default_search_toggle_mode() -> KeyDef {
+    KeyDef { key: "ctrl+r".to_string() }
 }

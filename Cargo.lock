@@ -2242,6 +2242,7 @@ dependencies = [
  "openssh",
  "ratatui 0.30.0",
  "redis",
+ "regex",
  "serde",
  "serde_json",
  "sysinfo",

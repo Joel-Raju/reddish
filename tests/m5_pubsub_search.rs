@@ -314,5 +314,8 @@ fn test_pubsub_tab_toggles_mode() {
     assert_eq!(widget.input_mode, PubSubInputMode::Message);
 
     widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+    assert_eq!(widget.input_mode, PubSubInputMode::Pattern);
+
+    widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
     assert_eq!(widget.input_mode, PubSubInputMode::Channel);
 }

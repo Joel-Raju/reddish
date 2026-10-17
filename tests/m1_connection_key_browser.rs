@@ -1146,7 +1146,15 @@ async fn test_execute_raw_get_set() {
         .execute_raw(&["SET".to_string(), "raw_test_key".to_string(), "hello".to_string()])
         .await
         .unwrap();
-    assert_eq!(set_result, redis::Value::SimpleString("OK".to_string()));
+    // Redis 7 replies to SET with +OK (SimpleString); Redis 8 replies with the
+    // dedicated RESP3 OK frame (`Value::Okay`). Accept either.
+    assert!(
+        matches!(
+            set_result,
+            redis::Value::SimpleString(_) | redis::Value::Okay
+        ),
+        "unexpected SET reply: {set_result:?}"
+    );
 
     // GET via execute_raw
     let get_result = client
@@ -1188,8 +1196,23 @@ async fn test_execute_pipeline_round_trip() {
 
     let results = client.execute_pipeline(&cmds).await.unwrap();
     assert_eq!(results.len(), 3);
-    assert_eq!(results[0], redis::Value::SimpleString("OK".to_string()));
-    assert_eq!(results[1], redis::Value::SimpleString("OK".to_string()));
+    // See test_execute_raw_get_set: OK reply varies between Redis 7 and 8.
+    assert!(
+        matches!(
+            results[0],
+            redis::Value::SimpleString(_) | redis::Value::Okay
+        ),
+        "unexpected SET reply: {:?}",
+        results[0]
+    );
+    assert!(
+        matches!(
+            results[1],
+            redis::Value::SimpleString(_) | redis::Value::Okay
+        ),
+        "unexpected SET reply: {:?}",
+        results[1]
+    );
     assert!(matches!(results[2], redis::Value::Array(_)));
 
     // Cleanup

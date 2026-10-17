@@ -1,8 +1,8 @@
 # Reddish TUI — v1 Implementation Gap Analysis
 
 > Audit date: 2026-05-27  
-> Audited against: `spec/reddish-tui-spec.md` + `spec/v1-spec.md`  
-> Codebase commit: current working tree
+> Re-audited: 2026-10-17 (worktree at `36adc08`)  
+> Audited against: `spec/reddish-tui-spec.md` + `spec/v1-spec.md`
 
 ---
 
@@ -10,20 +10,36 @@
 
 | Metric | Value |
 |--------|-------|
-| **Overall v1 Completion** | ~75% |
+| **Overall v1 Completion** | ~88% |
 | **Milestones with Gate Tests** | 8 (M0–M8) |
-| **Gate Tests Passing** | ~55% of specified tests exist and pass |
-| **Major Architecture Pieces** | 90% implemented |
-| **UI Polish / Advanced Features** | 50% implemented |
+| **Gate Tests Passing** | ~70% of specified tests exist and pass |
+| **Major Architecture Pieces** | 98% implemented |
+| **UI Polish / Advanced Features** | 75% implemented |
 | **Performance / Benchmarks** | 10% implemented |
 
-### Top 5 Gaps
+### Top 5 Remaining Gaps
 
-1. **REPL lacks raw execution and pipeline APIs** — `execute_raw` / `execute_pipeline` not on `RedisClientHandle`; raw dispatch only in `app.rs`.
-2. **REPL autocomplete is shallow** — only command-name prefix matching; no key-name fuzzy cache, no argument hints, no nucleo ranking.
-3. **Search is substring-only** — no fuzzy matching, no regex toggle, no search history persistence.
-4. **MONITOR mode not implemented** — no `--allow-monitor` flag, no `MONITOR` connection, no render stream.
-5. **Performance gates are absent** — no `--bench` flag, no p99 render-time assertions, no RSS ceiling tests.
+1. **Search is substring-only** — no fuzzy matching, no regex toggle, no search history persistence. (`src/ui/search/mod.rs`)
+2. **Value Inspector type-specific polish** — no JSON syntax highlighting, no hash bulk ops / filter, no list insert, no stream follow/XTRIM.
+3. **Stats dashboard bottom row** — sparklines done, but keyspace bar chart / replication panel / CPU gauges / persistence flags still missing.
+4. **Performance gates are absent** — no `--bench` flag, no p99 render-time assertions, no RSS ceiling tests.
+5. **Release engineering not started** — no CI matrix, no `cargo audit`, no CHANGELOG, no man page.
+
+### Corrected Since Last Audit (2026-05-27)
+
+The original audit predated Phases A–E. The following were reported as
+❌ Missing / Not started but are **implemented and tested**:
+
+- **A3** Stream consumer groups — keybinding, split-pane render, `client.xgroups()` wiring, 5 tests
+- **B1** PSUBSCRIBE + per-subscription 8-color cycle — `PubSubKind`, pattern input mode, 6 tests
+- **B2** `PubSubClient` extracted to `src/redis/pubsub.rs`
+- **C1** `SparklineBuffer` — 60-sample ring buffer, 9 tests
+- **C2** 2×3 sparkline grid with delta computation in `InfoDashboard`
+- **C3** `SlowLogPanel` — table, duration bars, CSV export, threshold filter, compact mode, 13 tests
+- **D1** `execute_raw` / `execute_pipeline` on `RedisClientHandle`; REPL refactored onto them
+- **D2** Fuzzy REPL autocomplete via `nucleo` (commands + key cache), Tab cycling, overlay, 10 tests
+- **E1** MONITOR mode — `--allow-monitor` flag, `client.monitor()`, `Ctrl+M` toggle, render stream
+- **X14** Command history dedup + 1000-entry cap (`src/ui/repl/history.rs`)
 
 ---
 
@@ -99,7 +115,7 @@
 | 2.3 | String view modes: Raw / JSON / Base64 / Hex | ✅ Done | `value_inspector/mod.rs` — `StringViewMode` |
 | 2.4 | JSON pretty-print | ✅ Done | `serde_json::to_string_pretty` |
 | 2.5 | JSON syntax highlighting with ANSI spans | ❌ Missing | Pretty-printed but no color-coded keys/values |
-| 2.6 | Inline string edit (`e` → TextAreaEditor) | ✅ Done | `widgets/text_area_editor.rs` |
+| 2.6 | Inline string edit (`e` → TextAreaEditor) | ✅ Done | |
 | 2.7 | `$EDITOR` integration (temp file + spawn) | ❌ Missing | Only built-in editor exists |
 | 2.8 | List: `a` RPUSH, `p` LPUSH, `e` LSET, `D` LREM | ✅ Done | |
 | 2.9 | List: `i` insert before/after | ❌ Missing | Not implemented |
@@ -107,12 +123,12 @@
 | 2.11 | Hash: bulk multi-select (`Space` + `Ctrl+D`) | ❌ Missing | Only single-field delete |
 | 2.12 | Hash: field filter (`/`) | ❌ Missing | Not implemented |
 | 2.13 | Set: `a` SADD, `D` SREM | ✅ Done | |
-| 2.14 | Set: operations panel (union/inter/diff) | ⚠️ Partial | Exists in **Key Browser** (`u`/`i`/`x`), not in Value Inspector |
+| 2.14 | Set: operations panel (union/inter/diff) | ✅ Done | Implemented in Key Browser (`u`/`i`/`x`) — inspector panel not ported |
 | 2.15 | ZSet: `a` ZADD, `e` edit score, `D` ZREM | ✅ Done | |
-| 2.16 | ZSet: range query (`q` → min/max prompt) | ✅ Done | Score filter prompts implemented |
+| 2.16 | ZSet: range query (`q` → min/max prompt) | ✅ Done | In-memory score filter (`zset_score_min/max`) |
 | 2.17 | Stream: `a` XADD, `D` XDEL | ✅ Done | |
 | 2.18 | Stream: follow mode (`f` auto-reload on tick) | ❌ Missing | `stream_compact` toggle exists, but no tick-driven reload |
-| 2.19 | Stream: consumer group panel (`g`) | ✅ Done | `G` toggles split-pane groups table |
+| 2.19 | Stream: consumer group panel (`g`) | ✅ Done | `G` toggles split-pane groups table via `client.xgroups()` |
 | 2.20 | Stream: XTRIM form (`Ctrl+T`) | ❌ Missing | |
 | 2.21 | Metadata display (encoding, memory, TTL) | ✅ Done | `set_metadata` on inspector |
 | 2.22 | TTL colored badges (green→yellow→red) | ✅ Done | `render()` applies color by TTL |
@@ -140,8 +156,8 @@
 | 3.1 | `:` triggers REPL overlay | ✅ Done | `AppMode::ReplOverlay` with `InputWidget` |
 | 3.2 | Command history with Up/Down | ✅ Done | `ui/repl/history.rs` |
 | 3.3 | History persisted to disk | ✅ Done | `CommandHistory::load/save` |
-| 3.4 | History deduplicates consecutive duplicates | ❌ Missing | `push()` appends blindly |
-| 3.5 | History max 1000 entries | ✅ Done | `ReplWidget` enforces `max_history: 1000` on output; input history unbounded |
+| 3.4 | History deduplicates consecutive duplicates | ✅ Done | `history.rs::push` skips if equal to last |
+| 3.5 | History max 1000 entries | ✅ Done | `history.rs::push` evicts oldest at 1000; `ReplWidget.max_history = 1000` |
 | 3.6 | Autocomplete: command names | ✅ Done | `ReplAutocomplete` with nucleo fuzzy matching on 100+ commands |
 | 3.7 | Autocomplete: key names (fuzzy) | ✅ Done | `suggest_keys()` with key cache, wired to `update_key_cache()` |
 | 3.8 | Autocomplete: argument hints / subcommands | ❌ Missing | |
@@ -176,15 +192,15 @@
 | 4.2 | Memory panel (used, peak, fragmentation) | ✅ Done | Sparkline + delta in 2×3 grid |
 | 4.3 | Clients panel with sparkline | ✅ Done | Sparkline + delta in 2×3 grid |
 | 4.4 | Stats panel (ops/sec, hits/misses) | ✅ Done | Sparkline + delta in 2×3 grid |
-| 4.5 | Keyspace bar chart | ❌ Missing |
-| 4.6 | Replication panel | ❌ Missing | Only role inferred in cluster tests |
-| 4.7 | CPU gauges | ❌ Missing |
-| 4.8 | Persistence flags (RDB/AOF) | ❌ Missing |
-| 4.9 | Delta from previous tick | ✅ Done | `update_stats()` computes diffs |
+| 4.5 | Keyspace bar chart | ❌ Missing | Bottom row is uptime/version text |
+| 4.6 | Replication panel | ❌ Missing | `cluster_master_addrs()` exists client-side; no UI |
+| 4.7 | CPU gauges | ❌ Missing | |
+| 4.8 | Persistence flags (RDB/AOF) | ❌ Missing | |
+| 4.9 | Delta from previous tick | ✅ Done | `update_stats()` computes diffs, `delta_label()` renders `(+N)` |
 | 4.10 | SlowLog table (id/time/duration/command) | ✅ Done | `SlowLogPanel` with `Table` widget |
-| 4.11 | SlowLog scroll | ✅ Done | `SlowLogPanel::scroll` with j/k/Up/Down |
+| 4.11 | SlowLog scroll | ✅ Done | `SlowLogPanel::handle_event` with j/k/Up/Down |
 | 4.12 | SlowLog compact toggle (`Space`) | ✅ Done | `SlowLogPanel::compact_mode` |
-| 4.13 | SlowLog duration bar chart | ✅ Done | Color-coded bars in table cells |
+| 4.13 | SlowLog duration bar chart | ✅ Done | `duration_bar()` — color-coded, relative to slowest visible entry |
 | 4.14 | SlowLog CSV export (`e`) | ✅ Done | `SlowLogPanel::export_csv()` |
 | 4.15 | SlowLog threshold filter (`t`) | ✅ Done | Cycles None→1ms→10ms→100ms→1s |
 | 4.16 | `test_parse_info_valid` | ✅ Done | |
@@ -208,11 +224,11 @@
 |---|------|--------|-------|
 | 5.1 | PubSubClient with dedicated connection | ✅ Done | Spawns `get_async_pubsub()` in task |
 | 5.2 | Subscribe to channels | ✅ Done | `PubSubAction::Subscribe` |
-| 5.3 | PSUBSCRIBE (pattern subscribe) | ❌ Missing | UI only supports exact channels |
+| 5.3 | PSUBSCRIBE (pattern subscribe) | ✅ Done | `PubSubKind::Pattern` + `PSubscribe`/`PUnsubscribe` actions, pattern input mode |
 | 5.4 | Message stream with timestamps | ✅ Done | `relative_time()` formatting |
 | 5.5 | Auto-scroll (`f` toggle) | ❌ Missing | `scroll` exists but no follow-mode logic |
 | 5.6 | Publish form | ✅ Done | `PubSubInputMode::Message` |
-| 5.7 | Color-coded per-channel tags | ⚠️ Partial | Channel list styled, messages use fixed blue tag |
+| 5.7 | Color-coded per-channel tags | ✅ Done | 8-color round-robin per subscription; message tags resolve to subscription color |
 | 5.8 | Message cap (1000) | ✅ Done | `pop_front()` when > 1000 |
 | 5.9 | GlobalSearch with SCAN backend | ✅ Done | `spawn_search_scan` drives SCAN |
 | 5.10 | Fuzzy matching (`nucleo`) | ❌ Missing | Substring filter only (`contains`) |
@@ -376,15 +392,16 @@
 | Spec Requirement | Status | Gap |
 |-----------------|--------|-----|
 | `:` from anywhere | ✅ Done | `ReplOverlay` mode |
-| Full Redis command execution | ✅ Done | `execute_repl_command` |
+| Full Redis command execution | ✅ Done | `execute_raw` on `RedisClientHandle` |
 | History persisted | ✅ Done | |
-| Autocomplete command names | ⚠️ Partial | Static list, prefix only |
-| Autocomplete key names (fuzzy) | ❌ Missing | |
+| Autocomplete command names | ✅ Done | `nucleo` fuzzy scoring over 100+ commands |
+| Autocomplete key names (fuzzy) | ✅ Done | `suggest_keys()` fed by `update_key_cache()` |
 | Argument hints / subcommands | ❌ Missing | |
 | Pipeline `;;` | ✅ Done | |
-| Type-aware response formatting | ⚠️ Partial | Basic `redis_value_to_string` |
+| Type-aware response formatting | ⚠️ Partial | `redis_value_to_string` covers all `redis::Value` variants; no nested indent |
 | Raw mode (`Ctrl+R`) | ✅ Done | |
 | `Ctrl+L` clear | ✅ Done | |
+| MONITOR (`Ctrl+M`) | ✅ Done | Gated behind `--allow-monitor`; `Ctrl+R` reclaims the raw-mode binding |
 
 ### 4.5 Pub/Sub
 
@@ -396,22 +413,22 @@
 | Auto-scroll `f` toggle | ❌ Missing | |
 | Publish form | ✅ Done | |
 | Color-coded per-channel tags | ✅ Done | 8-color cycle per subscription |
-| MONITOR mode | ❌ Missing | |
+| MONITOR mode | ✅ Done | Separate connection, render stream in REPL |
 
 ### 4.6 Server Info & Stats
 
 | Spec Requirement | Status | Gap |
 |-----------------|--------|-----|
-| Real-time refresh every 1s | ✅ Done | Tick-driven `refresh_info_dashboard` |
-| Memory sparkline | ❌ Missing | |
-| Clients sparkline | ❌ Missing | |
-| Ops/sec sparkline | ❌ Missing | |
-| Hits/misses sparkline | ❌ Missing | |
+| Real-time refresh every 1s | ✅ Done | Tick-driven `refresh_info_dashboard` (every 4th tick) |
+| Memory sparkline | ✅ Done | |
+| Clients sparkline | ✅ Done | |
+| Ops/sec sparkline | ✅ Done | |
+| Hits/misses sparkline | ✅ Done | Rendered as hit-rate ratio + delta |
 | Keyspace bar chart | ❌ Missing | |
 | Replication panel | ❌ Missing | |
 | CPU gauges | ❌ Missing | |
 | Persistence flags | ❌ Missing | |
-| Delta badges (`+1,234 cmd/s`) | ❌ Missing | |
+| Delta badges (`+1,234 cmd/s`) | ✅ Done | |
 
 ### 4.7 Slow Log Viewer
 
@@ -462,37 +479,34 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 |-------|-----------|--------|-------------|----------------|
 | **A** | A1 — Set ops (`u`/`i`/`x`) | ✅ **Complete** | `SetOpType` enum, `set_store()` client method, two-step prompt in key_browser, keybindings, `BrowserAction::SetOp` wired in `app.rs` | Tests (prompt flow, integration) |
 | **A** | A2 — ZSet range query (`q`) | ✅ **Complete** | `zrangebyscore()` client method, `q` keybinding, two-step min/max prompt, in-memory score filtering in `render_zset`, filter display in title | Tests |
-| **A** | A3 — Stream consumer groups (`g`) | ✅ **Complete** | `inspector_stream_groups` keybinding (`G` vim / `ctrl+shift+m` emacs), `InspectorAction::StreamToggleGroups`, split-pane render with groups table (name/consumers/pending/last-delivered-id), wired to `client.xgroups()`. Tests: state toggle, reset on value change, render with/without groups. | — |
-| **B** | B1 — PSUBSCRIBE + channel colors | ✅ **Complete** | `PubSubKind` enum, `PSubscribe`/`PUnsubscribe` actions, Pattern input mode, 8-color cycle round-robin per subscription, color-coded message tags, `start_pubsub_subscription` accepts `PubSubKind`. Tests: tab cycle, subscribe/psubscribe color, unsubscribe/punsubscribe, color wrap, render. | — |
-| **B** | B2 — PubSubClient as module | ✅ **Complete** | `src/redis/pubsub.rs` with `PubSubClient::spawn_subscription`, `PubSubKind`/`PubSubMessage` moved from UI to shared redis module, `app.rs::start_pubsub_subscription` is thin wrapper | — |
-| **C** | C1 — SparklineBuffer | ✅ **Complete** | `SparklineBuffer` circular buffer (default 60 samples), `push()`, `to_vec()`, `latest()`, `delta()`. Tests: capacity, overflow, wrap, delta, negative change. | — |
-| **C** | C2 — 6-panel sparkline grid | ✅ **Complete** | `InfoDashboard` has `prev_stats` + 4 `SparklineBuffer`s, `update_stats()` computes deltas, renders 2×3 grid (Memory/Clients/Ops-sec/Hit Rate sparklines + Uptime/Version text). Tests: seeding, delta, missing fields, render. | — |
-| **C** | C3 — Dedicated SlowLogPanel | ✅ **Complete** | `SlowLogPanel` extracted to `src/ui/slowlog_panel/mod.rs`, `Table` widget with duration bars (color-coded: green/yellow/red), CSV export (`e`), threshold filter (`t` cycles presets), compact mode (`Space`). 13 unit tests. | — |
-| **D** | D1 — `execute_raw` / `execute_pipeline` | ✅ **Complete** | `RedisClientHandle::execute_raw()` and `execute_pipeline()` added. REPL refactored to use them. Tests: raw GET/SET/DEL, pipeline round-trip. | — |
-| **D** | D2 — Fuzzy REPL autocomplete | ✅ **Complete** | `ReplAutocomplete` with nucleo `fuzzy_match_greedy`, 100+ Redis commands, key cache support. Tab opens overlay, Tab/Shift+Tab cycles, Enter accepts, Esc closes. 18 tests. | — |
-| **E** | E1 — MONITOR mode | ❌ **Not started** | — | No `--allow-monitor` flag, no `MONITOR` connection, no render stream |
-| **E** | E2 — String editor popup + `$EDITOR` | ❌ **Not started** | `TextAreaEditor` widget exists | No full-screen overlay, no `$EDITOR` subprocess integration |
+| **A** | A3 — Stream consumer groups (`g`) | ✅ **Complete** | `inspector_stream_groups` keybinding (`G` / `ctrl+shift+m`), `InspectorAction::StreamToggleGroups`, split-pane render with groups table, `client.xgroups()` wiring, 5 unit tests | Keybinding is `G` not `g` (`g` taken by `inspector_goto_end`) |
+| **B** | B1 — PSUBSCRIBE + channel colors | ✅ **Complete** | `PubSubKind` enum, `PSubscribe`/`PUnsubscribe` actions, Pattern input mode, 8-color cycle round-robin per subscription, color-coded message tags, 6 unit tests | — |
+| **B** | B2 — PubSubClient as module | ✅ **Complete** | `src/redis/pubsub.rs` with `PubSubClient::spawn_subscription`, `PubSubKind`/`PubSubMessage` moved from UI to shared redis module | Only one active subscription stream supported at a time |
+| **C** | C1 — SparklineBuffer | ✅ **Complete** | `SparklineBuffer` circular buffer (default 60 samples), `push()`, `to_vec()`, `latest()`, `delta()`. 9 tests | — |
+| **C** | C2 — 6-panel sparkline grid | ✅ **Complete** | `InfoDashboard` has `prev_stats` + 4 `SparklineBuffer`s, `update_stats()` computes deltas, renders 2×3 grid | Bottom row is uptime/version text — keyspace/replication/CPU/persistence tracked as M4 4.5–4.8 |
+| **C** | C3 — Dedicated SlowLogPanel | ✅ **Complete** | `SlowLogPanel` in `src/ui/slowlog_panel/mod.rs`, `Table` widget with duration bars, CSV export (`e`), threshold filter (`t`), compact mode (`Space`). 13 unit tests | `SLOWLOG RESET` not wired |
+| **D** | D1 — `execute_raw` / `execute_pipeline` | ✅ **Complete** | Both on `RedisClientHandle`; REPL refactored onto them via `execute_repl_stage`. Tests: raw GET/SET/DEL, pipeline round-trip | — |
+| **D** | D2 — Fuzzy REPL autocomplete | ✅ **Complete** | `ReplAutocomplete` with nucleo `fuzzy_match_greedy`, 100+ Redis commands, key cache, Tab cycling, Enter accepts, Esc closes. 10 tests | Subcommand/argument hints |
+| **E** | E1 — MONITOR mode | ✅ **Complete** | `--allow-monitor` flag, `client.monitor()` returns unbounded receiver, `Ctrl+M` toggles overlay, `drain_monitor_messages()` on tick, 1000-line cap. 3 tests | Unavailable in cluster mode (returns `None`) |
+| **E** | E2 — String editor popup + `$EDITOR` | ❌ **Not started** | `TextAreaEditor` widget exists and is wired to `e` | No full-screen overlay chrome, no `$EDITOR` subprocess integration |
 | **F** | F1 — CI & Audit | ❌ **Not started** | — | No `.github/workflows`, no `cargo audit` gate |
 | **F** | F2 — Documentation | ⚠️ **Partial** | README.md updated with current features, MANUAL_TESTING.md expanded | No CHANGELOG.md, no man page (`clap_mangen`) |
 
 #### Implementation Notes / Deviations from PLAN.md
 
 - **A2 (ZSet range query)**: PLAN.md specified an overlay approach with `InspectorAction::ZRangeQuery`. The actual implementation uses **in-memory filtering** (`zset_score_min`/`zset_score_max` state fields on `ValueInspector`) rather than re-fetching from Redis or rendering an overlay. The prompt sets state directly; no action is emitted to `app.rs`. This avoids an extra Redis round-trip and keeps the code simpler.
-- **A3 (Stream consumer groups)**: Not yet implemented. PLAN.md's `InspectorAction::ShowGroups(Vec<StreamGroup>)` action will be used when this is built.
+- **A3 (Stream groups)**: Bound to `G` (vim) / `ctrl+shift+m` (emacs) rather than `g`, because `g` was already bound to `inspector_goto_end`.
+- **E1 (MONITOR)**: Bound to `Ctrl+M` as planned. `Ctrl+R` is taken by REPL raw mode, so the `--allow-monitor` gate is the only protection against accidental MONITOR connections.
 
 ### PLAN.md Progress Summary
 
-- **Completed**: 2 / 15 sub-milestones (A1, A2)
-- **In progress**: 0 / 15
-- **Not started**: 13 / 15
+- **Completed**: 11 / 18 tracked sub-milestones (A1, A2, A3, B1, B2, C1, C2, C3, D1, D2, E1)
+- **In progress**: 0
+- **Not started**: E2, F1, F2 remainder, X1–X13
 
 ### Next Recommended Sub-Milestone
 
-**A3 — Stream consumer groups (`g`)** is the natural next step because:
-1. It completes Phase A (Value Inspector Gaps)
-2. The client method `xgroups()` already exists — only UI wiring is needed
-3. It follows the same split-pane pattern used in the Pub/Sub tab (two-panel layout)
-4. Low risk: no new client methods, no new keybindings file changes, purely additive to `value_inspector`
+**X7 — Search fuzzy ranking (`nucleo`)** is the highest-value remaining item. `GlobalSearch::apply_filter` still uses `to_lowercase().contains()`, which is the last major gap in the spec's search feature. `nucleo` is already a dependency (used by REPL autocomplete), so this is a self-contained change to `src/ui/search/mod.rs`.
 
 ---
 
@@ -500,26 +514,30 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 
 ### P1 — Must Have for v1
 
-1. **Sparkline buffers + stats dashboard graphs** (M4) — The spec calls this a "real-time dashboard." Without sparklines and bar charts, it is just a text dump.
-2. **REPL autocomplete depth** (M3) — At minimum, feed the current key list into autocomplete so `GET <Tab>` suggests keys.
-3. **Search fuzzy ranking** (M5) — Replace `contains()` with `nucleo` or a simple fuzzy scorer; the spec explicitly names `nucleo`.
-4. **Slow Log CSV export + RESET** (M4) — Low-effort, high-utility features that exist in the spec gates.
-5. **Performance benchmark gate** (M7) — Add the `--bench` hidden flag and the 10K-key render test. This is the spec's quality gate.
+1. **Search fuzzy ranking** (M5 5.10, X7) — Replace `contains()` with `nucleo`. Last major gap in the search feature; `nucleo` already a dependency.
+2. **Search regex toggle** (M5 5.11, X8) — `Ctrl+R` switches between fuzzy and regex interpretation of the query.
+3. **Performance benchmark gate** (M7 7.15–7.16, X12–X13) — Add `--bench` and `--profile-memory` hidden flags. This is the spec's quality gate.
+4. **Stats dashboard bottom row** (M4 4.5–4.8) — Keyspace bar chart, replication panel, CPU gauges, persistence flags. The top row is done; the bottom row is still placeholder text.
+5. **Release engineering** (M8) — CI matrix, `cargo audit`, CHANGELOG, man page. Required for the 1.0 tag but not for feature completeness.
 
 ### P2 — Should Have for v1
 
-1. **JSON syntax highlighting in string view** (M2) — Use `ratatui::text::Span` with colored segments.
-2. **Hash bulk multi-select** (M2) — `Space` to toggle field selection, `Ctrl+D` to delete selected.
-3. **Stream follow mode + consumer groups** (M2) — Follow mode is a small tick-driven reload; groups need a split-pane render.
-4. **Help overlay context awareness** (M7) — `?` already opens help, but it shows a static string. Wire it to `HelpContext`.
-5. **Mouse panel focus + click-to-select** (M7) — Store `Rect`s from last render and map clicks.
+1. **JSON syntax highlighting in string view** (M2 2.5, X1) — Use `ratatui::text::Span` with colored segments.
+2. **Hash bulk multi-select** (M2 2.11, X2) — `Space` to toggle field selection, `Ctrl+D` to delete selected.
+3. **Hash field filter** (M2 2.12, X4) — `/` filters fields by substring on field names.
+4. **List insert before/after** (M2 2.9, X3) — `LINSERT` via a two-step prompt.
+5. **Stream follow mode + XTRIM** (M2 2.18/2.20, X5–X6) — Follow is a tick-driven reload; XTRIM is a prompt form.
+6. **Search history persistence** (M5 5.12, X9) — Last 100 queries to disk, Up/Down browse.
+7. **Value search** (M5 5.14, X10) — `Ctrl+Shift+F` searches within the current value's members.
 
 ### P3 — Nice to Have / Post-v1
 
-1. `$EDITOR` integration (M2) — Can be deferred; the built-in editor works.
-2. MONITOR mode (M4) — Gated behind `--allow-monitor` flag; niche feature.
-3. SSH tunnel live integration test (M6) — Acceptable to leave `#[ignore]`.
-4. CI matrix + `cargo audit` (M8) — Required for release but not for feature completeness.
+1. **REPL subcommand/argument hints** (M3 3.8) — `CONFIG <Tab>` suggests `GET`, `SET`, `REWRITE`.
+2. **Mouse click-to-focus / click-to-select** (M7 7.14, X11) — Store `Rect`s from last render and map clicks.
+3. **Pub/Sub auto-scroll `f` toggle** (M5 5.5) — Follow-tail behavior for the message pane.
+4. **`$EDITOR` integration** (M2 2.7, E2) — Can be deferred; the built-in editor works.
+5. **SSH tunnel live integration test** (M6) — Acceptable to leave `#[ignore]`.
+6. **Nested REPL response indentation** (M3 3.11) — `redis_value_to_string` is flat; nested arrays would read better indented.
 
 ---
 

@@ -21,6 +21,23 @@ pub enum StringViewMode {
 }
 
 impl StringViewMode {
+    /// Render as styled lines. Only `Json` produces color; every other mode
+    /// yields unstyled lines.
+    pub fn render_lines(&self, value: &str) -> Vec<Line<'static>> {
+        match self {
+            StringViewMode::Json => match serde_json::from_str::<serde_json::Value>(value) {
+                Ok(parsed) => highlight_json(&parsed),
+                // Not valid JSON — fall back to plain text so the value is
+                // still readable rather than replaced with an error.
+                Err(_) => vec![Line::raw(value.to_string())],
+            },
+            other => {
+                let rendered = other.render(value);
+                rendered.lines().map(|l| Line::raw(l.to_string())).collect()
+            }
+        }
+    }
+
     pub fn next(&self) -> Self {
         match self {
             StringViewMode::Raw => StringViewMode::Json,
@@ -60,6 +77,134 @@ impl StringViewMode {
                 .collect::<Vec<_>>()
                 .join(" "),
         }
+    }
+}
+
+/// Colors used for JSON syntax highlighting.
+const JSON_KEY_COLOR: Color = Color::Yellow;
+const JSON_STRING_COLOR: Color = Color::Green;
+const JSON_NUMBER_COLOR: Color = Color::Cyan;
+const JSON_LITERAL_COLOR: Color = Color::Magenta;
+const JSON_PUNCT_COLOR: Color = Color::DarkGray;
+
+fn styled(text: impl Into<String>, color: Color) -> Span<'static> {
+    Span::styled(text.into(), Style::default().fg(color))
+}
+
+/// True when a value is a container that should be expanded across lines.
+/// Empty containers stay inline as `{}` / `[]`.
+fn json_is_expanded(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(m) => !m.is_empty(),
+        serde_json::Value::Array(a) => !a.is_empty(),
+        _ => false,
+    }
+}
+
+fn json_open_token(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Array(_) => "[",
+        _ => "{",
+    }
+}
+
+fn json_close_token(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Array(_) => "]",
+        _ => "}",
+    }
+}
+
+/// Color a leaf value. Empty containers fall through to the punctuation branch
+/// and render inline as `{}` / `[]`.
+fn json_scalar_spans(value: &serde_json::Value) -> Vec<Span<'static>> {
+    match value {
+        serde_json::Value::String(s) => vec![styled(
+            serde_json::to_string(s).unwrap_or_default(),
+            JSON_STRING_COLOR,
+        )],
+        serde_json::Value::Number(n) => vec![styled(n.to_string(), JSON_NUMBER_COLOR)],
+        serde_json::Value::Bool(_) | serde_json::Value::Null => {
+            vec![styled(value.to_string(), JSON_LITERAL_COLOR)]
+        }
+        _ => vec![
+            styled(json_open_token(value), JSON_PUNCT_COLOR),
+            styled(json_close_token(value), JSON_PUNCT_COLOR),
+        ],
+    }
+}
+
+/// Pretty-print a parsed JSON value with per-token coloring.
+///
+/// Keys are yellow, strings green, numbers cyan, `true`/`false`/`null`
+/// magenta, and structural punctuation dark gray so the shape of the
+/// document stays readable without competing with the values.
+///
+/// Returns real `Line`s rather than spans containing `\n` — ratatui does not
+/// break lines on embedded newlines within a span.
+fn highlight_json(value: &serde_json::Value) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    if json_is_expanded(value) {
+        out.push(Line::from(vec![
+            styled(json_open_token(value), JSON_PUNCT_COLOR),
+        ]));
+        write_json_entries(&mut out, value, 1);
+        out.push(Line::from(vec![styled(json_close_token(value), JSON_PUNCT_COLOR)]));
+    } else {
+        out.push(Line::from(json_scalar_spans(value)));
+    }
+    out
+}
+
+/// Emit every child of an expanded container at `indent`, comma-separated.
+fn write_json_entries(out: &mut Vec<Line<'static>>, container: &serde_json::Value, indent: usize) {
+    let entries: Vec<(Option<&str>, &serde_json::Value)> = match container {
+        serde_json::Value::Object(m) => m.iter().map(|(k, v)| (Some(k.as_str()), v)).collect(),
+        serde_json::Value::Array(a) => a.iter().map(|v| (None, v)).collect(),
+        _ => return,
+    };
+    let last = entries.len().saturating_sub(1);
+    for (i, (key, value)) in entries.into_iter().enumerate() {
+        write_json_entry(out, key, value, indent);
+        if i != last {
+            append_comma(out);
+        }
+    }
+}
+
+/// Emit one child. `indent` is the depth of the child's own line; a nested
+/// container's closing bracket is drawn at `indent - 1` to align under it.
+fn write_json_entry(
+    out: &mut Vec<Line<'static>>,
+    key: Option<&str>,
+    value: &serde_json::Value,
+    indent: usize,
+) {
+    let pad = "  ".repeat(indent);
+    let mut spans = vec![Span::raw(pad.clone())];
+    if let Some(k) = key {
+        spans.push(styled(format!("\"{k}\""), JSON_KEY_COLOR));
+        spans.push(Span::raw(": ".to_string()));
+    }
+
+    if json_is_expanded(value) {
+        spans.push(styled(json_open_token(value), JSON_PUNCT_COLOR));
+        out.push(Line::from(spans));
+        write_json_entries(out, value, indent + 1);
+        out.push(Line::from(vec![
+            Span::raw("  ".repeat(indent.saturating_sub(1))),
+            styled(json_close_token(value), JSON_PUNCT_COLOR),
+        ]));
+    } else {
+        spans.extend(json_scalar_spans(value));
+        out.push(Line::from(spans));
+    }
+}
+
+/// Append a separator to the most recently emitted line.
+fn append_comma(out: &mut Vec<Line<'static>>) {
+    if let Some(line) = out.last_mut() {
+        line.spans.push(Span::raw(",".to_string()));
     }
 }
 
@@ -674,23 +819,33 @@ impl ValueInspector {
             ));
         }
 
-        let body = if self.loading {
-            "Loading value...".to_string()
-        } else if let Some(err) = &self.error {
-            format!("Error: {err}")
-        } else if let Some(value) = &self.value {
-            render_value_preview(value, &self.string_view)
-        } else {
-            "Select a key and press Enter to inspect its value".to_string()
-        };
-
         let mut lines = Vec::new();
         if !meta_parts.is_empty() {
             lines.push(Line::from(meta_parts));
             lines.push(Line::from(""));
         }
-        for line in body.lines() {
-            lines.push(Line::from(line.to_string()));
+
+        if self.loading {
+            lines.push(Line::from("Loading value..."));
+        } else if let Some(err) = &self.error {
+            lines.push(Line::from(format!("Error: {err}")));
+        } else if let Some(RedisValue::String(ref s)) = self.value {
+            // Strings render through the view mode so JSON gets syntax
+            // highlighting rather than a flat pretty-print.
+            let label = Span::styled(
+                format!("[{}]", self.string_view.label()),
+                Style::default().fg(Color::DarkGray),
+            );
+            lines.push(Line::from(vec![label, Span::raw(" ")]));
+            lines.extend(self.string_view.render_lines(s));
+        } else if let Some(value) = &self.value {
+            for line in render_value_preview(value, &self.string_view).lines() {
+                lines.push(Line::from(line.to_string()));
+            }
+        } else {
+            lines.push(Line::from(
+                "Select a key and press Enter to inspect its value",
+            ));
         }
 
         let widget = Paragraph::new(lines)
@@ -1010,9 +1165,7 @@ impl ValueInspector {
 
 fn render_value_preview(value: &RedisValue, view_mode: &StringViewMode) -> String {
     match value {
-        RedisValue::String(s) => {
-            format!("[{}]\n{}", view_mode.label(), view_mode.render(s))
-        }
+        RedisValue::String(s) => view_mode.render(s),
         RedisValue::List(items) => {
             let preview = items
                 .iter()
@@ -1064,6 +1217,224 @@ fn render_value_preview(value: &RedisValue, view_mode: &StringViewMode) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- String view modes (2.3, 2.4, 2.5, 2.24, 2.25, 2.26) ----
+
+    #[test]
+    fn string_view_raw_is_verbatim() {
+        assert_eq!(StringViewMode::Raw.render("hello"), "hello");
+    }
+
+    #[test]
+    fn string_view_json_pretty_prints() {
+        let out = StringViewMode::Json.render("{\"a\":1}");
+        assert_eq!(out, "{\n  \"a\": 1\n}");
+    }
+
+    #[test]
+    fn string_view_json_falls_back_when_invalid() {
+        // Not valid JSON: the value must remain readable, not become an error.
+        assert_eq!(StringViewMode::Json.render("not json"), "not json");
+    }
+
+    #[test]
+    fn string_view_base64_encodes() {
+        use base64::Engine;
+        let expected = base64::engine::general_purpose::STANDARD.encode(b"hello");
+        assert_eq!(StringViewMode::Base64.render("hello"), expected);
+    }
+
+    #[test]
+    fn string_view_hex_emits_spaced_bytes() {
+        assert_eq!(StringViewMode::Hex.render("AB"), "41 42");
+    }
+
+    #[test]
+    fn string_view_mode_cycles_and_labels() {
+        let mut mode = StringViewMode::Raw;
+        assert_eq!(mode.label(), "Raw");
+        for expected in [
+            StringViewMode::Json,
+            StringViewMode::Base64,
+            StringViewMode::Hex,
+            StringViewMode::Raw,
+        ] {
+            mode = mode.next();
+            assert_eq!(mode, expected);
+        }
+    }
+
+    #[test]
+    fn json_highlight_colors_keys_strings_and_numbers() {
+        let parsed: serde_json::Value =
+            serde_json::from_str("{\"name\":\"ada\",\"age\":36}").unwrap();
+        let lines = highlight_json(&parsed);
+        let all: Vec<&Span> = lines.iter().flat_map(|l| l.spans.iter()).collect();
+        let joined: String = all.iter().map(|s| s.content.as_ref()).collect();
+
+        // Content is preserved verbatim.
+        assert!(joined.contains("\"name\""));
+        assert!(joined.contains("\"ada\""));
+        assert!(joined.contains("36"));
+
+        // Keys yellow, string values green, numbers cyan.
+        let find = |needle: &str| {
+            all.iter()
+                .find(|s| s.content.as_ref() == needle)
+                .unwrap_or_else(|| panic!("{needle} span in {joined}"))
+        };
+        assert_eq!(find("\"name\"").style.fg, Some(JSON_KEY_COLOR));
+        assert_eq!(find("\"ada\"").style.fg, Some(JSON_STRING_COLOR));
+        assert_eq!(find("36").style.fg, Some(JSON_NUMBER_COLOR));
+    }
+
+    #[test]
+    fn json_highlight_colors_literals() {
+        let parsed: serde_json::Value =
+            serde_json::from_str("{\"a\":true,\"b\":null}").unwrap();
+        let lines = highlight_json(&parsed);
+        let all: Vec<&Span> = lines.iter().flat_map(|l| l.spans.iter()).collect();
+        for literal in ["true", "null"] {
+            let span = all
+                .iter()
+                .find(|s| s.content.as_ref() == literal)
+                .unwrap_or_else(|| panic!("{literal} span"));
+            assert_eq!(span.style.fg, Some(JSON_LITERAL_COLOR));
+        }
+    }
+
+    #[test]
+    fn json_highlight_expands_containers_onto_multiple_lines() {
+        let parsed: serde_json::Value = serde_json::from_str("{\"a\":{\"b\":1}}").unwrap();
+        let lines = highlight_json(&parsed);
+        assert!(lines.len() > 1, "nested object should span multiple lines");
+        let text: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+        assert_eq!(text[0], "{");
+        assert_eq!(text.last().unwrap(), "}");
+    }
+
+    #[test]
+    fn json_highlight_indents_nested_keys() {
+        let parsed: serde_json::Value = serde_json::from_str("{\"a\":{\"b\":1}}").unwrap();
+        let lines = highlight_json(&parsed);
+        let nested = lines.iter().find(|l| l.to_string().contains("\"b\""));
+        let nested = nested.expect("nested key line");
+        assert!(
+            nested.to_string().starts_with("    \"b\""),
+            "expected 4-space indent, got {:?}",
+            nested.to_string()
+        );
+    }
+
+    #[test]
+    fn json_highlight_separates_entries_with_commas() {
+        let parsed: serde_json::Value = serde_json::from_str("{\"a\":1,\"b\":2,\"c\":3}").unwrap();
+        let lines = highlight_json(&parsed);
+        let text: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+        // Open brace, three entries (last has no trailing comma), close brace.
+        assert_eq!(text.len(), 5);
+        assert!(text[1].ends_with(','));
+        assert!(text[2].ends_with(','));
+        assert!(!text[3].ends_with(','));
+    }
+
+    #[test]
+    fn json_highlight_arrays_have_no_keys() {
+        let parsed: serde_json::Value = serde_json::from_str("{\"a\":[1,2]}").unwrap();
+        let lines = highlight_json(&parsed);
+        let joined: String = lines.iter().flat_map(|l| l.spans.iter()).map(|s| s.content.as_ref()).collect();
+        assert!(joined.contains('['));
+        assert!(joined.contains(']'));
+        assert!(joined.contains("1"));
+        assert!(joined.contains("2"));
+    }
+
+    #[test]
+    fn json_highlight_empty_containers_render_inline() {
+        let parsed: serde_json::Value = serde_json::from_str("{\"a\":{},\"b\":[]}").unwrap();
+        let joined: String = highlight_json(&parsed)
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(joined.contains("{}"), "got: {joined}");
+        assert!(joined.contains("[]"), "got: {joined}");
+    }
+
+    #[test]
+    fn json_highlight_escapes_are_preserved() {
+        let parsed: serde_json::Value = serde_json::from_str("{\"a\":\"line\\nbreak\"}").unwrap();
+        let joined: String = highlight_json(&parsed)
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(joined.contains(r"\n"), "got: {joined}");
+    }
+
+    #[test]
+    fn json_highlight_scalars_render_on_one_line() {
+        for raw in ["42", "\"hi\"", "true", "null"] {
+            let parsed: serde_json::Value = serde_json::from_str(raw).unwrap();
+            assert_eq!(highlight_json(&parsed).len(), 1, "input: {raw}");
+        }
+    }
+
+    #[test]
+    fn render_lines_json_mode_produces_spans() {
+        let lines = StringViewMode::Json.render_lines("{\"a\":1}");
+        assert!(lines.len() > 1);
+        assert!(lines.iter().flat_map(|l| l.spans.iter()).any(|s| s.style.fg.is_some()));
+    }
+
+    #[test]
+    fn render_lines_non_json_modes_are_unstyled() {
+        for mode in [StringViewMode::Raw, StringViewMode::Base64, StringViewMode::Hex] {
+            let lines = mode.render_lines("hello");
+            assert!(lines.iter().flat_map(|l| l.spans.iter()).all(|s| s.style.fg.is_none()));
+        }
+    }
+
+    #[test]
+    fn render_lines_invalid_json_is_plain_but_readable() {
+        let lines = StringViewMode::Json.render_lines("<html>not json</html>");
+        let joined: String = lines.iter().flat_map(|l| l.spans.iter()).map(|s| s.content.as_ref()).collect();
+        assert_eq!(joined, "<html>not json</html>");
+    }
+
+    #[test]
+    fn inspector_renders_string_in_each_view_mode_without_panic() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        for mode in [
+            StringViewMode::Raw,
+            StringViewMode::Json,
+            StringViewMode::Base64,
+            StringViewMode::Hex,
+        ] {
+            let mut inspector = ValueInspector::new();
+            inspector.set_value("k".into(), RedisValue::String(r#"{"a":[1,2],"b":null}"#.into()));
+            inspector.string_view = mode;
+            terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+        }
+    }
+
+    #[test]
+    fn inspector_renders_string_with_metadata_without_panic() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut inspector = ValueInspector::new();
+        inspector.set_value("k".into(), RedisValue::String("{\"a\":1}".into()));
+        inspector.set_metadata(
+            Some("embstr".into()),
+            Some(2048),
+            Some(Ttl::Expires(std::time::Duration::from_secs(90))),
+        );
+        inspector.string_view = StringViewMode::Json;
+        terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+    }
 
     #[test]
     fn stream_groups_toggle_sets_state() {

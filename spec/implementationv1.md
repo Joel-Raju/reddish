@@ -114,7 +114,7 @@ The original audit predated Phases A–E. The following were reported as
 | 2.2 | `get_value` dispatches by type | ✅ Done | `client.rs` |
 | 2.3 | String view modes: Raw / JSON / Base64 / Hex | ✅ Done | `value_inspector/mod.rs` — `StringViewMode` |
 | 2.4 | JSON pretty-print | ✅ Done | `serde_json::to_string_pretty` |
-| 2.5 | JSON syntax highlighting with ANSI spans | ❌ Missing | Pretty-printed but no color-coded keys/values |
+| 2.5 | JSON syntax highlighting with ANSI spans | ✅ Done | `highlight_json()` — keys yellow, strings green, numbers cyan, literals magenta |
 | 2.6 | Inline string edit (`e` → TextAreaEditor) | ✅ Done | |
 | 2.7 | `$EDITOR` integration (temp file + spawn) | ❌ Missing | Only built-in editor exists |
 | 2.8 | List: `a` RPUSH, `p` LPUSH, `e` LSET, `D` LREM | ✅ Done | |
@@ -133,9 +133,9 @@ The original audit predated Phases A–E. The following were reported as
 | 2.21 | Metadata display (encoding, memory, TTL) | ✅ Done | `set_metadata` on inspector |
 | 2.22 | TTL colored badges (green→yellow→red) | ✅ Done | `render()` applies color by TTL |
 | 2.23 | `test_get_set_string` | ✅ Done | Integration test |
-| 2.24 | `test_string_view_json_format` | ❌ Missing | |
-| 2.25 | `test_string_view_base64` | ❌ Missing | |
-| 2.26 | `test_string_view_hex` | ❌ Missing | |
+| 2.24 | `test_string_view_json_format` | ✅ Done | `string_view_json_pretty_prints` + invalid-JSON fallback |
+| 2.25 | `test_string_view_base64` | ✅ Done | `string_view_base64_encodes` |
+| 2.26 | `test_string_view_hex` | ✅ Done | `string_view_hex_emits_spaced_bytes` |
 | 2.27 | `test_list_push_pop` | ✅ Done | |
 | 2.28 | `test_hash_set_del` | ✅ Done | |
 | 2.29 | `test_set_add_rem` | ✅ Done | |
@@ -231,8 +231,8 @@ The original audit predated Phases A–E. The following were reported as
 | 5.7 | Color-coded per-channel tags | ✅ Done | 8-color round-robin per subscription; message tags resolve to subscription color |
 | 5.8 | Message cap (1000) | ✅ Done | `pop_front()` when > 1000 |
 | 5.9 | GlobalSearch with SCAN backend | ✅ Done | `spawn_search_scan` drives SCAN |
-| 5.10 | Fuzzy matching (`nucleo`) | ❌ Missing | Substring filter only (`contains`) |
-| 5.11 | Regex toggle | ❌ Missing | |
+| 5.10 | Fuzzy matching (`nucleo`) | ✅ Done | Per-atom subsequence scoring, summed and rank-sorted |
+| 5.11 | Regex toggle | ✅ Done | `Ctrl+R` / `SearchMode::Regex`, parse errors surfaced in title |
 | 5.12 | Search history persisted | ❌ Missing | |
 | 5.13 | Search progress indicator | ⚠️ Partial | `[scanning...]` label exists |
 | 5.14 | Value search (`Ctrl+Shift+F`) | ❌ Missing | |
@@ -372,7 +372,7 @@ The original audit predated Phases A–E. The following were reported as
 | `y` yank as JSON | ⚠️ Partial | Copies raw value; not serialized JSON for complex types |
 | `?` help overlay | ❌ Missing | |
 | String: Raw/JSON/Base64/Hex tabs | ✅ Done | |
-| String: JSON syntax highlighting | ❌ Missing | |
+| String: JSON syntax highlighting | ✅ Done | Per-token spans; invalid JSON falls back to plain text |
 | String: `$EDITOR` popup | ❌ Missing | |
 | List: `a` RPUSH, `p` LPUSH, `e` LSET, `D` LREM | ✅ Done | |
 | List: `i` insert before/after | ❌ Missing | |
@@ -447,8 +447,8 @@ The original audit predated Phases A–E. The following were reported as
 |-----------------|--------|-----|
 | Global key search (`Ctrl+F`) | ✅ Done | |
 | SCAN-backed with progress | ⚠️ Partial | Progress label exists; no "scanned X of estimated Y" |
-| Fuzzy matching (`nucleo`) | ❌ Missing | Substring only |
-| Regex toggle | ❌ Missing | |
+| Fuzzy matching (`nucleo`) | ✅ Done | Per-atom subsequence scoring via `nucleo::Matcher` |
+| Regex toggle | ✅ Done | `Ctrl+R` toggles `SearchMode::Fuzzy` / `SearchMode::Regex` |
 | Search history persisted | ❌ Missing | |
 | Value search (`Ctrl+Shift+F`) | ❌ Missing | |
 

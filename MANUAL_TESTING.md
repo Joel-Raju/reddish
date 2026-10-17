@@ -248,7 +248,7 @@ Expected:
 ### 5.6 ZSet range query
 
 1. Select `leaderboard` (zset) to open the value inspector.
-2. Press `q`.
+2. Press `Q`.
 
 Expected:
 - prompt opens: "Min score (empty=-inf):"
@@ -265,7 +265,7 @@ Expected:
 - title shows `filter:75~150`
 - cursor count updates to match filtered length
 
-5. Press `q` again.
+5. Press `Q` again.
 
 Expected:
 - filter is cleared and all members are visible again
@@ -298,7 +298,7 @@ For each type, verify add/edit/delete/copy operations:
 **ZSet:**
 - Select `leaderboard`, press `a` → add member prompt, then score prompt
 - Press `s` to toggle score sort asc/desc
-- Press `q` to filter by score range (see 5.6)
+- Press `Q` to filter by score range (see 5.6)
 - Press `e` to edit score at cursor
 
 **Stream:**

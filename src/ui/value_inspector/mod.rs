@@ -1867,7 +1867,7 @@ mod tests {
     #[test]
     fn list_insert_opens_position_prompt_on_cursor_item() {
         let mut inspector = list_inspector();
-        inspector.handle_event(&press(KeyCode::Char('i')));
+        inspector.handle_event(&press(KeyCode::Char('I')));
         assert_eq!(
             inspector.prompt_mode,
             Some(PromptMode::ListInsertPosition("a".to_string()))
@@ -1877,7 +1877,7 @@ mod tests {
     #[test]
     fn list_insert_position_b_then_value_emits_before_action() {
         let mut inspector = list_inspector();
-        inspector.handle_event(&press(KeyCode::Char('i')));
+        inspector.handle_event(&press(KeyCode::Char('I')));
         inspector.handle_event(&press(KeyCode::Char('b')));
         // Submit the position, then supply the value.
         inspector.handle_event(&press(KeyCode::Enter));
@@ -1908,7 +1908,7 @@ mod tests {
     #[test]
     fn list_insert_position_a_then_value_emits_after_action() {
         let mut inspector = list_inspector();
-        inspector.handle_event(&press(KeyCode::Char('i')));
+        inspector.handle_event(&press(KeyCode::Char('I')));
         inspector.handle_event(&press(KeyCode::Char('a')));
         inspector.handle_event(&press(KeyCode::Enter));
         inspector.list_prompt.as_mut().unwrap().value = "y".to_string();
@@ -1924,7 +1924,7 @@ mod tests {
     #[test]
     fn list_insert_unrecognized_position_defaults_to_after() {
         let mut inspector = list_inspector();
-        inspector.handle_event(&press(KeyCode::Char('i')));
+        inspector.handle_event(&press(KeyCode::Char('I')));
         inspector.handle_event(&press(KeyCode::Char('z')));
         inspector.handle_event(&press(KeyCode::Enter));
         inspector.list_prompt.as_mut().unwrap().value = "y".to_string();
@@ -1938,7 +1938,7 @@ mod tests {
     fn list_insert_targets_second_element_after_navigation() {
         let mut inspector = list_inspector();
         inspector.handle_event(&press(KeyCode::Char('j')));
-        inspector.handle_event(&press(KeyCode::Char('i')));
+        inspector.handle_event(&press(KeyCode::Char('I')));
         assert_eq!(
             inspector.prompt_mode,
             Some(PromptMode::ListInsertPosition("b".to_string()))
@@ -1949,7 +1949,7 @@ mod tests {
     fn list_insert_on_empty_list_does_nothing() {
         let mut inspector = ValueInspector::new();
         inspector.set_value("l".to_string(), RedisValue::List(vec![]));
-        inspector.handle_event(&press(KeyCode::Char('i')));
+        inspector.handle_event(&press(KeyCode::Char('I')));
         assert_eq!(inspector.prompt_mode, None);
     }
 
@@ -2047,7 +2047,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut inspector = list_inspector();
-        inspector.handle_event(&press(KeyCode::Char('i')));
+        inspector.handle_event(&press(KeyCode::Char('I')));
         terminal.draw(|f| inspector.render(f, f.area())).unwrap();
     }
 
@@ -2104,7 +2104,7 @@ mod tests {
     fn hash_filter_prompt_applies_and_clears() {
         let mut inspector = hash_inspector();
         // Open the filter prompt.
-        assert!(inspector.handle_event(&press(KeyCode::Char('/'))).is_none());
+        assert!(inspector.handle_event(&ctrl('f')).is_none());
         assert_eq!(inspector.prompt_mode, Some(PromptMode::HashFilter));
 
         inspector.list_prompt.as_mut().unwrap().value = "session".to_string();
@@ -2118,7 +2118,7 @@ mod tests {
     fn hash_filter_empty_submission_clears_filter() {
         let mut inspector = hash_inspector();
         inspector.hash_filter = "user:".to_string();
-        inspector.handle_event(&press(KeyCode::Char('/')));
+        inspector.handle_event(&ctrl('f'));
         inspector.handle_event(&press(KeyCode::Enter));
         assert_eq!(inspector.hash_filter, "");
         assert_eq!(inspector.visible_hash_fields().len(), 3);

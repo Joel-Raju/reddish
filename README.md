@@ -176,15 +176,40 @@ Reddish supports configurable keymaps and ships with Vim/Emacs-style defaults.
 | set_ttl | `t` | `Ctrl+t` | Set TTL on inspected key |
 | inspector_list_push | `a` | `Ctrl+shift+a` | RPUSH to list |
 | inspector_list_prepend | `p` | `Ctrl+shift+p` | LPUSH to list |
+| inspector_list_insert | `I` | `Ctrl+shift+i` | Insert before/after the current list element |
 | inspector_hash_add | `a` | `Ctrl+shift+h` | Add hash field |
+| inspector_hash_filter | `Ctrl+f` | `Alt+f` | Filter hash fields by name (`Esc` clears) |
+| inspector_value_search | `Ctrl+shift+f` | `Alt+/` | Search within the current value's members |
+| delete_selected | `Ctrl+d` | `Ctrl+shift+d` | Delete all selected hash fields |
+| select_all | `Ctrl+a` | `Ctrl+a` | Select all visible hash fields |
+| toggle_select | `Space` | `Space` | Toggle selection of the field under the cursor |
 | inspector_set_add | `a` | `Ctrl+shift+s` | Add set member |
 | inspector_zset_add | `a` | `Ctrl+shift+z` | Add zset member |
-| inspector_zset_range_query | `q` | `Ctrl+shift+q` | Filter zset by score range |
+| inspector_zset_range_query | `Q` | `Ctrl+shift+q` | Filter zset by score range |
 | inspector_stream_add | `a` | `Ctrl+shift+x` | Add stream entry |
+| inspector_stream_trim | `Ctrl+t` | `Ctrl+shift+t` | XTRIM the stream (MAXLEN / MINID) |
+| inspector_stream_follow | `F` | `Ctrl+shift+v` | Follow the stream tail (reloads on tick) |
+| inspector_stream_groups | `G` | `Ctrl+shift+m` | Toggle the consumer groups panel |
 | inspector_toggle_view | `f` | `Ctrl+shift+f` | Toggle stream compact/full |
 | inspector_goto_end | `g` | `Ctrl+shift+g` | Jump to last stream entry |
 | cycle_sort | `s` | `Ctrl+o` | Toggle zset score sort asc/desc |
-| Tab | `Tab` | `Tab` | Cycle string view mode |
+| Tab | `Tab` | `Tab` | Cycle string view mode (Raw / JSON / Base64 / Hex) |
+
+> `q` quits the app from anywhere, so inspector bindings deliberately avoid it.
+> The vim preset binds the hash filter to `Ctrl+f` because `/` is already the
+> global search key.
+
+### Search overlay shortcuts
+
+| Action | Vim | Emacs | Description |
+|--------|-----|-------|-------------|
+| typing | — | — | Query is fuzzy-ranked by default |
+| `search_toggle_mode` | `Ctrl+r` | `Ctrl+alt+r` | Toggle fuzzy / regex matching |
+| `search_history_prev` | `Alt+Up` | `Alt+Up` | Recall an earlier query |
+| `search_history_next` | `Alt+Down` | `Alt+Down` | Move forward through query history |
+| `search_execute` | `Enter` | `Enter` | Open the highlighted key |
+| `search_close` | `Esc` | `Ctrl+g` | Close the overlay |
+| `Up` / `Down` | `Up` / `Down` | `Ctrl+p` / `Ctrl+n` | Move through results |
 
 ### Info dashboard shortcuts
 
@@ -193,6 +218,8 @@ Reddish supports configurable keymaps and ships with Vim/Emacs-style defaults.
 | nav_up | `k` / `Up` | `Ctrl+p` | Scroll slowlog up |
 | nav_down | `j` / `Down` | `Ctrl+n` | Scroll slowlog down |
 | Space | `Space` | `Space` | Toggle slowlog compact mode |
+| `t` | `t` | `t` | Cycle slowlog duration threshold |
+| `e` | `e` | `e` | Export slowlog to CSV |
 
 ### Pub/Sub shortcuts
 

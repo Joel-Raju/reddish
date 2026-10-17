@@ -73,6 +73,8 @@ pub struct Keymap {
     pub inspector_hash_add: KeyDef,
     #[serde(default = "default_inspector_hash_filter")]
     pub inspector_hash_filter: KeyDef,
+    #[serde(default = "default_inspector_value_search")]
+    pub inspector_value_search: KeyDef,
     #[serde(default = "default_delete_selected")]
     pub delete_selected: KeyDef,
     #[serde(default = "default_inspector_set_add")]
@@ -105,6 +107,10 @@ pub struct Keymap {
     pub search_close: KeyDef,
     #[serde(default = "default_search_toggle_mode")]
     pub search_toggle_mode: KeyDef,
+    #[serde(default = "default_search_history_prev")]
+    pub search_history_prev: KeyDef,
+    #[serde(default = "default_search_history_next")]
+    pub search_history_next: KeyDef,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -218,13 +224,16 @@ impl Keymap {
                 key: "p".to_string(),
             },
             inspector_list_insert: KeyDef {
-                key: "i".to_string(),
+                key: "I".to_string(),
             },
             inspector_hash_add: KeyDef {
                 key: "a".to_string(),
             },
             inspector_hash_filter: KeyDef {
-                key: "/".to_string(),
+                key: "ctrl+f".to_string(),
+            },
+            inspector_value_search: KeyDef {
+                key: "ctrl+shift+f".to_string(),
             },
             delete_selected: KeyDef {
                 key: "ctrl+d".to_string(),
@@ -236,7 +245,7 @@ impl Keymap {
                 key: "a".to_string(),
             },
             inspector_zset_range_query: KeyDef {
-                key: "q".to_string(),
+                key: "Q".to_string(),
             },
             inspector_stream_add: KeyDef {
                 key: "a".to_string(),
@@ -273,6 +282,12 @@ impl Keymap {
             },
             search_toggle_mode: KeyDef {
                 key: "ctrl+r".to_string(),
+            },
+            search_history_prev: KeyDef {
+                key: "alt+Up".to_string(),
+            },
+            search_history_next: KeyDef {
+                key: "alt+Down".to_string(),
             },
         }
     }
@@ -361,7 +376,7 @@ impl Keymap {
                 key: "alt+;".to_string(),
             },
             duplicate_key: KeyDef {
-                key: "ctrl+d".to_string(),
+                key: "alt+d".to_string(),
             },
             confirm_yes: KeyDef {
                 key: "y".to_string(),
@@ -382,7 +397,10 @@ impl Keymap {
                 key: "ctrl+shift+h".to_string(),
             },
             inspector_hash_filter: KeyDef {
-                key: "ctrl+shift+f".to_string(),
+                key: "alt+f".to_string(),
+            },
+            inspector_value_search: KeyDef {
+                key: "alt+/".to_string(),
             },
             delete_selected: KeyDef {
                 key: "ctrl+shift+d".to_string(),
@@ -432,6 +450,12 @@ impl Keymap {
             search_toggle_mode: KeyDef {
                 key: "ctrl+alt+r".to_string(),
             },
+            search_history_prev: KeyDef {
+                key: "alt+Up".to_string(),
+            },
+            search_history_next: KeyDef {
+                key: "alt+Down".to_string(),
+            },
         }
     }
 
@@ -472,6 +496,7 @@ impl Keymap {
             "inspector_list_insert" => &self.inspector_list_insert,
             "inspector_hash_add" => &self.inspector_hash_add,
             "inspector_hash_filter" => &self.inspector_hash_filter,
+            "inspector_value_search" => &self.inspector_value_search,
             "delete_selected" => &self.delete_selected,
             "inspector_set_add" => &self.inspector_set_add,
             "inspector_zset_add" => &self.inspector_zset_add,
@@ -488,6 +513,8 @@ impl Keymap {
             "search_execute" => &self.search_execute,
             "search_close" => &self.search_close,
             "search_toggle_mode" => &self.search_toggle_mode,
+            "search_history_prev" => &self.search_history_prev,
+            "search_history_next" => &self.search_history_next,
             _ => return false,
         };
         let (expected_code, expected_mods) = parse_keydef(&def.key);
@@ -511,6 +538,14 @@ fn parse_keydef(key: &str) -> (KeyCode, KeyModifiers) {
         "Enter" => KeyCode::Enter,
         "Esc" => KeyCode::Esc,
         "Space" => KeyCode::Char(' '),
+        "Up" => KeyCode::Up,
+        "Down" => KeyCode::Down,
+        "Left" => KeyCode::Left,
+        "Right" => KeyCode::Right,
+        "Home" => KeyCode::Home,
+        "End" => KeyCode::End,
+        "Backspace" => KeyCode::Backspace,
+        "Tab" => KeyCode::Tab,
         s if s.len() == 1 => KeyCode::Char(s.chars().next().unwrap()),
         _ => KeyCode::Null,
     };
@@ -679,7 +714,7 @@ fn default_inspector_list_prepend() -> KeyDef {
 }
 fn default_inspector_list_insert() -> KeyDef {
     KeyDef {
-        key: "i".to_string(),
+        key: "I".to_string(),
     }
 }
 fn default_inspector_hash_add() -> KeyDef {
@@ -689,7 +724,22 @@ fn default_inspector_hash_add() -> KeyDef {
 }
 fn default_inspector_hash_filter() -> KeyDef {
     KeyDef {
-        key: "/".to_string(),
+        key: "ctrl+f".to_string(),
+    }
+}
+fn default_inspector_value_search() -> KeyDef {
+    KeyDef {
+        key: "ctrl+shift+f".to_string(),
+    }
+}
+fn default_search_history_prev() -> KeyDef {
+    KeyDef {
+        key: "alt+Up".to_string(),
+    }
+}
+fn default_search_history_next() -> KeyDef {
+    KeyDef {
+        key: "alt+Down".to_string(),
     }
 }
 fn default_delete_selected() -> KeyDef {
@@ -709,7 +759,7 @@ fn default_inspector_zset_add() -> KeyDef {
 }
 fn default_inspector_zset_range_query() -> KeyDef {
     KeyDef {
-        key: "q".to_string(),
+        key: "Q".to_string(),
     }
 }
 fn default_inspector_stream_add() -> KeyDef {
@@ -770,5 +820,219 @@ fn default_search_close() -> KeyDef {
 fn default_search_toggle_mode() -> KeyDef {
     KeyDef {
         key: "ctrl+r".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// Every action name `matches()` knows about.
+    const ALL_ACTIONS: &[&str] = &[
+        "nav_up", "nav_down", "nav_left", "nav_right", "confirm", "cancel", "delete",
+        "refresh", "filter", "edit", "quit", "copy", "help", "palette", "tab_keys",
+        "tab_repl", "tab_info", "tab_pubsub", "new_key", "rename_key", "set_ttl",
+        "expire", "select_all", "toggle_select", "cycle_sort", "go_up", "repl_overlay",
+        "duplicate_key", "confirm_yes", "confirm_no", "inspector_list_push",
+        "inspector_list_prepend", "inspector_list_insert", "inspector_hash_add",
+        "inspector_hash_filter", "inspector_value_search", "delete_selected",
+        "inspector_set_add", "inspector_zset_add", "inspector_zset_range_query",
+        "inspector_stream_add", "inspector_stream_groups", "inspector_stream_trim",
+        "inspector_stream_follow", "inspector_toggle_view", "inspector_goto_end",
+        "set_union", "set_inter", "set_diff", "search_execute", "search_close",
+        "search_toggle_mode", "search_history_prev", "search_history_next",
+    ];
+
+    /// Pairs that legitimately share a key because they are dispatched in
+    /// different modes or value types. Any overlap NOT listed here is a bug.
+    const ALLOWED_OVERLAPS: &[(&str, &str)] = &[
+        // Inspector keys share letters; the active Redis value type decides
+        // which handler sees them.
+        ("inspector_hash_add", "inspector_list_push"),
+        ("inspector_hash_add", "inspector_list_prepend"),
+        ("inspector_hash_add", "inspector_set_add"),
+        ("inspector_hash_add", "inspector_stream_add"),
+        ("inspector_hash_add", "inspector_zset_add"),
+        ("inspector_list_prepend", "inspector_list_push"),
+        ("inspector_list_prepend", "inspector_stream_add"),
+        ("inspector_list_prepend", "inspector_zset_add"),
+        ("inspector_list_push", "inspector_set_add"),
+        ("inspector_list_push", "inspector_stream_add"),
+        ("inspector_list_push", "inspector_zset_add"),
+        ("inspector_set_add", "inspector_stream_add"),
+        ("inspector_set_add", "inspector_zset_add"),
+        ("inspector_stream_add", "inspector_zset_add"),
+        // Global keys that intentionally alias an inspector action.
+        ("filter", "inspector_hash_filter"),
+        ("refresh", "inspector_goto_end"),
+        ("help", "set_diff"),
+        ("edit", "expire"),
+        ("delete_selected", "set_inter"),
+        ("select_all", "delete_selected"),
+        // Esc cancels in every mode; 'y'/'n' answer a confirm dialog but
+        // copy/open elsewhere. Emacs aliases go_up to ctrl+b.
+        ("cancel", "search_close"),
+        ("confirm_yes", "copy"),
+        ("go_up", "nav_left"),
+        ("confirm", "search_execute"),
+        ("confirm_no", "new_key"),
+        // Emacs set_diff is ctrl+d, aliasing the generic delete binding.
+        ("delete", "set_diff"),
+    ];
+
+    fn action_key<'a>(km: &'a Keymap, action: &str) -> &'a str {
+        match action {
+            "nav_up" => &km.nav_up.key,
+            "nav_down" => &km.nav_down.key,
+            "nav_left" => &km.nav_left.key,
+            "nav_right" => &km.nav_right.key,
+            "confirm" => &km.confirm.key,
+            "cancel" => &km.cancel.key,
+            "delete" => &km.delete.key,
+            "refresh" => &km.refresh.key,
+            "filter" => &km.filter.key,
+            "edit" => &km.edit.key,
+            "quit" => &km.quit.key,
+            "copy" => &km.copy.key,
+            "help" => &km.help.key,
+            "palette" => &km.palette.key,
+            "tab_keys" => &km.tab_keys.key,
+            "tab_repl" => &km.tab_repl.key,
+            "tab_info" => &km.tab_info.key,
+            "tab_pubsub" => &km.tab_pubsub.key,
+            "new_key" => &km.new_key.key,
+            "rename_key" => &km.rename_key.key,
+            "set_ttl" => &km.set_ttl.key,
+            "expire" => &km.expire.key,
+            "select_all" => &km.select_all.key,
+            "toggle_select" => &km.toggle_select.key,
+            "cycle_sort" => &km.cycle_sort.key,
+            "go_up" => &km.go_up.key,
+            "repl_overlay" => &km.repl_overlay.key,
+            "duplicate_key" => &km.duplicate_key.key,
+            "confirm_yes" => &km.confirm_yes.key,
+            "confirm_no" => &km.confirm_no.key,
+            "inspector_list_push" => &km.inspector_list_push.key,
+            "inspector_list_prepend" => &km.inspector_list_prepend.key,
+            "inspector_list_insert" => &km.inspector_list_insert.key,
+            "inspector_hash_add" => &km.inspector_hash_add.key,
+            "inspector_hash_filter" => &km.inspector_hash_filter.key,
+            "inspector_value_search" => &km.inspector_value_search.key,
+            "delete_selected" => &km.delete_selected.key,
+            "inspector_set_add" => &km.inspector_set_add.key,
+            "inspector_zset_add" => &km.inspector_zset_add.key,
+            "inspector_zset_range_query" => &km.inspector_zset_range_query.key,
+            "inspector_stream_add" => &km.inspector_stream_add.key,
+            "inspector_stream_groups" => &km.inspector_stream_groups.key,
+            "inspector_stream_trim" => &km.inspector_stream_trim.key,
+            "inspector_stream_follow" => &km.inspector_stream_follow.key,
+            "inspector_toggle_view" => &km.inspector_toggle_view.key,
+            "inspector_goto_end" => &km.inspector_goto_end.key,
+            "set_union" => &km.set_union.key,
+            "set_inter" => &km.set_inter.key,
+            "set_diff" => &km.set_diff.key,
+            "search_execute" => &km.search_execute.key,
+            "search_close" => &km.search_close.key,
+            "search_toggle_mode" => &km.search_toggle_mode.key,
+            "search_history_prev" => &km.search_history_prev.key,
+            "search_history_next" => &km.search_history_next.key,
+            other => panic!("unmapped action {other}"),
+        }
+    }
+
+    fn assert_no_unexpected_collisions(km: &Keymap, preset: &str) {
+        let mut by_key: HashMap<(KeyCode, KeyModifiers), Vec<&'static str>> = HashMap::new();
+        for &action in ALL_ACTIONS {
+            by_key
+                .entry(parse_keydef(action_key(km, action)))
+                .or_default()
+                .push(action);
+        }
+        for (key, mut actions) in by_key {
+            if actions.len() < 2 {
+                continue;
+            }
+            actions.sort_unstable();
+            for i in 0..actions.len() {
+                for j in (i + 1)..actions.len() {
+                    let pair = (actions[i], actions[j]);
+                    assert!(
+                        ALLOWED_OVERLAPS.contains(&pair),
+                        "{preset} preset: {pair:?} collide on {key:?}; \
+                         add it to ALLOWED_OVERLAPS if intentional"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn vim_preset_has_no_unexpected_key_collisions() {
+        assert_no_unexpected_collisions(&Keymap::vim(), "vim");
+    }
+
+    #[test]
+    fn emacs_preset_has_no_unexpected_key_collisions() {
+        assert_no_unexpected_collisions(&Keymap::emacs(), "emacs");
+    }
+
+    #[test]
+    fn every_binding_in_every_preset_parses_to_a_real_key() {
+        for (name, km) in [("vim", Keymap::vim()), ("emacs", Keymap::emacs())] {
+            for &action in ALL_ACTIONS {
+                let (code, _) = parse_keydef(action_key(&km, action));
+                assert_ne!(
+                    code,
+                    KeyCode::Null,
+                    "{name}: {action} has an unparseable key string"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn alt_arrow_history_keys_parse_and_are_distinct_from_plain_arrows() {
+        let km = Keymap::vim();
+        assert_eq!(
+            parse_keydef(&km.search_history_prev.key),
+            (KeyCode::Up, KeyModifiers::ALT)
+        );
+        assert_eq!(
+            parse_keydef(&km.search_history_next.key),
+            (KeyCode::Down, KeyModifiers::ALT)
+        );
+        assert!(km.matches("search_history_prev", &KeyEvent::new(KeyCode::Up, KeyModifiers::ALT)));
+        assert!(km.matches("search_history_next", &KeyEvent::new(KeyCode::Down, KeyModifiers::ALT)));
+        // Plain arrows drive result navigation and must not browse history.
+        assert!(!km.matches("search_history_prev", &KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)));
+        assert!(!km.matches("search_history_next", &KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
+    }
+
+    #[test]
+    fn emacs_inspector_keys_do_not_shadow_toggle_view() {
+        let km = Keymap::emacs();
+        // All three previously resolved to ctrl+shift+f at one point.
+        assert_ne!(km.inspector_hash_filter.key, km.inspector_toggle_view.key);
+        assert_ne!(km.inspector_value_search.key, km.inspector_toggle_view.key);
+        assert_ne!(km.inspector_hash_filter.key, km.inspector_value_search.key);
+    }
+
+    #[test]
+    fn toml_override_applies_to_new_actions() {
+        let km: Keymap =
+            toml::from_str("[inspector_value_search]\nkey = \"ctrl+g\"\n").unwrap();
+        assert_eq!(km.inspector_value_search.key, "ctrl+g");
+    }
+
+    #[test]
+    fn defaults_match_the_vim_preset() {
+        // A drifting serde default silently overrides the preset for users
+        // whose config omits the key.
+        let preset = Keymap::vim();
+        assert_eq!(parse_keydef(&preset.inspector_value_search.key), parse_keydef(&default_inspector_value_search().key));
+        assert_eq!(parse_keydef(&preset.inspector_hash_filter.key), parse_keydef(&default_inspector_hash_filter().key));
+        assert_eq!(parse_keydef(&preset.search_history_prev.key), parse_keydef(&default_search_history_prev().key));
+        assert_eq!(parse_keydef(&preset.search_history_next.key), parse_keydef(&default_search_history_next().key));
     }
 }

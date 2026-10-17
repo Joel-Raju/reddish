@@ -118,14 +118,14 @@ The original audit predated Phases A–E. The following were reported as
 | 2.6 | Inline string edit (`e` → TextAreaEditor) | ✅ Done | |
 | 2.7 | `$EDITOR` integration (temp file + spawn) | ❌ Missing | Only built-in editor exists |
 | 2.8 | List: `a` RPUSH, `p` LPUSH, `e` LSET, `D` LREM | ✅ Done | |
-| 2.9 | List: `i` insert before/after | ✅ Done | Two-step prompt → `LINSERT`; `i` / `ctrl+shift+i` |
+| 2.9 | List: `i` insert before/after | ✅ Done | Two-step prompt → `LINSERT`; bound to `I` / `ctrl+shift+i` |
 | 2.10 | Hash: `a` add, `e` edit, `D` delete | ✅ Done | |
 | 2.11 | Hash: bulk multi-select (`Space` + `Ctrl+D`) | ✅ Done | `hash_selected` + `InspectorAction::HashDelMany` (single HDEL) |
-| 2.12 | Hash: field filter (`/`) | ✅ Done | `hash_filter` substring match; Esc clears |
+| 2.12 | Hash: field filter (`Ctrl+f`) | ✅ Done | `hash_filter` substring match; Esc clears. Bound to `Ctrl+f` because `/` is the global search key |
 | 2.13 | Set: `a` SADD, `D` SREM | ✅ Done | |
 | 2.14 | Set: operations panel (union/inter/diff) | ✅ Done | Implemented in Key Browser (`u`/`i`/`x`) — inspector panel not ported |
 | 2.15 | ZSet: `a` ZADD, `e` edit score, `D` ZREM | ✅ Done | |
-| 2.16 | ZSet: range query (`q` → min/max prompt) | ✅ Done | In-memory score filter (`zset_score_min/max`) |
+| 2.16 | ZSet: range query (`Q` → min/max prompt) | ✅ Done | In-memory score filter (`zset_score_min/max`) |
 | 2.17 | Stream: `a` XADD, `D` XDEL | ✅ Done | |
 | 2.18 | Stream: follow mode (`F` auto-reload on tick) | ✅ Done | Tick-driven XRANGE from last id; `f` still toggles compact |
 | 2.19 | Stream: consumer group panel (`g`) | ✅ Done | `G` toggles split-pane groups table via `client.xgroups()` |
@@ -375,14 +375,14 @@ The original audit predated Phases A–E. The following were reported as
 | String: JSON syntax highlighting | ✅ Done | Per-token spans; invalid JSON falls back to plain text |
 | String: `$EDITOR` popup | ❌ Missing | |
 | List: `a` RPUSH, `p` LPUSH, `e` LSET, `D` LREM | ✅ Done | |
-| List: `i` insert before/after | ✅ Done | `LINSERT`; missing pivot reported instead of silently ignored |
+| List: `i` insert before/after (`I`) | ✅ Done | `LINSERT`; missing pivot reported instead of silently ignored |
 | Hash: `a` add, `e` edit, `D` delete | ✅ Done | `D` deletes the whole selection when one is active |
 | Hash: bulk multi-select | ✅ Done | `Space` toggles, `Ctrl+A` selects visible, `Ctrl+D` deletes in one HDEL |
-| Hash: field filter (`/`) | ✅ Done | Case-insensitive substring; empty/Esc clears |
+| Hash: field filter (`Ctrl+f`) | ✅ Done | Case-insensitive substring; empty/Esc clears |
 | Set: `a` SADD, `D` SREM | ✅ Done | |
 | Set: operations panel in inspector | ❌ Missing | Only in key browser |
 | ZSet: `a` ZADD, `e` edit score, `D` ZREM | ✅ Done | |
-| ZSet: range query | ✅ Done | |
+| ZSet: range query (`Q`) | ✅ Done | |
 | Stream: `a` XADD, `D` XDEL | ✅ Done | |
 | Stream: follow mode | ✅ Done | `F` toggles; tick reload throttled to ~1s; buffer capped at 5000 |
 | Stream: consumer group panel | ❌ Missing | |
@@ -479,7 +479,7 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 | Phase | Milestone | Status | What's Done | What's Missing |
 |-------|-----------|--------|-------------|----------------|
 | **A** | A1 — Set ops (`u`/`i`/`x`) | ✅ **Complete** | `SetOpType` enum, `set_store()` client method, two-step prompt in key_browser, keybindings, `BrowserAction::SetOp` wired in `app.rs` | Tests (prompt flow, integration) |
-| **A** | A2 — ZSet range query (`q`) | ✅ **Complete** | `zrangebyscore()` client method, `q` keybinding, two-step min/max prompt, in-memory score filtering in `render_zset`, filter display in title | Tests |
+| **A** | A2 — ZSet range query (`Q`) | ✅ **Complete** | `zrangebyscore()` client method, `Q` keybinding, two-step min/max prompt, in-memory score filtering in `render_zset`, filter display in title | Key was `q`; moved to `Q` because `q` quits from anywhere |
 | **A** | A3 — Stream consumer groups (`g`) | ✅ **Complete** | `inspector_stream_groups` keybinding (`G` / `ctrl+shift+m`), `InspectorAction::StreamToggleGroups`, split-pane render with groups table, `client.xgroups()` wiring, 5 unit tests | Keybinding is `G` not `g` (`g` taken by `inspector_goto_end`) |
 | **B** | B1 — PSUBSCRIBE + channel colors | ✅ **Complete** | `PubSubKind` enum, `PSubscribe`/`PUnsubscribe` actions, Pattern input mode, 8-color cycle round-robin per subscription, color-coded message tags, 6 unit tests | — |
 | **B** | B2 — PubSubClient as module | ✅ **Complete** | `src/redis/pubsub.rs` with `PubSubClient::spawn_subscription`, `PubSubKind`/`PubSubMessage` moved from UI to shared redis module | Only one active subscription stream supported at a time |
@@ -495,7 +495,7 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 
 #### Implementation Notes / Deviations from PLAN.md
 
-- **A2 (ZSet range query)**: PLAN.md specified an overlay approach with `InspectorAction::ZRangeQuery`. The actual implementation uses **in-memory filtering** (`zset_score_min`/`zset_score_max` state fields on `ValueInspector`) rather than re-fetching from Redis or rendering an overlay. The prompt sets state directly; no action is emitted to `app.rs`. This avoids an extra Redis round-trip and keeps the code simpler.
+- **A2 (ZSet range query)**: PLAN.md specified an overlay approach with `InspectorAction::ZRangeQuery`. The actual implementation uses **in-memory filtering** (`zset_score_min`/`zset_score_max` state fields on `ValueInspector`) rather than re-fetching from Redis or rendering an overlay. The prompt sets state directly; no action is emitted to `app.rs`. This avoids an extra Redis round-trip and keeps the code simpler. The key was moved from `q` to `Q` because `app.rs` checks `quit` before dispatching to the tab, so a `q`-bound inspector action was unreachable.
 - **A3 (Stream groups)**: Bound to `G` (vim) / `ctrl+shift+m` (emacs) rather than `g`, because `g` was already bound to `inspector_goto_end`.
 - **E1 (MONITOR)**: Bound to `Ctrl+M` as planned. `Ctrl+R` is taken by REPL raw mode, so the `--allow-monitor` gate is the only protection against accidental MONITOR connections.
 

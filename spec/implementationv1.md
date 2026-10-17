@@ -120,8 +120,8 @@ The original audit predated Phases A–E. The following were reported as
 | 2.8 | List: `a` RPUSH, `p` LPUSH, `e` LSET, `D` LREM | ✅ Done | |
 | 2.9 | List: `i` insert before/after | ❌ Missing | Not implemented |
 | 2.10 | Hash: `a` add, `e` edit, `D` delete | ✅ Done | |
-| 2.11 | Hash: bulk multi-select (`Space` + `Ctrl+D`) | ❌ Missing | Only single-field delete |
-| 2.12 | Hash: field filter (`/`) | ❌ Missing | Not implemented |
+| 2.11 | Hash: bulk multi-select (`Space` + `Ctrl+D`) | ✅ Done | `hash_selected` + `InspectorAction::HashDelMany` (single HDEL) |
+| 2.12 | Hash: field filter (`/`) | ✅ Done | `hash_filter` substring match; Esc clears |
 | 2.13 | Set: `a` SADD, `D` SREM | ✅ Done | |
 | 2.14 | Set: operations panel (union/inter/diff) | ✅ Done | Implemented in Key Browser (`u`/`i`/`x`) — inspector panel not ported |
 | 2.15 | ZSet: `a` ZADD, `e` edit score, `D` ZREM | ✅ Done | |
@@ -376,8 +376,9 @@ The original audit predated Phases A–E. The following were reported as
 | String: `$EDITOR` popup | ❌ Missing | |
 | List: `a` RPUSH, `p` LPUSH, `e` LSET, `D` LREM | ✅ Done | |
 | List: `i` insert before/after | ❌ Missing | |
-| Hash: `a` add, `e` edit, `D` delete | ✅ Done | |
-| Hash: bulk multi-select | ❌ Missing | |
+| Hash: `a` add, `e` edit, `D` delete | ✅ Done | `D` deletes the whole selection when one is active |
+| Hash: bulk multi-select | ✅ Done | `Space` toggles, `Ctrl+A` selects visible, `Ctrl+D` deletes in one HDEL |
+| Hash: field filter (`/`) | ✅ Done | Case-insensitive substring; empty/Esc clears |
 | Set: `a` SADD, `D` SREM | ✅ Done | |
 | Set: operations panel in inspector | ❌ Missing | Only in key browser |
 | ZSet: `a` ZADD, `e` edit score, `D` ZREM | ✅ Done | |

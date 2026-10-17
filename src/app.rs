@@ -1185,6 +1185,26 @@ impl App {
                     self.reload_inspector_value(&key).await;
                 }
             }
+            InspectorAction::HashDelMany { key, fields } => {
+                if self.readonly {
+                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    return;
+                }
+                if fields.is_empty() {
+                    return;
+                }
+                if let Some(ref client) = self.client {
+                    let refs: Vec<&str> = fields.iter().map(String::as_str).collect();
+                    if let Err(err) = client.hash_del(&key, &refs).await {
+                        self.error_message = Some(format!(
+                            "Failed to delete {} hash fields: {err}",
+                            refs.len()
+                        ));
+                        return;
+                    }
+                    self.reload_inspector_value(&key).await;
+                }
+            }
             InspectorAction::SetAdd { key, member } => {
                 if self.readonly {
                     self.error_message = Some("Read-only mode: write blocked".to_string());

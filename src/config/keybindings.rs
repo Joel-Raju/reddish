@@ -69,6 +69,10 @@ pub struct Keymap {
     pub inspector_list_prepend: KeyDef,
     #[serde(default = "default_inspector_hash_add")]
     pub inspector_hash_add: KeyDef,
+    #[serde(default = "default_inspector_hash_filter")]
+    pub inspector_hash_filter: KeyDef,
+    #[serde(default = "default_delete_selected")]
+    pub delete_selected: KeyDef,
     #[serde(default = "default_inspector_set_add")]
     pub inspector_set_add: KeyDef,
     #[serde(default = "default_inspector_zset_add")]
@@ -144,6 +148,8 @@ impl Keymap {
             inspector_list_push: KeyDef { key: "a".to_string() },
             inspector_list_prepend: KeyDef { key: "p".to_string() },
             inspector_hash_add: KeyDef { key: "a".to_string() },
+            inspector_hash_filter: KeyDef { key: "/".to_string() },
+            delete_selected: KeyDef { key: "ctrl+d".to_string() },
             inspector_set_add: KeyDef { key: "a".to_string() },
             inspector_zset_add: KeyDef { key: "a".to_string() },
             inspector_zset_range_query: KeyDef { key: "q".to_string() },
@@ -195,6 +201,8 @@ impl Keymap {
             inspector_list_push: KeyDef { key: "ctrl+shift+a".to_string() },
             inspector_list_prepend: KeyDef { key: "ctrl+shift+p".to_string() },
             inspector_hash_add: KeyDef { key: "ctrl+shift+h".to_string() },
+            inspector_hash_filter: KeyDef { key: "ctrl+shift+f".to_string() },
+            delete_selected: KeyDef { key: "ctrl+shift+d".to_string() },
             inspector_set_add: KeyDef { key: "ctrl+shift+s".to_string() },
             inspector_zset_add: KeyDef { key: "ctrl+shift+z".to_string() },
             inspector_zset_range_query: KeyDef { key: "ctrl+shift+q".to_string() },
@@ -246,6 +254,8 @@ impl Keymap {
             "inspector_list_push" => &self.inspector_list_push,
             "inspector_list_prepend" => &self.inspector_list_prepend,
             "inspector_hash_add" => &self.inspector_hash_add,
+            "inspector_hash_filter" => &self.inspector_hash_filter,
+            "delete_selected" => &self.delete_selected,
             "inspector_set_add" => &self.inspector_set_add,
             "inspector_zset_add" => &self.inspector_zset_add,
             "inspector_zset_range_query" => &self.inspector_zset_range_query,
@@ -422,6 +432,12 @@ fn default_inspector_list_prepend() -> KeyDef {
 }
 fn default_inspector_hash_add() -> KeyDef {
     KeyDef { key: "a".to_string() }
+}
+fn default_inspector_hash_filter() -> KeyDef {
+    KeyDef { key: "/".to_string() }
+}
+fn default_delete_selected() -> KeyDef {
+    KeyDef { key: "ctrl+d".to_string() }
 }
 fn default_inspector_set_add() -> KeyDef {
     KeyDef { key: "a".to_string() }

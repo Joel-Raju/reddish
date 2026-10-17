@@ -217,6 +217,8 @@ pub enum InspectorAction {
     ListRemove { key: String, value: String },
     HashSet { key: String, field: String, value: String },
     HashDel { key: String, field: String },
+    /// Bulk delete of every currently selected hash field in one HDEL.
+    HashDelMany { key: String, fields: Vec<String> },
     SetAdd { key: String, member: String },
     SetRem { key: String, member: String },
     ZAdd { key: String, score: f64, member: String },
@@ -235,6 +237,8 @@ pub enum PromptMode {
     HashAddField,
     HashAddValue(String),
     HashEdit(String, usize),
+    /// Field-name substring filter; an empty submission clears the filter.
+    HashFilter,
     SetAddMember,
     ZSetAddMember,
     ZSetAddScore(String),
@@ -259,6 +263,10 @@ pub struct ValueInspector {
     pub text_editor: Option<TextAreaEditor>,
     pub list_cursor: usize,
     pub hash_cursor: usize,
+    /// Field-name substring filter; empty means show all fields.
+    pub hash_filter: String,
+    /// Field names currently selected for bulk delete.
+    pub hash_selected: Vec<String>,
     pub set_cursor: usize,
     pub zset_cursor: usize,
     pub zset_sort_score_asc: bool,
@@ -293,6 +301,8 @@ impl ValueInspector {
             text_editor: None,
             list_cursor: 0,
             hash_cursor: 0,
+            hash_filter: String::new(),
+            hash_selected: Vec::new(),
             set_cursor: 0,
             zset_cursor: 0,
             zset_sort_score_asc: true,
@@ -319,6 +329,8 @@ impl ValueInspector {
         self.text_editor = None;
         self.list_cursor = 0;
         self.hash_cursor = 0;
+        self.hash_filter = String::new();
+        self.hash_selected.clear();
         self.set_cursor = 0;
         self.zset_cursor = 0;
         self.zset_sort_score_asc = true;
@@ -344,6 +356,8 @@ impl ValueInspector {
         self.text_editor = None;
         self.list_cursor = 0;
         self.hash_cursor = 0;
+        self.hash_filter = String::new();
+        self.hash_selected.clear();
         self.set_cursor = 0;
         self.zset_cursor = 0;
         self.zset_sort_score_asc = true;
@@ -366,6 +380,8 @@ impl ValueInspector {
         self.text_editor = None;
         self.list_cursor = 0;
         self.hash_cursor = 0;
+        self.hash_filter = String::new();
+        self.hash_selected.clear();
         self.set_cursor = 0;
         self.zset_cursor = 0;
         self.zset_sort_score_asc = true;
@@ -383,6 +399,48 @@ impl ValueInspector {
         self.encoding = encoding;
         self.memory_bytes = memory_bytes;
         self.ttl = ttl;
+    }
+
+    /// Field names currently visible under `hash_filter`, in value order.
+    pub fn visible_hash_fields(&self) -> Vec<&String> {
+        let Some(RedisValue::Hash(entries)) = self.value.as_ref() else {
+            return Vec::new();
+        };
+        if self.hash_filter.is_empty() {
+            entries.keys().collect()
+        } else {
+            let needle = self.hash_filter.to_lowercase();
+            entries
+                .keys()
+                .filter(|k| k.to_lowercase().contains(&needle))
+                .collect()
+        }
+    }
+
+    /// Toggle `field` in the bulk-selection set. Returns true if now selected.
+    pub fn toggle_hash_selection(&mut self, field: &str) -> bool {
+        match self.hash_selected.iter().position(|f| f == field) {
+            Some(idx) => {
+                self.hash_selected.remove(idx);
+                false
+            }
+            None => {
+                self.hash_selected.push(field.to_string());
+                true
+            }
+        }
+    }
+
+    pub fn clear_hash_selection(&mut self) {
+        self.hash_selected.clear();
+    }
+
+    pub fn select_all_visible_hash_fields(&mut self) {
+        self.hash_selected = self
+            .visible_hash_fields()
+            .into_iter()
+            .cloned()
+            .collect();
     }
 
     pub fn handle_event(&mut self, event: &Event) -> Option<InspectorAction> {
@@ -459,6 +517,16 @@ impl ValueInspector {
                         field,
                         value: val,
                     }),
+                    Some(PromptMode::HashFilter) => {
+                        // An empty submission clears the filter.
+                        self.hash_filter = if val.trim().is_empty() {
+                            String::new()
+                        } else {
+                            val
+                        };
+                        self.hash_cursor = 0;
+                        None
+                    }
                     Some(PromptMode::SetAddMember) => Some(InspectorAction::SetAdd {
                         key,
                         member: val,
@@ -517,6 +585,12 @@ impl ValueInspector {
                 };
             }
             if prompt.cancelled {
+                // Esc on the filter prompt clears the filter rather than
+                // leaving it applied.
+                if self.prompt_mode == Some(PromptMode::HashFilter) {
+                    self.hash_filter = String::new();
+                    self.hash_cursor = 0;
+                }
                 self.list_prompt = None;
                 self.prompt_mode = None;
             }
@@ -587,7 +661,9 @@ impl ValueInspector {
 
         // Hash-specific key handling
         if let Some(RedisValue::Hash(ref entries)) = self.value {
-            let fields: Vec<(&String, &String)> = entries.iter().collect();
+            // Navigation is scoped to the fields visible under the active
+            // filter, so the cursor cannot point at a hidden row.
+            let visible: Vec<String> = self.visible_hash_fields().into_iter().cloned().collect();
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
                     if self.hash_cursor > 0 {
@@ -595,34 +671,68 @@ impl ValueInspector {
                     }
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    if self.hash_cursor + 1 < fields.len() {
+                    if self.hash_cursor + 1 < visible.len() {
                         self.hash_cursor += 1;
                     }
                 }
                 _ => {}
             }
-            if keymap.matches("inspector_hash_add", key) {
+
+            let current = visible.get(self.hash_cursor).cloned();
+            let current_val = current.as_ref().and_then(|f| entries.get(f)).cloned();
+
+            if keymap.matches("inspector_hash_filter", key) {
+                self.list_prompt = Some(InputWidget::new(
+                    "Filter fields (empty = all, Esc clears)",
+                ));
+                self.prompt_mode = Some(PromptMode::HashFilter);
+            } else if keymap.matches("select_all", key) {
+                self.select_all_visible_hash_fields();
+            } else if keymap.matches("toggle_select", key) {
+                if let Some(field) = current {
+                    self.toggle_hash_selection(&field);
+                }
+            } else if keymap.matches("delete_selected", key) {
+                if !self.hash_selected.is_empty() {
+                    let action = InspectorAction::HashDelMany {
+                        key: self.key.clone().unwrap_or_default(),
+                        fields: std::mem::take(&mut self.hash_selected),
+                    };
+                    self.hash_cursor = 0;
+                    return Some(action);
+                }
+            } else if keymap.matches("inspector_hash_add", key) {
                 self.list_prompt = Some(InputWidget::new("Field name"));
                 self.prompt_mode = Some(PromptMode::HashAddField);
             } else if keymap.matches("delete", key) {
-                if let Some((field, _)) = fields.get(self.hash_cursor) {
+                if let Some(field) = current {
+                    // With a selection active, delete removes the whole
+                    // selection; otherwise just the field under the cursor.
+                    if !self.hash_selected.is_empty() {
+                        let action = InspectorAction::HashDelMany {
+                            key: self.key.clone().unwrap_or_default(),
+                            fields: std::mem::take(&mut self.hash_selected),
+                        };
+                        self.hash_cursor = 0;
+                        return Some(action);
+                    }
                     return Some(InspectorAction::HashDel {
                         key: self.key.clone().unwrap_or_default(),
-                        field: (*field).clone(),
+                        field,
                     });
                 }
             } else if keymap.matches("edit", key) {
-                if let Some((field, val)) = fields.get(self.hash_cursor) {
+                if let (Some(field), Some(val)) = (current, current_val) {
                     let mut prompt = InputWidget::new(format!("Value for '{}'", field));
-                    prompt.value = (*val).clone();
+                    prompt.value = val.clone();
                     prompt.cursor = val.len();
+                    self.prompt_mode = Some(PromptMode::HashEdit(field, self.hash_cursor));
                     self.list_prompt = Some(prompt);
-                    self.prompt_mode = Some(PromptMode::HashEdit((*field).clone(), self.hash_cursor));
                 }
             } else if keymap.matches("copy", key)
-                && let Some((_, val)) = fields.get(self.hash_cursor)
+                && let Some(val) = current_val
             {
-                return Some(InspectorAction::CopyValue((*val).clone()));
+                return Some(InspectorAction::CopyValue(val));
             }
         }
 
@@ -897,45 +1007,81 @@ impl ValueInspector {
     }
 
     fn render_hash(&self, frame: &mut Frame, area: Rect, entries: &indexmap::IndexMap<String, String>) {
-        let title = self
+        let visible = self.visible_hash_fields();
+        let total = entries.len();
+        let filtered = !self.hash_filter.is_empty();
+
+        let mut title = self
             .key
             .as_deref()
-            .map(|k| format!("Hash [{}] (fields={})", k, entries.len()))
-            .unwrap_or_else(|| format!("Hash (fields={})", entries.len()));
+            .map(|k| format!("Hash [{}] (fields={}", k, visible.len()))
+            .unwrap_or_else(|| format!("Hash (fields={}", visible.len()));
+        if filtered {
+            title.push_str(&format!(
+                "/{} filter:{}",
+                total, self.hash_filter
+            ));
+        } else if total != visible.len() {
+            title.push_str(&format!("/{total}"));
+        } else {
+            title.push(')');
+        }
+        if !self.hash_selected.is_empty() {
+            title.push_str(&format!(" [{} selected]", self.hash_selected.len()));
+        }
+        title.push(')');
 
-        let mut text = String::new();
-        for (i, (field, val)) in entries.iter().enumerate() {
-            let marker = if i == self.hash_cursor { ">" } else { " " };
-            text.push_str(&format!("{}{}: {}\n", marker, field, val));
+        let mut lines: Vec<Line> = Vec::new();
+        if visible.is_empty() {
+            lines.push(Line::from(Span::styled(
+                if filtered {
+                    "No fields match the filter"
+                } else {
+                    "No fields"
+                },
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        for (i, field) in visible.iter().enumerate() {
+            let cursor_marker = if i == self.hash_cursor { ">" } else { " " };
+            let selected_marker = if self.hash_selected.iter().any(|f| f == *field) {
+                "*"
+            } else {
+                " "
+            };
+            let val = entries.get(*field).map(String::as_str).unwrap_or("");
+            let style = if self.hash_cursor == i {
+                Style::default().add_modifier(ratatui::style::Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(
+                format!("{cursor_marker}{selected_marker}{field}: {val}"),
+                style,
+            )));
         }
 
         if let Some(ref prompt) = self.list_prompt {
-            let prompt_label = match self.prompt_mode {
-                Some(PromptMode::HashAddField) => "Field name: ",
-                Some(PromptMode::HashAddValue(ref f)) => &format!("Value for '{}': ", f),
-                Some(PromptMode::HashEdit(ref f, _)) => &format!("Value for '{}': ", f),
-                _ => "Input: ",
+            let label = match self.prompt_mode {
+                Some(PromptMode::HashAddField) => "Field name: ".to_string(),
+                Some(PromptMode::HashAddValue(ref f)) => format!("Value for '{f}': "),
+                Some(PromptMode::HashEdit(ref f, _)) => format!("Value for '{f}': "),
+                Some(PromptMode::HashFilter) => "Filter: ".to_string(),
+                _ => "Input: ".to_string(),
             };
-            text.push_str(&format!(
-                "\n{}{}",
-                prompt_label,
-                if prompt.cursor >= prompt.value.len() {
-                    format!("{}_", prompt.value)
-                } else {
-                    let before = &prompt.value[..prompt.cursor];
-                    let after = &prompt.value[prompt.cursor + 1..];
-                    format!("{}_{}{}", before, prompt.value.chars().nth(prompt.cursor).unwrap_or(' '), after)
-                }
-            ));
+            lines.push(Line::from(Span::styled(
+                format!("{label}{}", prompt_display(prompt)),
+                Style::default().fg(Color::Yellow),
+            )));
         }
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(title);
-        let paragraph = Paragraph::new(text)
-            .block(block)
-            .wrap(Wrap { trim: false });
-        frame.render_widget(paragraph, area);
+        let block = Block::default().borders(Borders::ALL).title(title);
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(block)
+                .wrap(Wrap { trim: false }),
+            area,
+        );
     }
 
     fn render_set(&self, frame: &mut Frame, area: Rect, members: &std::collections::BTreeSet<String>) {
@@ -1163,6 +1309,23 @@ impl ValueInspector {
     }
 }
 
+/// Render a prompt's value with a visible caret at the cursor position.
+fn prompt_display(prompt: &InputWidget) -> String {
+    let value = &prompt.value;
+    if prompt.cursor >= value.len() {
+        return format!("{value}_");
+    }
+    let mut out = String::with_capacity(value.len() + 1);
+    for (i, ch) in value.chars().enumerate() {
+        if i == prompt.cursor {
+            out.push('_');
+        }
+        out.push(ch);
+    }
+    out.push('_');
+    out
+}
+
 fn render_value_preview(value: &RedisValue, view_mode: &StringViewMode) -> String {
     match value {
         RedisValue::String(s) => view_mode.render(s),
@@ -1217,6 +1380,235 @@ fn render_value_preview(value: &RedisValue, view_mode: &StringViewMode) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    // ---- Hash filter + bulk select (2.11, 2.12) ----
+
+    fn hash_inspector() -> ValueInspector {
+        let mut inspector = ValueInspector::new();
+        let mut map = indexmap::IndexMap::new();
+        map.insert("user:name".to_string(), "ada".to_string());
+        map.insert("user:email".to_string(), "a@b.c".to_string());
+        map.insert("session:token".to_string(), "xyz".to_string());
+        inspector.set_value("h".to_string(), RedisValue::Hash(map));
+        inspector
+    }
+
+    fn press(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::from(code))
+    }
+
+    fn ctrl(c: char) -> Event {
+        Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL))
+    }
+
+    #[test]
+    fn visible_hash_fields_defaults_to_all() {
+        let inspector = hash_inspector();
+        assert_eq!(inspector.visible_hash_fields().len(), 3);
+    }
+
+    #[test]
+    fn hash_filter_narrows_visible_fields() {
+        let mut inspector = hash_inspector();
+        inspector.hash_filter = "user:".to_string();
+        let visible = inspector.visible_hash_fields();
+        assert_eq!(visible.len(), 2);
+        assert!(visible.iter().all(|f| f.starts_with("user:")));
+    }
+
+    #[test]
+    fn hash_filter_is_case_insensitive() {
+        let mut inspector = hash_inspector();
+        inspector.hash_filter = "USER".to_string();
+        assert_eq!(inspector.visible_hash_fields().len(), 2);
+    }
+
+    #[test]
+    fn hash_filter_with_no_matches_yields_empty() {
+        let mut inspector = hash_inspector();
+        inspector.hash_filter = "zzz".to_string();
+        assert!(inspector.visible_hash_fields().is_empty());
+    }
+
+    #[test]
+    fn hash_filter_prompt_applies_and_clears() {
+        let mut inspector = hash_inspector();
+        // Open the filter prompt.
+        assert!(inspector.handle_event(&press(KeyCode::Char('/'))).is_none());
+        assert_eq!(inspector.prompt_mode, Some(PromptMode::HashFilter));
+
+        inspector.list_prompt.as_mut().unwrap().value = "session".to_string();
+        inspector.handle_event(&press(KeyCode::Enter));
+
+        assert_eq!(inspector.hash_filter, "session");
+        assert_eq!(inspector.visible_hash_fields().len(), 1);
+    }
+
+    #[test]
+    fn hash_filter_empty_submission_clears_filter() {
+        let mut inspector = hash_inspector();
+        inspector.hash_filter = "user:".to_string();
+        inspector.handle_event(&press(KeyCode::Char('/')));
+        inspector.handle_event(&press(KeyCode::Enter));
+        assert_eq!(inspector.hash_filter, "");
+        assert_eq!(inspector.visible_hash_fields().len(), 3);
+    }
+
+    #[test]
+    fn hash_filter_reset_on_new_value() {
+        let mut inspector = hash_inspector();
+        inspector.hash_filter = "user".to_string();
+        inspector.hash_selected.push("user:name".to_string());
+        inspector.set_value("h2".to_string(), RedisValue::Hash(indexmap::IndexMap::new()));
+        assert_eq!(inspector.hash_filter, "");
+        assert!(inspector.hash_selected.is_empty());
+    }
+
+    #[test]
+    fn toggle_hash_selection_adds_and_removes() {
+        let mut inspector = hash_inspector();
+        assert!(inspector.toggle_hash_selection("user:name"));
+        assert_eq!(inspector.hash_selected, vec!["user:name".to_string()]);
+        assert!(!inspector.toggle_hash_selection("user:name"));
+        assert!(inspector.hash_selected.is_empty());
+    }
+
+    #[test]
+    fn space_toggles_field_under_cursor() {
+        let mut inspector = hash_inspector();
+        inspector.handle_event(&press(KeyCode::Char(' ')));
+        assert_eq!(inspector.hash_selected.len(), 1);
+        assert_eq!(inspector.hash_selected[0], "user:name");
+    }
+
+    #[test]
+    fn space_navigation_then_toggle_targets_second_field() {
+        let mut inspector = hash_inspector();
+        inspector.handle_event(&press(KeyCode::Char('j')));
+        inspector.handle_event(&press(KeyCode::Char(' ')));
+        assert_eq!(inspector.hash_selected, vec!["user:email".to_string()]);
+    }
+
+    #[test]
+    fn ctrl_a_selects_all_visible_fields() {
+        let mut inspector = hash_inspector();
+        inspector.handle_event(&ctrl('a'));
+        assert_eq!(inspector.hash_selected.len(), 3);
+    }
+
+    #[test]
+    fn ctrl_a_respects_active_filter() {
+        let mut inspector = hash_inspector();
+        inspector.hash_filter = "user:".to_string();
+        inspector.handle_event(&ctrl('a'));
+        assert_eq!(inspector.hash_selected.len(), 2);
+    }
+
+    #[test]
+    fn ctrl_d_emits_bulk_delete() {
+        let mut inspector = hash_inspector();
+        inspector.handle_event(&press(KeyCode::Char(' ')));
+        let action = inspector.handle_event(&ctrl('d'));
+        match action {
+            Some(InspectorAction::HashDelMany { key, fields }) => {
+                assert_eq!(key, "h");
+                assert_eq!(fields, vec!["user:name".to_string()]);
+            }
+            other => panic!("expected HashDelMany, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bulk_delete_clears_selection() {
+        let mut inspector = hash_inspector();
+        inspector.handle_event(&press(KeyCode::Char(' ')));
+        inspector.handle_event(&ctrl('d'));
+        assert!(inspector.hash_selected.is_empty());
+    }
+
+    #[test]
+    fn ctrl_d_with_empty_selection_is_a_no_op() {
+        let mut inspector = hash_inspector();
+        assert_eq!(inspector.handle_event(&ctrl('d')), None);
+    }
+
+    #[test]
+    fn delete_with_selection_removes_all_selected() {
+        let mut inspector = hash_inspector();
+        inspector.handle_event(&press(KeyCode::Char(' ')));
+        inspector.handle_event(&press(KeyCode::Char('j')));
+        inspector.handle_event(&press(KeyCode::Char(' ')));
+        match inspector.handle_event(&press(KeyCode::Char('D'))) {
+            Some(InspectorAction::HashDelMany { fields, .. }) => assert_eq!(fields.len(), 2),
+            other => panic!("expected HashDelMany, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn delete_without_selection_removes_single_field() {
+        let mut inspector = hash_inspector();
+        match inspector.handle_event(&press(KeyCode::Char('D'))) {
+            Some(InspectorAction::HashDel { key, field }) => {
+                assert_eq!(key, "h");
+                assert_eq!(field, "user:name");
+            }
+            other => panic!("expected HashDel, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hash_navigation_respects_filter_bounds() {
+        let mut inspector = hash_inspector();
+        inspector.hash_filter = "session".to_string();
+        // Only one visible field, so Down cannot advance past it.
+        inspector.handle_event(&press(KeyCode::Char('j')));
+        assert_eq!(inspector.hash_cursor, 0);
+        inspector.handle_event(&press(KeyCode::Char('k')));
+        assert_eq!(inspector.hash_cursor, 0);
+    }
+
+    #[test]
+    fn hash_edit_targets_filtered_field() {
+        let mut inspector = hash_inspector();
+        inspector.hash_filter = "session".to_string();
+        inspector.handle_event(&press(KeyCode::Char('e')));
+        match inspector.prompt_mode {
+            Some(PromptMode::HashEdit(field, _)) => assert_eq!(field, "session:token"),
+            other => panic!("expected HashEdit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn render_hash_with_filter_and_selection_does_not_panic() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut inspector = hash_inspector();
+        inspector.hash_filter = "user".to_string();
+        inspector.hash_selected.push("user:name".to_string());
+        terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+    }
+
+    #[test]
+    fn render_hash_with_empty_filter_result_does_not_panic() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut inspector = hash_inspector();
+        inspector.hash_filter = "zzz".to_string();
+        terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+    }
+
+    #[test]
+    fn render_empty_hash_does_not_panic() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut inspector = ValueInspector::new();
+        inspector.set_value("h".to_string(), RedisValue::Hash(indexmap::IndexMap::new()));
+        terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+    }
 
     // ---- String view modes (2.3, 2.4, 2.5, 2.24, 2.25, 2.26) ----
 

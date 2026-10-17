@@ -94,15 +94,13 @@ async fn test_scanner_scans_all_keys() {
         ..Default::default()
     };
     let client = RedisClientHandle::connect(&profile).await.unwrap();
-    // Clear any existing keys first
     let mut c = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
         _ => unreachable!("test always uses standalone"),
     };
-    redis::cmd("FLUSHDB")
-        .query_async::<()>(&mut c)
-        .await
-        .unwrap();
+    // Clear only this test's namespace. A FLUSHDB here would race with other
+    // tests in this binary, which share the same server and DB.
+    clear_test_namespace(&mut c, "test:m1:key*").await;
 
     for i in 0..500 {
         redis::cmd("SET")
@@ -127,11 +125,39 @@ async fn test_scanner_scans_all_keys() {
     assert_eq!(all_keys.len(), 500);
     assert!(scanner.finished);
 
-    // Cleanup
-    redis::cmd("FLUSHDB")
-        .query_async::<()>(&mut c)
-        .await
-        .unwrap();
+    // Cleanup, scoped to this test's namespace only.
+    clear_test_namespace(&mut c, "test:m1:key*").await;
+}
+
+/// Delete every key matching `pattern` via SCAN + DEL.
+///
+/// Tests in this binary run in parallel against one server, so namespace-scoped
+/// cleanup avoids the cross-test interference a `FLUSHDB` would cause.
+async fn clear_test_namespace(c: &mut redis::aio::MultiplexedConnection, pattern: &str) {
+    let mut cursor = 0u64;
+    loop {
+        let (next, keys): (u64, Vec<String>) = redis::cmd("SCAN")
+            .arg(cursor)
+            .arg("MATCH")
+            .arg(pattern)
+            .arg("COUNT")
+            .arg(500)
+            .query_async(c)
+            .await
+            .unwrap();
+        if !keys.is_empty() {
+            let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+            redis::cmd("DEL")
+                .arg(&refs)
+                .query_async::<()>(&mut *c)
+                .await
+                .unwrap();
+        }
+        cursor = next;
+        if cursor == 0 {
+            break;
+        }
+    }
 }
 
 #[tokio::test]
@@ -436,7 +462,6 @@ async fn test_redis_client_delete() {
 }
 
 #[tokio::test]
-#[ignore = "flaky in CI due to concurrent Redis test interference"]
 async fn test_redis_client_ttl() {
     let profile = ConnectionProfile {
         name: "test".to_string(),

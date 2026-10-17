@@ -106,6 +106,7 @@ fn test_info_dashboard_renders_without_panic() {
         keyspace_misses: Some(10),
         evicted_keys: Some(0),
         expired_keys: Some(0),
+        ..Default::default()
     };
     let _ = terminal.draw(|f| dashboard.render(f, f.area()));
 }
@@ -234,6 +235,7 @@ fn test_info_dashboard_render_with_slowlog_entries() {
         keyspace_misses: Some(100),
         evicted_keys: Some(1),
         expired_keys: Some(10),
+        ..Default::default()
     };
     let _ = terminal.draw(|f| dashboard.render(f, f.area()));
 }
@@ -278,6 +280,7 @@ fn test_info_dashboard_update_stats_seeds_buffers() {
         keyspace_misses: Some(10),
         evicted_keys: Some(0),
         expired_keys: Some(0),
+        ..Default::default()
     };
     dashboard.update_stats(stats);
     assert_eq!(dashboard.buf_memory.len(), 1);
@@ -305,6 +308,7 @@ fn test_info_dashboard_update_stats_delta() {
         keyspace_misses: Some(10),
         evicted_keys: Some(0),
         expired_keys: Some(0),
+        ..Default::default()
     };
     let stats2 = SystemStats {
         redis_version: Some("7.0".to_string()),
@@ -318,6 +322,7 @@ fn test_info_dashboard_update_stats_delta() {
         keyspace_misses: Some(15),
         evicted_keys: Some(0),
         expired_keys: Some(0),
+        ..Default::default()
     };
     dashboard.update_stats(stats1);
     dashboard.update_stats(stats2);
@@ -343,6 +348,7 @@ fn test_info_dashboard_update_stats_missing_fields() {
         keyspace_misses: None,
         evicted_keys: None,
         expired_keys: None,
+        ..Default::default()
     };
     dashboard.update_stats(stats);
     assert_eq!(dashboard.buf_memory.len(), 0);
@@ -368,6 +374,7 @@ fn test_info_dashboard_render_with_sparklines() {
         keyspace_misses: Some(10),
         evicted_keys: Some(0),
         expired_keys: Some(0),
+        ..Default::default()
     });
     dashboard.update_stats(SystemStats {
         redis_version: Some("7.0".to_string()),
@@ -381,6 +388,7 @@ fn test_info_dashboard_render_with_sparklines() {
         keyspace_misses: Some(15),
         evicted_keys: Some(0),
         expired_keys: Some(0),
+        ..Default::default()
     });
     let _ = terminal.draw(|f| dashboard.render(f, f.area()));
 }

@@ -205,10 +205,10 @@ The original audit predated Phases A–E. The following were reported as
 | 4.2 | Memory panel (used, peak, fragmentation) | ✅ Done | Sparkline + delta in 2×3 grid |
 | 4.3 | Clients panel with sparkline | ✅ Done | Sparkline + delta in 2×3 grid |
 | 4.4 | Stats panel (ops/sec, hits/misses) | ✅ Done | Sparkline + delta in 2×3 grid |
-| 4.5 | Keyspace bar chart | ❌ Missing | Bottom row is uptime/version text |
-| 4.6 | Replication panel | ❌ Missing | `cluster_master_addrs()` exists client-side; no UI |
-| 4.7 | CPU gauges | ❌ Missing | |
-| 4.8 | Persistence flags (RDB/AOF) | ❌ Missing | |
+| 4.5 | Keyspace bar chart | ✅ Done | One proportional bar per dbN + total |
+| 4.6 | Replication panel | ✅ Done | Role, replicas, link state, offset |
+| 4.7 | CPU gauges | ✅ Done | sys+usr side by side, green/yellow/red by load |
+| 4.8 | Persistence flags (RDB/AOF) | ✅ Done | RDB bgsave status, AOF on/off, rewrite, pending changes |
 | 4.9 | Delta from previous tick | ✅ Done | `update_stats()` computes diffs, `delta_label()` renders `(+N)` |
 | 4.10 | SlowLog table (id/time/duration/command) | ✅ Done | `SlowLogPanel` with `Table` widget |
 | 4.11 | SlowLog scroll | ✅ Done | `SlowLogPanel::handle_event` with j/k/Up/Down |
@@ -217,7 +217,7 @@ The original audit predated Phases A–E. The following were reported as
 | 4.14 | SlowLog CSV export (`e`) | ✅ Done | `SlowLogPanel::export_csv()` |
 | 4.15 | SlowLog threshold filter (`t`) | ✅ Done | Cycles None→1ms→10ms→100ms→1s |
 | 4.16 | `test_parse_info_valid` | ✅ Done | |
-| 4.17 | `test_parse_info_missing_field` | ❌ Missing | |
+| 4.17 | `test_parse_info_missing_field` | ✅ Done | Section-present/field-absent plus missing-section and empty input |
 | 4.18 | `test_sparkline_buffer_capacity` | ✅ Done | `ui::stats::sparkline` |
 | 4.19 | `test_sparkline_buffer_delta_insufficient_data` | ✅ Done | `test_delta_requires_two_samples` |
 | 4.20 | `test_stats_panel_update_populates_buffers` | ✅ Done | `test_info_dashboard_update_stats_seeds_buffers` |
@@ -438,10 +438,10 @@ The original audit predated Phases A–E. The following were reported as
 | Clients sparkline | ✅ Done | |
 | Ops/sec sparkline | ✅ Done | |
 | Hits/misses sparkline | ✅ Done | Rendered as hit-rate ratio + delta |
-| Keyspace bar chart | ❌ Missing | |
-| Replication panel | ❌ Missing | |
-| CPU gauges | ❌ Missing | |
-| Persistence flags | ❌ Missing | |
+| Keyspace bar chart | ✅ Done | Per-db proportional bars + total |
+| Replication panel | ✅ Done | Shares a cell with CPU gauges and persistence flags |
+| CPU gauges | ✅ Done | Two compact gauges on one line |
+| Persistence flags | ✅ Done | RDB/AOF status, rewrite in progress, pending changes |
 | Delta badges (`+1,234 cmd/s`) | ✅ Done | |
 
 ### 4.7 Slow Log Viewer
@@ -497,7 +497,7 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 | **B** | B1 — PSUBSCRIBE + channel colors | ✅ **Complete** | `PubSubKind` enum, `PSubscribe`/`PUnsubscribe` actions, Pattern input mode, 8-color cycle round-robin per subscription, color-coded message tags, 6 unit tests | — |
 | **B** | B2 — PubSubClient as module | ✅ **Complete** | `src/redis/pubsub.rs` with `PubSubClient::spawn_subscription`, `PubSubKind`/`PubSubMessage` moved from UI to shared redis module | Only one active subscription stream supported at a time |
 | **C** | C1 — SparklineBuffer | ✅ **Complete** | `SparklineBuffer` circular buffer (default 60 samples), `push()`, `to_vec()`, `latest()`, `delta()`. 9 tests | — |
-| **C** | C2 — 6-panel sparkline grid | ✅ **Complete** | `InfoDashboard` has `prev_stats` + 4 `SparklineBuffer`s, `update_stats()` computes deltas, renders 2×3 grid | Bottom row is uptime/version text — keyspace/replication/CPU/persistence tracked as M4 4.5–4.8 |
+| **C** | C2 — 6-panel sparkline grid | ✅ **Complete** | `InfoDashboard` has `prev_stats` + 4 `SparklineBuffer`s, `update_stats()` computes deltas, renders 2×3 grid | — |
 | **C** | C3 — Dedicated SlowLogPanel | ✅ **Complete** | `SlowLogPanel` in `src/ui/slowlog_panel/mod.rs`, `Table` widget with duration bars, CSV export (`e`), threshold filter (`t`), compact mode (`Space`). 13 unit tests | `SLOWLOG RESET` not wired |
 | **D** | D1 — `execute_raw` / `execute_pipeline` | ✅ **Complete** | Both on `RedisClientHandle`; REPL refactored onto them via `execute_repl_stage`. Tests: raw GET/SET/DEL, pipeline round-trip | — |
 | **D** | D2 — Fuzzy REPL autocomplete | ✅ **Complete** | `ReplAutocomplete` with nucleo `fuzzy_match_greedy`, 100+ Redis commands, key cache, Tab cycling, Enter accepts, Esc closes. 10 tests | Subcommand/argument hints |

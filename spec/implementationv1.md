@@ -21,8 +21,8 @@
 
 | Scenario | p50 | p99 | Budget |
 |----------|-----|-----|--------|
-| Render, all namespaces expanded | 11.1ms | 11.9ms | 16ms ✅ |
-| Render, default collapsed view | 0.14ms | 0.15ms | 16ms ✅ |
+| Render, all namespaces expanded | 7.0ms | 8.0ms | 16ms ✅ |
+| Render, default collapsed view | 0.14ms | 0.16ms | 16ms ✅ |
 | Peak RSS with all six value types loaded | — | 18.5MB | 50MB ✅ |
 
 The fully-expanded case is the worst case: render builds one `ListItem` per
@@ -342,7 +342,7 @@ The original audit predated Phases A–E. The following were reported as
 | 7.12 | Mouse scroll in key browser | ✅ Done | `handle_mouse_event` |
 | 7.13 | Mouse click tab switching | ✅ Done | Hit regions derived from the rendered tab labels |
 | 7.14 | Mouse panel focus + list index calc | ✅ Done | Geometry captured during render; click maps to a row via the list scroll offset |
-| 7.15 | `--bench` hidden flag (1000 renders, p99 < 16ms) | ✅ Done | `src/bench.rs`; p99 13.5ms fully expanded, 0.22ms collapsed |
+| 7.15 | `--bench` hidden flag (1000 renders, p99 < 16ms) | ✅ Done | `src/bench.rs`; p99 8.0ms fully expanded, 0.16ms collapsed |
 | 7.16 | `--profile-memory` hidden flag | ✅ Done | Peak RSS 22.7MB at 10K keys, budget 50MB |
 | 7.17 | `test_all_themes_have_all_fields` | ✅ Done | |
 | 7.18 | `test_theme_by_name` | ✅ Done | |

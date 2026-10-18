@@ -135,6 +135,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Key list rendering is windowed.** With every namespace expanded the browser
+  allocated a `ListItem` — a `String` and a `Style` — for all 10,001 rows on
+  every frame, while an 80x24 terminal draws about 20 of them. Only the visible
+  window is built now. Render p99 at 10K keys drops from 12.5ms to 8.0ms, which
+  is what brought the performance gate back inside its 16ms budget on shared CI
+  hardware.
+- **Dropped four unused dependencies** (`openssh`, `anyhow`, `tui-textarea`,
+  `xdg`). `openssh` was Unix-only and was the sole reason the crate did not
+  compile on Windows at all.
+
 - An unknown `--theme` is now rejected with the list of valid names instead of
   silently falling back to the default. `--help` previously advertised
   `solarized` and `gruvbox`, which were never real theme names.

@@ -60,14 +60,19 @@ jobs:
         run: cargo test --lib --bins
 
   # Redis-backed integration tests. The suite expects a server on port 16379
-  # (see tests/helpers/mod.rs and the module-level comments).
+  # (see the module-level comments in each integration file).
+  #
+  # Linux and macOS only. The Windows runner image does not ship Redis and the
+  # Chocolatey Redis packages are unmaintained, so provisioning one there is
+  # not reliable. Windows portability is still covered by the `build` job,
+  # which compiles the binary and runs `--help` on it.
   integration:
     name: integration (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -78,33 +83,27 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # Both the official action and a native install fallback; the action is
-      # the reliable path on Windows.
+      # Redis is preinstalled on both runner images used here; install only as a
+      # fallback, and fail loudly rather than silently if it is still missing.
       - name: Start Redis on port 16379
         shell: bash
         run: |
           if ! command -v redis-server >/dev/null 2>&1; then
-            echo "Installing Redis"
-            if [ "${{ runner.os }}" = "Windows" ]; then
-              choco install redis-64 -y --no-progress || true
-              # The choco package drops the binaries somewhere the runner's PATH
-              # does not necessarily cover.
-              export PATH="$PATH:/c/ProgramData/chocolatey/bin:/c/Program Files/Redis"
+            echo "redis-server not found; installing"
+            if [ "${{ runner.os }}" = "macOS" ]; then
+              brew install redis
             else
-              brew install redis || sudo apt-get install -y redis-server
+              sudo apt-get update && sudo apt-get install -y redis-server
             fi
-          else
-            echo "Using preinstalled redis-server"
           fi
 
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            # Windows Redis has no --daemonize: it is not a fork, so the
-            # option is rejected outright. Background it instead.
-            redis-server --port 16379 --loglevel warning --save "" &
-          else
-            redis-server --port 16379 --daemonize yes --loglevel warning --save ''
+          if ! command -v redis-server >/dev/null 2>&1; then
+            echo "::error::redis-server is still unavailable on this runner;"
+            echo "::error::the integration suite needs one on port 16379"
+            exit 1
           fi
 
+          redis-server --port 16379 --daemonize yes --loglevel warning --save ''
           for i in $(seq 1 30); do
             if redis-cli -p 16379 ping 2>/dev/null | grep -q PONG; then
               echo "Redis is up"
@@ -112,7 +111,7 @@ jobs:
             fi
             sleep 1
           done
-          echo "Redis failed to start"
+          echo "::error::Redis did not answer PING on port 16379"
           exit 1
 
       - name: Run integration tests

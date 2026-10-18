@@ -517,10 +517,29 @@ impl KeyBrowser {
 
         // Key list
         let rows = self.sorted_rows();
+
+        // Only build the rows that can actually be drawn.
+        //
+        // With every namespace expanded this is 10,001 rows, of which an 80x24
+        // terminal shows about 20. Allocating a ListItem — a String and a Style
+        // — for each was the entire frame cost: ~15ms to draw 20 rows.
+        let list_area = chunks[1];
+        let inner_height = list_area.height.saturating_sub(2).max(1) as usize;
+        let max_offset = rows.len().saturating_sub(inner_height);
+        // Scroll the minimum amount that keeps the cursor on screen, matching
+        // what ratatui would do with a zero offset.
+        let cursor = self.cursor.min(rows.len().saturating_sub(1));
+        let offset = cursor
+            .saturating_sub(inner_height.saturating_sub(1))
+            .min(max_offset);
+
         let items: Vec<ListItem> = rows
             .iter()
+            .skip(offset)
+            .take(inner_height)
             .enumerate()
-            .map(|(i, row)| {
+            .map(|(local, row)| {
+                let i = offset + local;
                 let indent = "  ".repeat(row.depth);
                 let sel = if let Some(ref key) = row.key
                     && self.selected.contains(&key.full_name)
@@ -543,8 +562,11 @@ impl KeyBrowser {
             })
             .collect();
 
-        let mut state = ListState::default();
-        state.select(Some(self.cursor));
+        // The selection index is relative to the slice we passed, not to the
+        // full row list.
+        let state = ListState::default()
+            .with_offset(offset)
+            .with_selected(Some(cursor.saturating_sub(offset)));
 
         let block = Block::default()
             .borders(Borders::ALL)
@@ -555,15 +577,15 @@ impl KeyBrowser {
                 self.tree.total_keys(),
                 self.sort_mode.label()
             ));
-        let list_area = chunks[1];
         let list = List::new(items).block(block);
-        frame.render_stateful_widget(list, list_area, &mut state);
+        frame.render_stateful_widget(list, list_area, &mut state.clone());
 
-        // Read the offset back after rendering: ratatui recomputes it to keep
-        // the selection visible, and that is what a click must be offset by.
+        // The offset is computed above rather than read back from ratatui: we hand it
+        // a pre-windowed slice, so the click mapping needs the full-list offset
+        // we chose, which is `offset`.
         let info = BrowserRenderInfo {
             list_area: list_area.inner(ratatui::layout::Margin::new(1, 1)),
-            scroll_offset: state.offset(),
+            scroll_offset: offset,
             row_count: rows.len(),
         };
 
@@ -785,5 +807,177 @@ mod render_info_tests {
             .unwrap();
         assert_eq!(info.row_count, 0);
         assert_eq!(info.row_at(5, 5), None);
+    }
+}
+
+#[cfg(test)]
+mod windowing_tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn key(name: &str) -> KeyEntry {
+        KeyEntry {
+            full_name: name.to_string(),
+            redis_type: None,
+            ttl: None,
+        }
+    }
+
+    fn browser_with(count: usize) -> KeyBrowser {
+        let mut b = KeyBrowser::new(':', 10_000);
+        for i in 0..count {
+            b.tree.insert(key(&format!("ns:key{i:05}")));
+        }
+        b.tree.expand_all();
+        b
+    }
+
+    fn info_at(browser: &mut KeyBrowser, w: u16, h: u16) -> BrowserRenderInfo {
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+        let mut info = BrowserRenderInfo::default();
+        terminal
+            .draw(|f| info = browser.render(f, f.area()))
+            .unwrap();
+        info
+    }
+
+    /// At the top of the list nothing is scrolled.
+    #[test]
+    fn no_scroll_when_the_cursor_is_at_the_top() {
+        let mut b = browser_with(500);
+        b.cursor = 0;
+        let info = info_at(&mut b, 80, 24);
+        assert_eq!(info.scroll_offset, 0);
+        assert_eq!(info.row_count, 501);
+    }
+
+    /// The offset must place the cursor on screen, which is the whole point.
+    #[test]
+    fn the_cursor_is_always_inside_the_window() {
+        let mut b = browser_with(500);
+        // 24 rows minus 2 for the border and breadcrumb leaves ~21 visible.
+        let visible = 24 - 2 - 1;
+        for cursor in [0usize, 1, 20, 21, 100, 250, 499, 500] {
+            b.cursor = cursor;
+            let info = info_at(&mut b, 80, 24);
+            let end = info.scroll_offset + visible;
+            assert!(
+                cursor >= info.scroll_offset && cursor < end,
+                "cursor {cursor} outside window {}..{end} (offset {})",
+                info.scroll_offset,
+                info.scroll_offset
+            );
+        }
+    }
+
+    /// The window must not scroll further than there are rows to show.
+    #[test]
+    fn offset_never_exceeds_the_available_rows() {
+        let mut b = browser_with(500);
+        b.cursor = 500;
+        let info = info_at(&mut b, 80, 24);
+        let visible = 24 - 2 - 1;
+        assert_eq!(
+            info.scroll_offset,
+            501 - visible,
+            "the last page must be aligned to the end, not scrolled past it"
+        );
+    }
+
+    /// A short list must never produce an offset: there is nothing to scroll.
+    #[test]
+    fn short_list_never_scrolls() {
+        let mut b = browser_with(3);
+        for cursor in 0..4 {
+            b.cursor = cursor;
+            let info = info_at(&mut b, 80, 24);
+            assert_eq!(
+                info.scroll_offset, 0,
+                "a 4-row list scrolled at cursor {cursor}"
+            );
+        }
+    }
+
+    /// An empty browser must not underflow the offset computation.
+    #[test]
+    fn empty_browser_does_not_scroll_or_panic() {
+        let mut b = KeyBrowser::new(':', 10_000);
+        b.cursor = 0;
+        let info = info_at(&mut b, 80, 24);
+        assert_eq!(info.scroll_offset, 0);
+        assert_eq!(info.row_count, 0);
+    }
+
+    /// Degenerate terminal heights must not produce a nonsense offset.
+    #[test]
+    fn tiny_terminals_do_not_break_the_offset() {
+        let mut b = browser_with(200);
+        for (w, h) in [(1u16, 1u16), (1, 10), (10, 1), (3, 3), (0, 0)] {
+            b.cursor = 150;
+            let info = info_at(&mut b, w, h);
+            assert!(
+                info.scroll_offset <= info.row_count,
+                "{w}x{h}: offset {} exceeds {}",
+                info.scroll_offset,
+                info.row_count
+            );
+        }
+    }
+
+    /// The point of the optimization: frame cost must not scale with the number
+    /// of rows, only with what is drawn.
+    #[test]
+    fn render_cost_does_not_scale_with_the_row_count() {
+        let time = |count: usize| {
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            let b = browser_with(count);
+            let start = std::time::Instant::now();
+            for _ in 0..20 {
+                terminal
+                    .draw(|f| {
+                        b.render(f, f.area());
+                    })
+                    .unwrap();
+            }
+            start.elapsed()
+        };
+
+        let small = time(100);
+        let large = time(10_000);
+
+        assert!(
+            large < small * 5,
+            "20 frames over 100 rows took {small:?} but over 10,000 rows took \
+             {large:?}: the window is not being applied"
+        );
+    }
+
+    /// The click mapping must still agree with what is drawn.
+    #[test]
+    fn clicks_on_a_scrolled_view_map_to_the_row_shown() {
+        let mut b = browser_with(500);
+        b.cursor = 300;
+        let info = info_at(&mut b, 80, 24);
+        assert!(info.scroll_offset > 0);
+
+        // The top visible row must be the first row of the window, not row 0.
+        assert_eq!(
+            info.row_at(info.list_area.x, info.list_area.y),
+            Some(info.scroll_offset)
+        );
+    }
+
+    /// Growing the window must never show a blank list.
+    #[test]
+    fn every_window_offset_has_rows_behind_it() {
+        let mut b = browser_with(120);
+        let mut seen = std::collections::BTreeSet::new();
+        for cursor in (0..120).step_by(7) {
+            b.cursor = cursor;
+            let info = info_at(&mut b, 80, 24);
+            assert!(info.scroll_offset < info.row_count);
+            seen.insert(info.scroll_offset);
+        }
+        assert!(seen.len() > 3, "offsets should vary: {seen:?}");
     }
 }

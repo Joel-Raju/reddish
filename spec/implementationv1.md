@@ -10,11 +10,11 @@
 
 | Metric | Value |
 |--------|-------|
-| **Overall v1 Completion** | 100% |
-| **Milestones with Gate Tests** | 8 (M0–M8) — all satisfied |
-| **Gate Tests Passing** | 100% of specified tests exist and pass |
+| **Overall v1 Completion** | ~95% |
+| **Milestones with Gate Tests** | 8 (M0–M8) — all feature gates satisfied |
+| **Gate Tests Passing** | ~80% of specified test rows exist and pass |
 | **Major Architecture Pieces** | 100% implemented |
-| **UI Polish / Advanced Features** | 97% implemented |
+| **UI Polish / Advanced Features** | 90% implemented |
 | **Performance / Benchmarks** | 100% implemented |
 
 ### Measured Performance (release build, 10K keys)
@@ -33,15 +33,44 @@ cheaper. See `src/bench.rs`; run `reddish-tui --bench` and
 
 ### Remaining Gaps
 
-Every milestone gate (M0–M8) and every planned sub-milestone is implemented and
-tested; there are no ❌ rows left in the milestone tables.
+Every feature milestone (M0–M8) and every planned sub-milestone is
+implemented. What remains is **specified test rows that do not exist yet**,
+plus a handful of small spec features. Counted honestly rather than claimed
+complete — see the tables above for the authoritative per-row status.
 
-One optional deviation remains:
+**Missing test rows (16)** — grouped by milestone:
 
-- **Full-screen editor popup** — `TextAreaEditor` renders inline in the value
-  pane rather than as a separate overlay. The spec's E2 notes called for popup
-  chrome. The external `$EDITOR` path is unaffected, and when `$EDITOR` is set
-  the TUI does fully surrender the terminal.
+| Milestone | Rows | Nature |
+|-----------|------|--------|
+| M0 | 0.13, 0.14, 0.15 | Stress tests: concurrent mutation, extreme resize, CLI flag conflicts |
+| M2 | 2.31, 2.32, 2.33 | Stream XADD/XDEL round-trip; `InputWidget` typing and cancel |
+| M3 | 3.15–3.17, 3.24, 3.26 | REPL history push/browse/persistence/cap; pipeline partial error; `Ctrl+L` clear |
+| M4 | 4.23 | `SLOWLOG RESET` (the feature is also missing, not just the test) |
+| M5 | 5.16, 5.19–5.21 | PSUBSCRIBE integration; search finds keys, progress transitions, query re-score |
+| M6 | 6.14 | SSH tunnel live test — needs a real SSH daemon, correctly deferred |
+
+Note 0.15 (CLI flag conflicts) is substantially covered by the keybinding
+collision test added in this work; the remaining gap is CLI-level rather than
+keymap-level.
+
+**Missing small features (9)**
+
+| Item | Ref | Nature |
+|------|-----|---------|
+| REPL argument/subcommand hints | 3.8 | `CONFIG <Tab>` suggests `GET`/`SET`/`REWRITE` |
+| Pub/Sub auto-scroll follow | 5.5 | Tail the message pane as messages arrive |
+| `SLOWLOG RESET` + `SLOWLOG LEN` | 4.7 | Client methods and keybinding; `LEN` in the panel header |
+| Key browser sort by memory | 4.2 | `MEMORY USAGE` is per-key and lazily fetched, so this needs a design decision |
+| Show/hide TTL and memory columns | 4.2 | Column toggles |
+| Inline key rename in the inspector | 4.3 | `r` is rename in the key browser only |
+| Set operations panel in the inspector | 4.3 | Union/intersect/diff exist in the browser only |
+| Config `editor` key | 4.9 | `$EDITOR` is read from the environment but not overridable in `config.toml` |
+| Config `max_value_display_bytes` | 4.9 | Parsed by neither the struct nor the renderers; large values are not truncated |
+
+**Deviation from spec**
+
+- `TextAreaEditor` renders inline in the value pane rather than as a full-screen
+  popup. The external `$EDITOR` path is unaffected.
 
 ### Corrected Since Last Audit (2026-05-27)
 
@@ -525,9 +554,11 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 
 ### Next Recommended Sub-Milestone
 
-None. Every milestone gate (M0–M8) and every planned sub-milestone is
-implemented and tested. The single remaining deviation from the spec is that
-`TextAreaEditor` renders inline rather than as a full-screen popup.
+**The 16 missing test rows** (see Remaining Gaps above). They are the highest
+value remaining work because each pins behaviour that currently has no
+regression cover, and several exercise code paths that turned out to hold real
+bugs when first tested — the FLUSHDB interference and the unreachable key
+bindings were both found this way.
 
 ---
 
@@ -540,14 +571,21 @@ optional features below plus the residual M8 test rows.
 
 ### P2 — Should Have for v1
 
-1. **Full-screen editor popup** (E2) — `TextAreaEditor` renders inline in the value pane; the spec described a popup overlay. The only remaining deviation from the spec.
+1. **The 16 missing test rows listed above** — highest value, since each pins
+   behaviour that currently has no regression cover.
+2. **`SLOWLOG RESET` + `SLOWLOG LEN`** (4.7) — the only missing slowlog feature.
+3. **Config `editor` and `max_value_display_bytes`** (4.9) — both are documented
+   config keys that are silently ignored today.
+4. **Full-screen editor popup** (E2) — `TextAreaEditor` renders inline in the value pane; the only remaining deviation from the spec.
 
 ### P3 — Nice to Have / Post-v1
 
 1. **REPL subcommand/argument hints** (M3 3.8) — `CONFIG <Tab>` suggests `GET`, `SET`, `REWRITE`.
 2. **Pub/Sub auto-scroll `f` toggle** (M5 5.5) — Follow-tail behavior for the message pane.
-3. **SSH tunnel live integration test** (M6) — Acceptable to leave `#[ignore]`.
-4. **Nested REPL response indentation** (M3 3.11) — `redis_value_to_string` is flat; nested arrays would read better indented.
+3. **Key browser memory sort and column toggles** (4.2) — needs a decision on lazily-fetched `MEMORY USAGE`.
+4. **Inspector-side set operations, inline rename** (4.3) — both exist in the key browser.
+5. **SSH tunnel live integration test** (M6) — Correctly deferred; needs a real SSH daemon.
+6. **Nested REPL response indentation** (M3 3.11) — `redis_value_to_string` is flat; nested arrays would read better indented.
 
 ---
 

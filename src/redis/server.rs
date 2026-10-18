@@ -36,6 +36,52 @@ pub struct SlowLogEntry {
     pub name: Option<String>,
 }
 
+/// Clear the server's slow log.
+pub async fn slowlog_reset(client: &RedisClientHandle) -> Result<()> {
+    match &client.client {
+        crate::redis::client::RedisClient::Standalone(c) => {
+            let mut conn = c.clone();
+            redis::cmd("SLOWLOG")
+                .arg("RESET")
+                .query_async::<()>(&mut conn)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("SLOWLOG RESET failed: {e}"))?;
+        }
+        crate::redis::client::RedisClient::Cluster(c) => {
+            let mut conn = c.clone();
+            redis::cmd("SLOWLOG")
+                .arg("RESET")
+                .query_async::<()>(&mut conn)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("SLOWLOG RESET failed: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Number of entries currently held in the slow log.
+pub async fn slowlog_len(client: &RedisClientHandle) -> Result<usize> {
+    let raw: usize = match &client.client {
+        crate::redis::client::RedisClient::Standalone(c) => {
+            let mut conn = c.clone();
+            redis::cmd("SLOWLOG")
+                .arg("LEN")
+                .query_async(&mut conn)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("SLOWLOG LEN failed: {e}"))?
+        }
+        crate::redis::client::RedisClient::Cluster(c) => {
+            let mut conn = c.clone();
+            redis::cmd("SLOWLOG")
+                .arg("LEN")
+                .query_async(&mut conn)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("SLOWLOG LEN failed: {e}"))?
+        }
+    };
+    Ok(raw)
+}
+
 pub async fn slowlog_get(client: &RedisClientHandle, count: usize) -> Result<Vec<SlowLogEntry>> {
     let raw: Vec<Vec<redis::Value>> = match &client.client {
         crate::redis::client::RedisClient::Standalone(c) => {

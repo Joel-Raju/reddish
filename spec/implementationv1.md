@@ -108,9 +108,9 @@ The original audit predated Phases A–E. The following were reported as
 | 0.10 | `test_event_tick_fires` | ✅ Done | |
 | 0.11 | `test_app_quits_on_q` | ⚠️ Partial | Only asserts `should_quit = true` directly, no event loop test |
 | 0.12 | `test_render_does_not_panic` | ✅ Done | |
-| 0.13 | `test_concurrent_mutation` | ❌ Missing | Not in codebase |
-| 0.14 | `test_resize_extreme_sizes` | ❌ Missing | Not in codebase |
-| 0.15 | `test_cli_flag_conflicts` | ❌ Missing | Not in codebase |
+| 0.13 | `test_concurrent_mutation` | ✅ Done | 8 workers x 50 mutations + interleaved renders |
+| 0.14 | `test_resize_extreme_sizes` | ✅ Done | 7 sizes incl. 0x0, plus all four tabs at 3x3 |
+| 0.15 | `test_cli_flag_conflicts` | ✅ Done | All 16 boolean combinations; duplicates rejected |
 
 **M0 Verdict:** ~90% complete. Core scaffolding is solid; a few extra stress tests are missing.
 
@@ -187,9 +187,9 @@ The original audit predated Phases A–E. The following were reported as
 | 2.28 | `test_hash_set_del` | ✅ Done | |
 | 2.29 | `test_set_add_rem` | ✅ Done | |
 | 2.30 | `test_zset_add_update_remove` | ✅ Done | |
-| 2.31 | `test_stream_xadd_xdel` | ❌ Missing | No integration test for XADD/XDEL round-trip |
-| 2.32 | `test_input_widget_typing` | ❌ Missing | |
-| 2.33 | `test_input_widget_cancel` | ❌ Missing | |
+| 2.31 | `test_stream_xadd_xdel` | ✅ Done | Round-trip, multi-field, selective delete, XDEL idempotency |
+| 2.32 | `test_input_widget_typing` | ✅ Done | Insert-at-cursor, delete, arrows, Home/End, Ctrl+U |
+| 2.33 | `test_input_widget_cancel` | ✅ Done | Esc cancels without submitting; reset clears state |
 | 2.34 | `test_value_inspector_renders_all_types` | ⚠️ Partial | Individual type render tests exist, no single loop over all variants |
 
 **M2 Verdict:** ~85% complete. All six Redis types are viewable and editable. Missing: JSON syntax highlighting, `$EDITOR` integration, hash bulk ops, stream follow/groups, and a handful of unit tests.
@@ -214,9 +214,9 @@ The original audit predated Phases A–E. The following were reported as
 | 3.12 | Raw mode toggle (`Ctrl+R`) | ✅ Done | `repl.raw_mode` |
 | 3.13 | `Ctrl+L` clears output | ✅ Done | |
 | 3.14 | Command palette (`Ctrl+P`) | ✅ Done | `ui/command_palette/mod.rs` |
-| 3.15 | `test_history_push_and_browse` | ❌ Missing | |
-| 3.16 | `test_history_persistence` | ❌ Missing | |
-| 3.17 | `test_history_max_1000` | ❌ Missing | |
+| 3.15 | `test_history_push_and_browse` | ✅ Done | Order, dedup, prev/next, clamping, cursor reset |
+| 3.16 | `test_history_persistence` | ✅ Done | Save/load round-trip, whitespace handling, mkdir |
+| 3.17 | `test_history_max_1000` | ✅ Done | 1100 pushes cap at 1000, newest survives |
 | 3.18 | `test_autocomplete_command_prefix` | ✅ Done | `test_repl_tab_autocomplete` |
 | 3.19 | `test_autocomplete_key_arg` | ✅ Done | `test_repl_key_cache_suggestions` |
 | 3.20 | `test_pipeline_parsing` | ✅ Done | |
@@ -225,7 +225,7 @@ The original audit predated Phases A–E. The following were reported as
 | 3.23 | `test_execute_pipeline` | ✅ Done | `test_execute_pipeline_round_trip` in m1 |
 | 3.24 | `test_execute_pipeline_partial_error` | ❌ Missing | |
 | 3.25 | `test_repl_renders_without_panic` | ✅ Done | |
-| 3.26 | `test_repl_ctrl_l_clears_output` | ❌ Missing | |
+| 3.26 | `test_repl_ctrl_l_clears_output` | ✅ Done | Clears output pane, preserves command history |
 
 **M3 Verdict:** ~70% complete. REPL is functional for daily use. Autocomplete is the biggest gap — it needs a real fuzzy engine (`nucleo`) and key-name awareness. Several integration tests for raw execution are missing.
 
@@ -257,7 +257,7 @@ The original audit predated Phases A–E. The following were reported as
 | 4.20 | `test_stats_panel_update_populates_buffers` | ✅ Done | `test_info_dashboard_update_stats_seeds_buffers` |
 | 4.21 | `test_stats_panel_renders_without_panic` | ✅ Done | `test_info_dashboard_render_with_sparklines` |
 | 4.22 | `test_slowlog_get` | ✅ Done | |
-| 4.23 | `test_slowlog_reset` | ❌ Missing | |
+| 4.23 | `test_slowlog_reset` | ✅ Done | RESET empties the log; idempotent; `SLOWLOG LEN` reported |
 | 4.24 | `test_slowlog_csv_export` | ✅ Done | `test_slowlog_panel_export_csv` |
 | 4.25 | `test_slowlog_renders_duration_bars` | ✅ Done | `test_slowlog_panel_render_with_entries_does_not_panic` |
 
@@ -284,12 +284,12 @@ The original audit predated Phases A–E. The following were reported as
 | 5.13 | Search progress indicator | ✅ Done | Title shows `[scanning… N candidates]` |
 | 5.14 | Value search (`Ctrl+Shift+F`) | ✅ Done | Filters members of list/hash/set/zset; second press clears |
 | 5.15 | `test_pubsub_subscribe_receive` | ✅ Done | |
-| 5.16 | `test_pubsub_psubscribe` | ❌ Missing | |
+| 5.16 | `test_pubsub_psubscribe` | ✅ Done | Pattern receives matches, ignores non-matching channels |
 | 5.17 | `test_pubsub_message_cap` | ✅ Done | |
 | 5.18 | `test_pubsub_panel_renders_without_panic` | ✅ Done | |
-| 5.19 | `test_global_search_finds_matching_keys` | ❌ Missing | |
-| 5.20 | `test_global_search_progress_transitions` | ❌ Missing | |
-| 5.21 | `test_search_set_query_rescores` | ❌ Missing | |
+| 5.19 | `test_global_search_finds_matching_keys` | ✅ Done | Live keys, ranking, regex mode, glob superset check |
+| 5.20 | `test_global_search_progress_transitions` | ✅ Done | Idle -> scanning -> done; empty batch is the sentinel |
+| 5.21 | `test_search_set_query_rescores` | ✅ Done | Re-query re-ranks instead of accumulating |
 | 5.22 | `test_search_overlay_renders_without_panic` | ✅ Done | |
 
 **M5 Verdict:** ~75% complete. Pub/Sub is usable for channel subscribe/publish. Search works but is a simple substring scan rather than a fuzzy ranked experience.
@@ -313,7 +313,7 @@ The original audit predated Phases A–E. The following were reported as
 | 6.11 | `test_standalone_connect` | ✅ Done | |
 | 6.12 | `test_password_ref_env` | ✅ Done | |
 | 6.13 | `test_parse_cluster_nodes` | ✅ Done | |
-| 6.14 | `test_ssh_tunnel_opens_and_closes` | ❌ Missing | Requires live SSH; marked ignore in spec |
+| 6.14 | `test_ssh_tunnel_opens_and_closes` | ⚠️ Deferred | Needs a live SSH daemon; correctly not written |
 | 6.15 | `test_tls_config_roundtrip` | ✅ Done | |
 | 6.16 | `test_reconnect_backoff_sequence` | ✅ Done | |
 | 6.17 | `test_readonly_mode_blocks_writes` | ✅ Done | |
@@ -367,7 +367,7 @@ The original audit predated Phases A–E. The following were reported as
 | 8.3 | Security: temp files via `NamedTempFile` | ✅ Done | `edit_in_external_editor` uses NamedTempFile; removed on drop |
 | 8.4 | `cargo audit` clean | ✅ Done | 0 vulnerabilities; 5 documented warnings in `audit.toml` |
 | 8.5 | `cargo publish --dry-run` | ✅ Done | `cargo package` clean; metadata + LICENSE added |
-| 8.6 | README with quick-start + keybindings | ❌ Missing | |
+| 8.6 | README with quick-start + keybindings | ✅ Done | Quick start, usage, full vim/emacs tables, `$EDITOR` |
 | 8.7 | CHANGELOG | ✅ Done | `CHANGELOG.md` follows Keep a Changelog |
 | 8.8 | Man page (`clap_mangen`) | ✅ Done | `man/redis-tui.1`; generated from `cli::Cli`, staleness-tested |
 | 8.9 | `test_cargo_audit_clean` | ✅ Done | Verified locally; enforced by the `security` CI job |
@@ -417,7 +417,7 @@ The original audit predated Phases A–E. The following were reported as
 | Memory usage | ✅ Done | |
 | `e` edit / `Esc` cancel / `Ctrl+S` save | ✅ Done | |
 | `y` yank as JSON | ⚠️ Partial | Copies raw value; not serialized JSON for complex types |
-| `?` help overlay | ❌ Missing | |
+| `?` help overlay | ✅ Done | Generated from the active keymap, not hardcoded |
 | String: Raw/JSON/Base64/Hex tabs | ✅ Done | |
 | String: JSON syntax highlighting | ✅ Done | Per-token spans; invalid JSON falls back to plain text |
 | String: `$EDITOR` popup | ✅ Done | Suspends the TUI around the subprocess |
@@ -432,7 +432,7 @@ The original audit predated Phases A–E. The following were reported as
 | ZSet: range query (`Q`) | ✅ Done | |
 | Stream: `a` XADD, `D` XDEL | ✅ Done | |
 | Stream: follow mode | ✅ Done | `F` toggles; tick reload throttled to ~1s; buffer capped at 5000 |
-| Stream: consumer group panel | ❌ Missing | |
+| Stream: consumer group panel | ✅ Done | Rendered beside the entries; toggled with `G` |
 | Stream: XTRIM | ✅ Done | `Ctrl+T` two-step MAXLEN/MINID prompt |
 
 ### 4.4 REPL
@@ -483,11 +483,11 @@ The original audit predated Phases A–E. The following were reported as
 | Spec Requirement | Status | Gap |
 |-----------------|--------|-----|
 | Table: id/time/duration/command | ✅ Done | |
-| `SLOWLOG RESET` (`Ctrl+R`) | ❌ Missing | |
-| `SLOWLOG LEN` in header | ❌ Missing | |
-| Duration bar chart | ❌ Missing | |
-| Filter by minimum duration | ❌ Missing | |
-| Export to CSV (`x`) | ❌ Missing | |
+| `SLOWLOG RESET` (`R`) | ✅ Done | `slowlog_reset` + `InfoAction::ResetSlowLog` |
+| `SLOWLOG LEN` in header | ✅ Done | `server_len` shown as `[N on server]` |
+| Duration bar chart | ✅ Done | `SlowLogPanel::duration_bar`, relative to the longest entry |
+| Filter by minimum duration | ✅ Done | `threshold_us`, cycled with `T` |
+| Export to CSV (`E`) | ✅ Done | `SlowLogPanel::export_csv` |
 
 ### 4.8 Search & Filter
 

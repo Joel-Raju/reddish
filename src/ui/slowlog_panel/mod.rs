@@ -18,6 +18,8 @@ pub enum SlowLogAction {
     ToggleCompact,
     CycleThreshold,
     ExportCsv,
+    /// Clear the server's slow log.
+    Reset,
 }
 
 pub struct SlowLogPanel {
@@ -26,6 +28,8 @@ pub struct SlowLogPanel {
     pub compact_mode: bool,
     pub threshold_us: Option<u64>,
     pub last_export_path: Option<String>,
+    /// Server-reported `SLOWLOG LEN`, shown in the header when known.
+    pub server_len: Option<usize>,
 }
 
 impl Default for SlowLogPanel {
@@ -42,6 +46,7 @@ impl SlowLogPanel {
             compact_mode: false,
             threshold_us: None,
             last_export_path: None,
+            server_len: None,
         }
     }
 
@@ -97,6 +102,9 @@ impl SlowLogPanel {
                 KeyCode::Char('e') | KeyCode::Char('E') => {
                     return Some(SlowLogAction::ExportCsv);
                 }
+                KeyCode::Char('R') => {
+                    return Some(SlowLogAction::Reset);
+                }
                 _ => {}
             }
         }
@@ -126,7 +134,7 @@ impl SlowLogPanel {
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
         let filtered = self.filtered_entries();
-        let title = if let Some(th) = self.threshold_us {
+        let mut title = if let Some(th) = self.threshold_us {
             if self.compact_mode {
                 format!(" Slow Log (compact, >= {}µs) ", th)
             } else {
@@ -137,6 +145,11 @@ impl SlowLogPanel {
         } else {
             " Slow Log ".to_string()
         };
+        // SLOWLOG LEN is the server's count, which can exceed what is loaded.
+        if let Some(len) = self.server_len {
+            title = title.trim_end().to_string();
+            title.push_str(&format!(" [{len} on server] "));
+        }
 
         if filtered.is_empty() {
             let para = ratatui::widgets::Paragraph::new("No slow log entries")
@@ -378,6 +391,70 @@ mod tests {
         let mut panel = SlowLogPanel::new();
         panel.set_entries((0..20).map(|i| sample_entry(i, 100 * (i + 1))).collect());
         let _ = terminal.draw(|f| panel.render(f, f.area()));
+    }
+
+    #[test]
+    fn test_slowlog_reset_key_emits_action() {
+        let mut panel = SlowLogPanel::new();
+        let action = panel.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('R'))));
+        assert_eq!(action, Some(SlowLogAction::Reset));
+    }
+
+    #[test]
+    fn test_slowlog_reset_does_not_clobber_local_entries() {
+        // The reset is a server operation; app.rs clears the local list only
+        // after the server confirms.
+        let mut panel = SlowLogPanel::new();
+        panel.set_entries(vec![sample_entry(1, 100)]);
+        panel.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('R'))));
+        assert_eq!(panel.entries.len(), 1);
+    }
+
+    #[test]
+    fn test_slowlog_lower_threshold_letter_is_not_reset() {
+        let mut panel = SlowLogPanel::new();
+        // `r` is not bound; only capital `R` resets.
+        assert_eq!(
+            panel.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('r')))),
+            None
+        );
+    }
+
+    #[test]
+    fn test_slowlog_header_shows_server_len() {
+        let backend = ratatui::backend::TestBackend::new(60, 8);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut panel = SlowLogPanel::new();
+        panel.set_entries(vec![sample_entry(1, 100)]);
+        panel.server_len = Some(42);
+        let _ = terminal.draw(|f| panel.render(f, f.area()));
+
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("42 on server"), "got: {text}");
+    }
+
+    #[test]
+    fn test_slowlog_header_omits_len_when_unknown() {
+        let backend = ratatui::backend::TestBackend::new(60, 8);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut panel = SlowLogPanel::new();
+        panel.set_entries(vec![sample_entry(1, 100)]);
+        let _ = terminal.draw(|f| panel.render(f, f.area()));
+
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(!text.contains("on server"), "got: {text}");
     }
 
     #[test]

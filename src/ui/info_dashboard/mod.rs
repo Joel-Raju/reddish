@@ -186,6 +186,8 @@ pub enum InfoAction {
     ScrollUp,
     ScrollDown,
     ExportCsv,
+    /// Clear the server's slow log (SLOWLOG RESET).
+    ResetSlowLog,
 }
 
 pub struct InfoDashboard {
@@ -267,7 +269,8 @@ impl InfoDashboard {
                 SlowLogAction::ScrollUp => Some(InfoAction::ScrollUp),
                 SlowLogAction::ScrollDown => Some(InfoAction::ScrollDown),
                 SlowLogAction::ExportCsv => Some(InfoAction::ExportCsv),
-                _ => None,
+                SlowLogAction::Reset => Some(InfoAction::ResetSlowLog),
+                SlowLogAction::ToggleCompact | SlowLogAction::CycleThreshold => None,
             };
         }
         None

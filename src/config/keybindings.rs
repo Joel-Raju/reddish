@@ -459,7 +459,17 @@ impl Keymap {
         }
     }
 
-    pub fn matches(&self, action: &str, event: &KeyEvent) -> bool {
+    /// The key definition bound to `action`, if the action is known.
+    ///
+    /// Exposed so the help overlay can be generated from the keymap actually
+    /// in use rather than from a hardcoded string. The previous hardcoded text
+    /// listed the vim bindings unconditionally, so it was simply wrong for
+    /// anyone using the emacs preset.
+    pub fn binding(&self, action: &str) -> Option<&str> {
+        Some(self.resolve(action)?.key.as_str())
+    }
+
+    fn resolve(&self, action: &str) -> Option<&KeyDef> {
         let def = match action {
             "nav_up" => &self.nav_up,
             "nav_down" => &self.nav_down,
@@ -515,7 +525,14 @@ impl Keymap {
             "search_toggle_mode" => &self.search_toggle_mode,
             "search_history_prev" => &self.search_history_prev,
             "search_history_next" => &self.search_history_next,
-            _ => return false,
+            _ => return None,
+        };
+        Some(def)
+    }
+
+    pub fn matches(&self, action: &str, event: &KeyEvent) -> bool {
+        let Some(def) = self.resolve(action) else {
+            return false;
         };
         let (expected_code, expected_mods) = parse_keydef(&def.key);
         event.code == expected_code && event.modifiers == expected_mods

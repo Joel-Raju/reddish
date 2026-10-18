@@ -21,7 +21,7 @@ use crate::config::keybindings::Keymap;
 use crate::events::{Event, EventHandler};
 use crate::redis::client::{RedisClientHandle, RedisType};
 use crate::redis::pubsub::{PubSubClient, PubSubKind, PubSubMessage};
-use crate::redis::server::slowlog_get;
+use crate::redis::server::{slowlog_get, slowlog_len, slowlog_reset};
 use crate::ui::command_palette::{CommandPalette, PaletteAction};
 use crate::ui::connection_screen::{ConnectionScreen, ConnectionScreenAction};
 use crate::ui::info_dashboard::{InfoDashboard, SystemStats};
@@ -910,17 +910,21 @@ impl App {
             }
             Tab::Info => {
                 use crate::ui::info_dashboard::InfoAction;
-                if let Some(InfoAction::ExportCsv) =
-                    self.info_dashboard.handle_event(&Event::Key(key))
-                {
-                    match self.info_dashboard.slowlog_panel.export_csv() {
-                        Ok(path) => {
-                            self.error_message = Some(format!("Exported slowlog to {path}"));
-                        }
-                        Err(err) => {
-                            self.error_message = Some(format!("Failed to export CSV: {err}"));
+                match self.info_dashboard.handle_event(&Event::Key(key)) {
+                    Some(InfoAction::ExportCsv) => {
+                        match self.info_dashboard.slowlog_panel.export_csv() {
+                            Ok(path) => {
+                                self.error_message = Some(format!("Exported slowlog to {path}"));
+                            }
+                            Err(err) => {
+                                self.error_message = Some(format!("Failed to export CSV: {err}"));
+                            }
                         }
                     }
+                    Some(InfoAction::ResetSlowLog) => {
+                        self.reset_slowlog().await;
+                    }
+                    _ => {}
                 }
             }
             Tab::PubSub => {
@@ -1182,6 +1186,26 @@ impl App {
             }
             Err(err) => {
                 self.error_message = Some(format!("Failed to refresh SLOWLOG: {err}"));
+            }
+        }
+        // The server's count can exceed what we loaded; show it in the header.
+        self.info_dashboard.slowlog_panel.server_len = slowlog_len(client).await.ok();
+    }
+
+    /// Clear the server's slow log and drop the loaded entries.
+    async fn reset_slowlog(&mut self) {
+        let Some(client) = self.client.as_ref() else {
+            self.error_message = Some("Not connected".to_string());
+            return;
+        };
+        match slowlog_reset(client).await {
+            Ok(()) => {
+                self.info_dashboard.slowlog_panel.set_entries(Vec::new());
+                self.info_dashboard.slowlog_panel.server_len = Some(0);
+                self.error_message = Some("Slow log reset".to_string());
+            }
+            Err(err) => {
+                self.error_message = Some(format!("Failed to reset SLOWLOG: {err}"));
             }
         }
     }
@@ -1779,6 +1803,130 @@ impl App {
         }
     }
 
+    /// Human-readable form of a stored key definition.
+    ///
+    /// Key definitions are stored canonically in lowercase (`ctrl+p`,
+    /// `alt+Down`), which reads poorly in an overlay. Special-case the
+    /// modifier names and capitalise single-character keys; anything else is
+    /// passed through.
+    fn display_key(key: &str) -> String {
+        const MODIFIERS: &[(&str, &str)] =
+            &[("ctrl+", "Ctrl+"), ("alt+", "Alt+"), ("shift+", "Shift+")];
+
+        let lowered = key.to_lowercase();
+        for (lower, display) in MODIFIERS {
+            if let Some(rest) = lowered.strip_prefix(lower) {
+                return format!("{display}{}", Self::capitalize_named_key(rest));
+            }
+        }
+        Self::capitalize_named_key(key)
+    }
+
+    /// Title-case named keys (`enter` → `Enter`) while leaving bare character
+    /// keys lowercase.
+    ///
+    /// Capitalising a single letter would suggest Shift is held: `Q` and `q`
+    /// are different keys, and displaying the wrong one misleads.
+    fn capitalize_named_key(name: &str) -> String {
+        // A bare character has no name to title-case.
+        if name.chars().count() == 1 {
+            return name.to_string();
+        }
+
+        // Split on '+' so "alt+Down" inside "ctrl+alt+Down" keeps its own
+        // modifier casing consistent.
+        let mut parts: Vec<String> = name.split('+').map(|p| p.to_string()).collect();
+        if let Some(last) = parts.last_mut() {
+            let mut chars = last.chars();
+            if let Some(first) = chars.next() {
+                *last = first.to_uppercase().collect::<String>() + chars.as_str();
+            }
+        }
+        if parts.len() > 1 {
+            let modifier_count = parts.len() - 1;
+            for p in parts.iter_mut().take(modifier_count) {
+                *p = match p.to_lowercase().as_str() {
+                    "ctrl" => "Ctrl".to_string(),
+                    "alt" => "Alt".to_string(),
+                    "shift" => "Shift".to_string(),
+                    other => other.to_string(),
+                };
+            }
+        }
+        parts.join("+")
+    }
+
+    /// The help overlay body, generated from the keymap actually in use.
+    ///
+    /// Every row is looked up rather than hardcoded: a preset that rebinds
+    /// `quit` or `palette` would otherwise show text describing keys that do
+    /// nothing. Actions missing from a user-supplied keymap are skipped rather
+    /// than shown as a blank row.
+    fn help_text(&self) -> String {
+        let rows: &[(&str, &str)] = &[
+            ("quit", "Quit"),
+            ("help", "Help (this overlay)"),
+            ("palette", "Command palette"),
+            ("filter", "Global search"),
+            ("repl_overlay", "One-line REPL prompt"),
+            ("tab_keys", "Keys tab"),
+            ("tab_repl", "REPL tab"),
+            ("tab_info", "Info tab"),
+            ("tab_pubsub", "Pub/Sub tab"),
+            ("nav_up", "Move up"),
+            ("nav_down", "Move down"),
+            ("nav_left", "Collapse / go back"),
+            ("nav_right", "Expand / go forward"),
+            ("confirm", "Open / select"),
+            ("cancel", "Close / clear"),
+            ("refresh", "Refresh from server"),
+            ("new_key", "New key"),
+            ("rename_key", "Rename key"),
+            ("edit", "Edit value  (strings)"),
+            ("delete", "Delete key"),
+            ("delete_selected", "Delete selected"),
+            ("toggle_select", "Toggle selection"),
+            ("select_all", "Select all"),
+            ("duplicate_key", "Duplicate key"),
+            ("cycle_sort", "Cycle sort order"),
+            ("set_ttl", "Set TTL"),
+            // Shares a key with `edit`: the inspector claims it for strings,
+            // so this only fires when the selected key holds something else.
+            ("expire", "Expire immediately  (non-strings)"),
+            ("inspector_toggle_view", "Toggle inspector view mode"),
+            ("inspector_hash_filter", "Filter hash fields"),
+            ("inspector_value_search", "Search inside value"),
+            ("inspector_stream_follow", "Toggle stream follow"),
+            ("inspector_stream_groups", "Toggle consumer groups"),
+            ("search_toggle_mode", "Toggle search regex mode"),
+            ("search_execute", "Run search"),
+            ("search_close", "Close search"),
+        ];
+
+        let mut text = String::from("Keyboard shortcuts\n\n");
+        let mut width = 0usize;
+        let mut lines: Vec<(String, &str)> = Vec::new();
+        for (action, description) in rows {
+            if let Some(key) = self.keymap.binding(action) {
+                let shown = Self::display_key(key);
+                width = width.max(shown.len());
+                lines.push((shown, description));
+            }
+        }
+        for (key, description) in lines {
+            // Pad to the widest key so descriptions line up in a column.
+            let pad = " ".repeat(width.saturating_sub(key.len()) + 2);
+            text.push_str(&format!("{key}{pad}{description}\n"));
+        }
+        text.push_str(
+            "\nCtrl+C forces quit from any prompt.\n\
+             Mouse: click a tab to switch, click a key row to select.\n\
+             Bindings follow the active keymap preset; see README for the full\n\
+             per-type inspector keys.",
+        );
+        text
+    }
+
     pub fn render(&self, frame: &mut Frame) {
         let main_layout = Layout::default()
             .direction(Direction::Vertical)
@@ -1849,12 +1997,11 @@ impl App {
         }
 
         if self.mode() == &AppMode::Help {
-            let help_text = "Keyboard Shortcuts:\n\n1-4: Switch tabs\nq: Quit\n?: Help\nEnter: Select key\nj/k or arrows: Navigate\nCtrl+P: Command palette\nD: Delete";
             let area = centered_rect(70, 60, frame.area());
             let block = Block::default()
                 .borders(Borders::ALL)
                 .title("Help (Esc to close)");
-            let paragraph = Paragraph::new(help_text).block(block);
+            let paragraph = Paragraph::new(self.help_text()).block(block);
             frame.render_widget(paragraph, area);
         }
 
@@ -2533,5 +2680,164 @@ mod tests {
 
         let _ = redis.kill();
         let _ = redis.wait();
+    }
+}
+
+#[cfg(test)]
+mod help_overlay_tests {
+    use super::*;
+    use crate::config::keybindings::Keymap;
+
+    fn help_for(keymap: Keymap) -> String {
+        let mut app = App::new(Config::default());
+        app.keymap = keymap;
+        app.help_text()
+    }
+
+    /// The overlay must describe the bindings in use, not a hardcoded list.
+    #[test]
+    fn help_reflects_the_vim_preset() {
+        let text = help_for(Keymap::vim());
+        assert!(text.contains("quit"), "missing action labels: {text}");
+        assert!(
+            text.lines()
+                .any(|l| l.starts_with('q') && l.contains("Quit")),
+            "vim binds quit to q:\n{text}"
+        );
+        assert!(
+            text.lines()
+                .any(|l| l.contains("Ctrl+p") && l.contains("palette")),
+            "vim binds the palette to Ctrl+P:\n{text}"
+        );
+    }
+
+    /// This is the bug that motivated generating the text: the emacs preset
+    /// rebinds quit and palette, and the old hardcoded string was wrong for it.
+    #[test]
+    fn help_reflects_the_emacs_preset() {
+        let text = help_for(Keymap::emacs());
+        assert!(
+            text.lines()
+                .any(|l| l.contains("Ctrl+c") && l.contains("Quit")),
+            "emacs binds quit to Ctrl+C:\n{text}"
+        );
+        assert!(
+            text.lines()
+                .any(|l| l.contains("Ctrl+x") && l.contains("palette")),
+            "emacs binds the palette to Ctrl+X:\n{text}"
+        );
+        assert!(
+            !text
+                .lines()
+                .any(|l| l.starts_with('q') && l.contains("Quit")),
+            "q must not be advertised as quit under the emacs preset:\n{text}"
+        );
+    }
+
+    #[test]
+    fn help_lists_every_action_that_is_bound() {
+        let text = help_for(Keymap::vim());
+        for action in [
+            "quit",
+            "help",
+            "palette",
+            "filter",
+            "tab_keys",
+            "new_key",
+            "delete",
+            "inspector_toggle_view",
+            "search_toggle_mode",
+        ] {
+            let label = keymap_label(action);
+            assert!(
+                text.contains(label),
+                "action {action} ({label}) missing from help:\n{text}"
+            );
+        }
+    }
+
+    fn keymap_label(action: &str) -> &'static str {
+        match action {
+            "quit" => "Quit",
+            "help" => "Help",
+            "palette" => "palette",
+            "filter" => "search",
+            "tab_keys" => "Keys tab",
+            "new_key" => "New key",
+            "delete" => "Delete key",
+            "inspector_toggle_view" => "inspector view",
+            "search_toggle_mode" => "regex mode",
+            other => panic!("unmapped action {other}"),
+        }
+    }
+
+    /// An unknown action must be skipped, not rendered as a blank row.
+    #[test]
+    fn help_skips_unknown_actions() {
+        assert_eq!(Keymap::vim().binding("no_such_action"), None);
+        assert!(!Keymap::vim().matches(
+            "no_such_action",
+            &crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('x'))
+        ));
+    }
+
+    #[test]
+    fn binding_returns_the_configured_key_string() {
+        let vim = Keymap::vim();
+        assert_eq!(vim.binding("quit"), Some("q"));
+        assert_eq!(vim.binding("help"), Some("?"));
+    }
+
+    /// The overlay must fit the area it is drawn into without being truncated
+    /// to nothing, and must not panic at small terminal sizes.
+    #[test]
+    fn help_overlay_renders_without_panic() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        for (w, h) in [(100u16, 40u16), (70, 24), (20, 10), (3, 3)] {
+            let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+            let mut app = App::new(Config::default());
+            app.mode_stack.push(AppMode::Help);
+            terminal.draw(|f| app.render(f)).expect("renders");
+        }
+    }
+
+    #[test]
+    fn help_overlay_actually_renders_bindings() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
+        let mut app = App::new(Config::default());
+        app.mode_stack.push(AppMode::Help);
+        terminal.draw(|f| app.render(f)).unwrap();
+
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("Keyboard shortcuts"), "got: {text}");
+        assert!(text.contains("Quit"), "got: {text}");
+    }
+}
+
+#[cfg(test)]
+mod help_text_snapshot {
+    use super::*;
+    use crate::config::keybindings::Keymap;
+
+    /// Not an assertion so much as a readable dump: run with `--nocapture` to
+    /// see exactly what a user sees for each preset.
+    #[test]
+    fn dump_help_for_each_preset() {
+        for (name, keymap) in [("vim", Keymap::vim()), ("emacs", Keymap::emacs())] {
+            let mut app = App::new(Config::default());
+            app.keymap = keymap;
+            println!("=== {name} ===\n{}", app.help_text());
+        }
     }
 }

@@ -190,6 +190,18 @@ pub enum Tab {
     PubSub,
 }
 
+/// Geometry captured during the last render so mouse clicks can be resolved.
+///
+/// Ratatui is immediate-mode: nothing is retained between frames, so click
+/// handling needs to know where widgets actually landed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RenderGeometry {
+    /// Where the tab bar was drawn.
+    pub tab_bar: ratatui::layout::Rect,
+    /// Key list geometry, including its scroll offset.
+    pub key_list: crate::ui::key_browser::BrowserRenderInfo,
+}
+
 pub struct App {
     pub should_quit: bool,
     pub config: Config,
@@ -221,6 +233,14 @@ pub struct App {
     reconnect_attempt: u32,
     pub pending_delete_key: Option<String>,
     pub overlay_input: Option<crate::ui::widgets::input::InputWidget>,
+    /// Widget positions from the most recent render, for mouse hit-testing.
+    ///
+    /// Stored in a `Cell` because `render` takes `&self` (ratatui's immediate
+    /// mode) yet still needs to publish where widgets landed.
+    geometry: std::cell::Cell<RenderGeometry>,
+    /// Set when a mouse click switches to the Info tab; `render` cannot await,
+    /// so the refresh is deferred to the next tick.
+    info_refresh_pending: bool,
 }
 
 impl App {
@@ -258,7 +278,19 @@ impl App {
             reconnect_attempt: 0,
             pending_delete_key: None,
             overlay_input: None,
+            geometry: std::cell::Cell::new(RenderGeometry::default()),
+            info_refresh_pending: false,
         }
+    }
+
+    /// Geometry captured by the most recent render.
+    pub fn geometry(&self) -> RenderGeometry {
+        self.geometry.get()
+    }
+
+    /// Test seam: seed the geometry a render would have produced.
+    pub fn set_geometry_for_test(&self, geometry: RenderGeometry) {
+        self.geometry.set(geometry);
     }
 
     async fn handle_pubsub_action(&mut self, action: PubSubAction) {
@@ -436,19 +468,40 @@ impl App {
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
-                if mouse.row == 0 {
-                    self.active_tab = if mouse.column < 20 {
-                        Tab::Keys
-                    } else if mouse.column < 35 {
-                        Tab::Repl
-                    } else if mouse.column < 50 {
-                        Tab::Info
-                    } else {
-                        Tab::PubSub
-                    };
-                }
+                self.handle_left_click(mouse.row, mouse.column);
             }
             _ => {}
+        }
+    }
+
+    /// Resolve a left click against the geometry captured by the last render.
+    fn handle_left_click(&mut self, row: u16, column: u16) {
+        // Tab bar takes priority: it sits above every other widget.
+        if let Some(tab) = tab_bar::tab_at(self.geometry().tab_bar, column, row) {
+            self.active_tab = match tab {
+                tab_bar::Tab::Keys => Tab::Keys,
+                tab_bar::Tab::Repl => Tab::Repl,
+                tab_bar::Tab::Info => Tab::Info,
+                tab_bar::Tab::PubSub => Tab::PubSub,
+            };
+            if matches!(self.active_tab, Tab::Info) {
+                // The keyboard path refreshes on entry. `render` cannot await,
+                // so the same refresh is deferred to the next tick.
+                self.info_refresh_pending = true;
+            }
+            return;
+        }
+
+        // Clicking a key row focuses and selects it. Only meaningful on the
+        // Keys tab, where the list is actually drawn.
+        if self.active_tab != Tab::Keys || self.mode() != &AppMode::Normal {
+            return;
+        }
+        if let Some(index) = self.geometry().key_list.row_at(column, row) {
+            let total = self.key_browser.sorted_rows().len();
+            if index < total && index != self.key_browser.cursor {
+                self.key_browser.cursor = index;
+            }
         }
     }
 
@@ -877,6 +930,9 @@ impl App {
         self.drain_monitor_messages();
         self.status_bar.key_count = self.key_browser.tree.total_keys();
         if self.active_tab == Tab::Info && self.tick_count.is_multiple_of(4) {
+            self.refresh_info_dashboard().await;
+        }
+        if std::mem::take(&mut self.info_refresh_pending) {
             self.refresh_info_dashboard().await;
         }
         self.stream_follow_tick().await;
@@ -1581,6 +1637,13 @@ impl App {
         };
         tab_bar::render_tab_bar(frame, main_layout[0], tab);
 
+        // Capture geometry as it is laid out so the next mouse event can be
+        // hit-tested against the real widget positions.
+        let mut geometry = RenderGeometry {
+            tab_bar: main_layout[0],
+            key_list: Default::default(),
+        };
+
         let content_layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
@@ -1588,7 +1651,7 @@ impl App {
 
         match self.active_tab {
             Tab::Keys => {
-                self.key_browser.render(frame, content_layout[0]);
+                geometry.key_list = self.key_browser.render(frame, content_layout[0]);
                 self.value_inspector.render(frame, content_layout[1]);
             }
             Tab::Repl => {
@@ -1649,6 +1712,8 @@ impl App {
             let area = centered_rect(70, 70, frame.area());
             screen.render(frame, area);
         }
+
+        self.geometry.set(geometry);
     }
 }
 
@@ -1753,6 +1818,182 @@ mod tests {
             tls: None,
             ssh_tunnel: None,
         }
+    }
+
+    #[test]
+    fn geometry_defaults_to_nothing_clickable() {
+        let app = App::new(Config::default());
+        let geometry = app.geometry();
+        assert_eq!(geometry.tab_bar.height, 0);
+        assert_eq!(geometry.key_list.row_at(5, 5), None);
+    }
+
+    #[test]
+    fn render_populates_clickable_geometry() {
+        use ratatui::{Terminal, backend::TestBackend};
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new(Config::default());
+        for i in 0..5 {
+            app.key_browser
+                .tree
+                .insert(crate::ui::key_browser::tree::KeyEntry {
+                    full_name: format!("ns:key{i}"),
+                    redis_type: None,
+                    ttl: None,
+                });
+        }
+        app.key_browser.tree.expand_all();
+
+        terminal.draw(|f| app.render(f)).unwrap();
+
+        let geometry = app.geometry();
+        assert!(geometry.tab_bar.height > 0, "tab bar geometry missing");
+        // Every tab must be reachable by clicking its label.
+        for (tab, rect) in tab_bar::tab_hit_regions(geometry.tab_bar) {
+            assert_eq!(tab_bar::tab_at(geometry.tab_bar, rect.x, rect.y), Some(tab));
+        }
+        // The key list must map a click on its first row.
+        assert!(geometry.key_list.row_count > 0);
+        assert_eq!(
+            geometry
+                .key_list
+                .row_at(geometry.key_list.list_area.x, geometry.key_list.list_area.y),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn clicking_a_tab_label_switches_tabs() {
+        let mut app = App::new(Config::default());
+        let geometry = RenderGeometry {
+            tab_bar: ratatui::layout::Rect {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 1,
+            },
+            key_list: Default::default(),
+        };
+        app.set_geometry_for_test(geometry);
+
+        let regions = tab_bar::tab_hit_regions(geometry.tab_bar);
+        let (_, info_rect) = regions[2]; // Info tab
+        assert_eq!(app.active_tab, Tab::Keys);
+
+        app.handle_left_click(info_rect.y, info_rect.x);
+        assert_eq!(app.active_tab, Tab::Info);
+    }
+
+    #[test]
+    fn clicking_the_tab_bar_takes_priority_over_the_key_list() {
+        let mut app = App::new(Config::default());
+        let tab_bar_area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 1,
+        };
+        app.set_geometry_for_test(RenderGeometry {
+            tab_bar: tab_bar_area,
+            // Deliberately overlapping the tab bar row.
+            key_list: crate::ui::key_browser::BrowserRenderInfo {
+                list_area: ratatui::layout::Rect {
+                    x: 0,
+                    y: 0,
+                    width: 80,
+                    height: 10,
+                },
+                scroll_offset: 0,
+                row_count: 100,
+            },
+        });
+
+        let (_, keys_rect) = tab_bar::tab_hit_regions(tab_bar_area)[0];
+        app.handle_left_click(keys_rect.y, keys_rect.x);
+        assert_eq!(app.active_tab, Tab::Keys, "stayed on Keys");
+        assert_eq!(app.key_browser.cursor, 0, "list must not steal the click");
+    }
+
+    #[test]
+    fn clicking_below_the_last_key_row_is_ignored() {
+        let mut app = App::new(Config::default());
+        for i in 0..3 {
+            app.key_browser
+                .tree
+                .insert(crate::ui::key_browser::tree::KeyEntry {
+                    full_name: format!("ns:key{i}"),
+                    redis_type: None,
+                    ttl: None,
+                });
+        }
+        app.key_browser.tree.expand_all();
+        app.key_browser.cursor = 1;
+
+        let row_count = app.key_browser.sorted_rows().len();
+        let list_area = ratatui::layout::Rect {
+            x: 0,
+            y: 2,
+            width: 40,
+            height: 20,
+        };
+        app.set_geometry_for_test(RenderGeometry {
+            tab_bar: ratatui::layout::Rect {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 1,
+            },
+            key_list: crate::ui::key_browser::BrowserRenderInfo {
+                list_area,
+                scroll_offset: 0,
+                row_count,
+            },
+        });
+
+        // Far below the final row.
+        app.handle_left_click(21, 5);
+        assert_eq!(app.key_browser.cursor, 1, "cursor must not move");
+    }
+
+    #[test]
+    fn clicking_a_key_row_moves_the_cursor() {
+        let mut app = App::new(Config::default());
+        for i in 0..5 {
+            app.key_browser
+                .tree
+                .insert(crate::ui::key_browser::tree::KeyEntry {
+                    full_name: format!("ns:key{i}"),
+                    redis_type: None,
+                    ttl: None,
+                });
+        }
+        app.key_browser.tree.expand_all();
+
+        let row_count = app.key_browser.sorted_rows().len();
+        let list_area = ratatui::layout::Rect {
+            x: 0,
+            y: 2,
+            width: 40,
+            height: 10,
+        };
+        app.set_geometry_for_test(RenderGeometry {
+            tab_bar: ratatui::layout::Rect {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 1,
+            },
+            key_list: crate::ui::key_browser::BrowserRenderInfo {
+                list_area,
+                scroll_offset: 0,
+                row_count,
+            },
+        });
+
+        // Third visible row.
+        app.handle_left_click(4, 10);
+        assert_eq!(app.key_browser.cursor, 2);
     }
 
     #[tokio::test]

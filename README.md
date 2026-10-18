@@ -144,6 +144,20 @@ Connection profiles are loaded from:
 
 Reddish supports configurable keymaps and ships with Vim/Emacs-style defaults.
 
+### Mouse
+
+Mouse capture is enabled when the terminal starts.
+
+| Action | Description |
+|--------|-------------|
+| Click a tab label | Switch tabs. Hit regions come from the rendered labels, so the target matches what is on screen. |
+| Click a key row | Move the selection to that key. Accounts for the list's scroll offset, so clicking a scrolled row selects the key that row shows. |
+| Scroll wheel | Move the key selection up or down on the Keys tab. |
+
+Clicks below the last key, in the tab-bar gaps, or in an overlay are ignored.
+While the search, help or connection overlays are open, clicks go to the overlay
+rather than the panes behind it.
+
 ### Global shortcuts
 
 | Action | Vim | Emacs | Description |

@@ -10,20 +10,20 @@
 
 | Metric | Value |
 |--------|-------|
-| **Overall v1 Completion** | ~97% |
+| **Overall v1 Completion** | ~98% |
 | **Milestones with Gate Tests** | 8 (M0–M8) — all satisfied |
-| **Gate Tests Passing** | ~92% of specified tests exist and pass |
+| **Gate Tests Passing** | ~95% of specified tests exist and pass |
 | **Major Architecture Pieces** | 100% implemented |
-| **UI Polish / Advanced Features** | 94% implemented |
+| **UI Polish / Advanced Features** | 97% implemented |
 | **Performance / Benchmarks** | 100% implemented |
 
 ### Measured Performance (release build, 10K keys)
 
 | Scenario | p50 | p99 | Budget |
 |----------|-----|-----|--------|
-| Render, all namespaces expanded | 12.7ms | 13.5ms | 16ms ✅ |
-| Render, default collapsed view | 0.14ms | 0.22ms | 16ms ✅ |
-| Peak RSS with all six value types loaded | — | 22.7MB | 50MB ✅ |
+| Render, all namespaces expanded | 11.1ms | 11.9ms | 16ms ✅ |
+| Render, default collapsed view | 0.14ms | 0.15ms | 16ms ✅ |
+| Peak RSS with all six value types loaded | — | 18.5MB | 50MB ✅ |
 
 The fully-expanded case is the worst case: render builds one `ListItem` per
 visible row, so 10K expanded keys means 10K formatted rows per frame even
@@ -31,13 +31,13 @@ though only ~24 are drawn. The default view expands nothing and is ~60x
 cheaper. See `src/bench.rs`; run `reddish-tui --bench` and
 `reddish-tui --profile-memory` to reproduce.
 
-### Top 3 Remaining Gaps
+### Top 2 Remaining Gaps
 
-Every milestone gate (M0–M8) is satisfied. What remains is optional:
+Every milestone gate (M0–M8) and every planned sub-milestone is satisfied.
+What remains is optional polish:
 
-1. **Mouse click-to-focus / click-to-select** — only scroll and tab-bar clicks are wired.
-2. **`$EDITOR` integration** — the built-in `TextAreaEditor` works; the external-editor path is absent.
-3. **Three residual M8 test rows** (8.10–8.12) — password-leak assertion, temp-file cleanup test, and a per-platform binary smoke test (the CI `build` job partially covers the last one).
+1. **`$EDITOR` integration** — the built-in `TextAreaEditor` works; the external-editor path is absent.
+2. **Three residual M8 test rows** (8.10–8.12) — password-leak assertion, temp-file cleanup test, and a per-platform binary smoke test (the CI `build` job partially covers the last one).
 
 ### Corrected Since Last Audit (2026-05-27)
 
@@ -306,8 +306,8 @@ The original audit predated Phases A–E. The following were reported as
 | 7.10 | CLI `--profile` / `--log-level` / `--theme` | ✅ Done | |
 | 7.11 | Mouse capture enabled | ✅ Done | `init_terminal` calls `EnableMouseCapture` |
 | 7.12 | Mouse scroll in key browser | ✅ Done | `handle_mouse_event` |
-| 7.13 | Mouse click tab switching | ✅ Done | Row 0 click maps to tabs |
-| 7.14 | Mouse panel focus + list index calc | ❌ Missing | No `Rect` tracking for click-to-focus |
+| 7.13 | Mouse click tab switching | ✅ Done | Hit regions derived from the rendered tab labels |
+| 7.14 | Mouse panel focus + list index calc | ✅ Done | Geometry captured during render; click maps to a row via the list scroll offset |
 | 7.15 | `--bench` hidden flag (1000 renders, p99 < 16ms) | ✅ Done | `src/bench.rs`; p99 13.5ms fully expanded, 0.22ms collapsed |
 | 7.16 | `--profile-memory` hidden flag | ✅ Done | Peak RSS 22.7MB at 10K keys, budget 50MB |
 | 7.17 | `test_all_themes_have_all_fields` | ✅ Done | |
@@ -515,16 +515,16 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 
 ### PLAN.md Progress Summary
 
-- **Completed**: 22 / 23 tracked sub-milestones (A1–A3, B1–B2, C1–C3, D1–D2, E1, F1, F2, X1–X14)
+- **Completed**: 23 / 23 tracked sub-milestones (A1–A3, B1–B2, C1–C3, D1–D2, E1, F1, F2, X1–X14)
 - **In progress**: 0
-- **Not started**: E2 (`$EDITOR`), X11 (mouse click-to-focus)
+- **Not started**: E2 (`$EDITOR`) — the only unimplemented planned sub-milestone
 
 ### Next Recommended Sub-Milestone
 
-**X11 — mouse click-to-focus / click-to-select.** The only remaining
-unimplemented spec row. `handle_mouse_event` currently maps row 0 to tabs and
-everything else to scroll; the key browser and inspector would need to record
-the `Rect`s from their last render so a click can be mapped to a list index.
+**E2 — `$EDITOR` integration.** The last unimplemented planned sub-milestone:
+spawn the user's editor against a `NamedTempFile` when `$EDITOR` is set, keeping
+the built-in editor as the fallback. Note that 8.3 (temp files via
+`NamedTempFile`) and 8.11 (`test_temp_file_deleted_on_drop`) both depend on it.
 
 ---
 
@@ -537,9 +537,8 @@ optional features below plus the residual M8 test rows.
 
 ### P2 — Should Have for v1
 
-1. **Mouse click-to-focus / click-to-select** (M7 7.14, X11) — Store `Rect`s from last render and map clicks.
-2. **`$EDITOR` integration** (M2 2.7, E2) — Spawn the user's editor against a `NamedTempFile`; the built-in editor remains the fallback.
-3. **Remaining M8 test rows** (8.10–8.12) — No-plaintext-password-in-logs assertion; temp-file cleanup test; binary smoke test per platform (partly covered by the CI `build` job running `--help` on all three OSes).
+1. **`$EDITOR` integration** (M2 2.7, E2) — Spawn the user's editor against a `NamedTempFile`; the built-in editor remains the fallback. Also unlocks 8.3 and 8.11.
+2. **Remaining M8 test rows** (8.10–8.12) — No-plaintext-password-in-logs assertion; temp-file cleanup test; binary smoke test per platform (partly covered by the CI `build` job running `--help` on all three OSes).
 
 ### P3 — Nice to Have / Post-v1
 

@@ -344,7 +344,9 @@ fn test_breadcrumb_renders_path() {
 
     let backend = TestBackend::new(80, 24);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
-    let _ = terminal.draw(|f| browser.render(f, f.area()));
+    let _ = terminal.draw(|f| {
+        browser.render(f, f.area());
+    });
     // No panic means breadcrumb rendered without error
 }
 
@@ -357,7 +359,9 @@ fn test_breadcrumb_renders_at_root() {
 
     let backend = TestBackend::new(80, 24);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
-    let _ = terminal.draw(|f| browser.render(f, f.area()));
+    let _ = terminal.draw(|f| {
+        browser.render(f, f.area());
+    });
     // No panic means breadcrumb rendered without error
 }
 
@@ -530,7 +534,9 @@ fn test_key_browser_renders_without_panic() {
             ttl: None,
         },
     ]);
-    let _ = terminal.draw(|f| browser.render(f, f.area()));
+    let _ = terminal.draw(|f| {
+        browser.render(f, f.area());
+    });
 }
 
 #[test]

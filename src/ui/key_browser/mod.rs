@@ -94,6 +94,37 @@ pub enum BrowserAction {
     RefreshRequested,
 }
 
+/// Where the key list was drawn and how far it was scrolled, so mouse clicks
+/// can be mapped back to a logical row index.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BrowserRenderInfo {
+    /// Content area of the list widget (borders excluded).
+    pub list_area: Rect,
+    /// Number of rows scrolled off the top of the list.
+    pub scroll_offset: usize,
+    /// Total number of logical rows, including those scrolled out of view.
+    pub row_count: usize,
+}
+
+impl BrowserRenderInfo {
+    /// Map a click to a logical row index.
+    ///
+    /// Returns `None` when the click lands outside the list, or below the last
+    /// row (the area under a partially filled list).
+    pub fn row_at(&self, column: u16, row: u16) -> Option<usize> {
+        if column < self.list_area.x
+            || column >= self.list_area.x + self.list_area.width
+            || row < self.list_area.y
+            || row >= self.list_area.y + self.list_area.height
+        {
+            return None;
+        }
+        let offset_in_view = (row - self.list_area.y) as usize;
+        let index = self.scroll_offset + offset_in_view;
+        (index < self.row_count).then_some(index)
+    }
+}
+
 pub struct KeyBrowser {
     pub tree: NamespaceTree,
     pub cursor: usize,
@@ -457,7 +488,7 @@ impl KeyBrowser {
         rows
     }
 
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame, area: Rect) -> BrowserRenderInfo {
         use ratatui::layout::{Constraint, Direction, Layout};
 
         // Split area into breadcrumb (1 line) and key list (remaining)
@@ -518,8 +549,17 @@ impl KeyBrowser {
             self.tree.total_keys(),
             self.sort_mode.label()
         ));
+        let list_area = chunks[1];
         let list = List::new(items).block(block);
-        frame.render_stateful_widget(list, chunks[1], &mut state);
+        frame.render_stateful_widget(list, list_area, &mut state);
+
+        // Read the offset back after rendering: ratatui recomputes it to keep
+        // the selection visible, and that is what a click must be offset by.
+        let info = BrowserRenderInfo {
+            list_area: list_area.inner(ratatui::layout::Margin::new(1, 1)),
+            scroll_offset: state.offset(),
+            row_count: rows.len(),
+        };
 
         // Render prompt overlay
         if let Some(ref prompt) = self.prompt {
@@ -547,6 +587,8 @@ impl KeyBrowser {
                 .style(Style::default().fg(Color::White).bg(Color::Black));
             frame.render_widget(overlay, chunks[1]);
         }
+
+        info
     }
 
     pub fn apply_scan_batch(&mut self, batch: Vec<KeyEntry>) {
@@ -576,5 +618,166 @@ impl KeyBrowser {
         } else {
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod render_info_tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn info(list_area: Rect, scroll_offset: usize, row_count: usize) -> BrowserRenderInfo {
+        BrowserRenderInfo {
+            list_area,
+            scroll_offset,
+            row_count,
+        }
+    }
+
+    fn list() -> Rect {
+        Rect {
+            x: 2,
+            y: 3,
+            width: 20,
+            height: 5,
+        }
+    }
+
+    fn key(name: &str) -> KeyEntry {
+        KeyEntry {
+            full_name: name.to_string(),
+            redis_type: None,
+            ttl: None,
+        }
+    }
+
+    #[test]
+    fn click_maps_to_row_index_within_list() {
+        let i = info(list(), 0, 10);
+        assert_eq!(i.row_at(5, 3), Some(0));
+        assert_eq!(i.row_at(5, 4), Some(1));
+        assert_eq!(i.row_at(5, 7), Some(4));
+    }
+
+    #[test]
+    fn click_outside_the_list_horizontal_bounds_is_ignored() {
+        let i = info(list(), 0, 10);
+        assert_eq!(i.row_at(1, 4), None, "left of the list");
+        assert_eq!(i.row_at(22, 4), None, "right of the list");
+    }
+
+    #[test]
+    fn click_outside_the_list_vertical_bounds_is_ignored() {
+        let i = info(list(), 0, 10);
+        assert_eq!(i.row_at(5, 2), None, "above the list");
+        assert_eq!(i.row_at(5, 8), None, "below the list");
+    }
+
+    #[test]
+    fn scroll_offset_shifts_the_mapped_index() {
+        let i = info(list(), 100, 200);
+        assert_eq!(i.row_at(5, 3), Some(100));
+        assert_eq!(i.row_at(5, 7), Some(104));
+    }
+
+    #[test]
+    fn click_past_the_last_row_is_ignored() {
+        // 10 rows exist, the view starts at 5, so only indices 8 and 9 are
+        // reachable; the rest of the visible area is empty space.
+        let i = info(list(), 8, 10);
+        assert_eq!(i.row_at(5, 3), Some(8));
+        assert_eq!(i.row_at(5, 4), Some(9));
+        assert_eq!(i.row_at(5, 5), None, "past the end");
+        assert_eq!(i.row_at(5, 7), None);
+    }
+
+    #[test]
+    fn empty_list_has_no_hittable_rows() {
+        assert_eq!(info(list(), 0, 0).row_at(5, 3), None);
+    }
+
+    #[test]
+    fn default_geometry_is_empty() {
+        assert_eq!(BrowserRenderInfo::default().row_at(0, 0), None);
+    }
+
+    #[test]
+    fn render_reports_geometry_for_populated_browser() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut browser = KeyBrowser::new(':', 10_000);
+        for i in 0..5 {
+            browser.tree.insert(key(&format!("ns:key{i}")));
+        }
+        // Namespaces start collapsed, so only the namespace row is visible
+        // until it is expanded.
+        browser.tree.expand_all();
+
+        let mut info = BrowserRenderInfo::default();
+        terminal
+            .draw(|f| info = browser.render(f, f.area()))
+            .unwrap();
+        assert_eq!(info.row_count, 6, "5 keys plus the namespace row");
+        assert_eq!(info.scroll_offset, 0);
+        // The list sits below the one-line breadcrumb, inside its border.
+        assert!(info.list_area.y >= 2);
+        assert_eq!(
+            info.row_at(info.list_area.x, info.list_area.y),
+            Some(0),
+            "top visible row must map to the first logical row"
+        );
+    }
+
+    #[test]
+    fn collapsed_namespace_hides_its_keys_from_hit_testing() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut browser = KeyBrowser::new(':', 10_000);
+        for i in 0..5 {
+            browser.tree.insert(key(&format!("ns:key{i}")));
+        }
+        let mut info = BrowserRenderInfo::default();
+        terminal
+            .draw(|f| info = browser.render(f, f.area()))
+            .unwrap();
+        assert_eq!(info.row_count, 1, "only the collapsed namespace row");
+    }
+
+    #[test]
+    fn render_reports_scroll_offset_when_cursor_is_past_the_viewport() {
+        let backend = TestBackend::new(80, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut browser = KeyBrowser::new(':', 10_000);
+        for i in 0..200 {
+            browser.tree.insert(key(&format!("ns:key{i:04}")));
+        }
+        browser.tree.expand_all();
+        // Move the cursor to the end so ratatui scrolls the list.
+        browser.cursor = browser.sorted_rows().len() - 1;
+
+        let mut info = BrowserRenderInfo::default();
+        terminal
+            .draw(|f| info = browser.render(f, f.area()))
+            .unwrap();
+        assert!(info.scroll_offset > 0, "expected the list to scroll");
+        // Clicking the top visible row must resolve to the scrolled index
+        // rather than to row 0.
+        assert_eq!(
+            info.row_at(info.list_area.x, info.list_area.y),
+            Some(info.scroll_offset)
+        );
+    }
+
+    #[test]
+    fn render_on_empty_browser_reports_no_rows() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let browser = KeyBrowser::new(':', 10_000);
+        let mut info = BrowserRenderInfo::default();
+        terminal
+            .draw(|f| info = browser.render(f, f.area()))
+            .unwrap();
+        assert_eq!(info.row_count, 0);
+        assert_eq!(info.row_at(5, 5), None);
     }
 }

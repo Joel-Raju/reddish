@@ -2,7 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # Must match the repository's default branch. This was `main` while the
+    # default branch is `master`, so pushing never triggered a run and CI sat
+    # idle through the entire v1 implementation.
+    branches: [master]
   pull_request:
   workflow_dispatch:
 
@@ -80,17 +83,28 @@ jobs:
       - name: Start Redis on port 16379
         shell: bash
         run: |
-          if command -v redis-server >/dev/null 2>&1; then
-            echo "Using preinstalled redis-server"
-          else
+          if ! command -v redis-server >/dev/null 2>&1; then
             echo "Installing Redis"
             if [ "${{ runner.os }}" = "Windows" ]; then
               choco install redis-64 -y --no-progress || true
+              # The choco package drops the binaries somewhere the runner's PATH
+              # does not necessarily cover.
+              export PATH="$PATH:/c/ProgramData/chocolatey/bin:/c/Program Files/Redis"
             else
               brew install redis || sudo apt-get install -y redis-server
             fi
+          else
+            echo "Using preinstalled redis-server"
           fi
-          redis-server --port 16379 --daemonize yes --loglevel warning --save ''
+
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            # Windows Redis has no --daemonize: it is not a fork, so the
+            # option is rejected outright. Background it instead.
+            redis-server --port 16379 --loglevel warning --save "" &
+          else
+            redis-server --port 16379 --daemonize yes --loglevel warning --save ''
+          fi
+
           for i in $(seq 1 30); do
             if redis-cli -p 16379 ping 2>/dev/null | grep -q PONG; then
               echo "Redis is up"
@@ -102,7 +116,10 @@ jobs:
           exit 1
 
       - name: Run integration tests
-        run: cargo test --tests
+        # `--tests` selects every test target, which includes the lib unit
+        # tests already covered by the `unit-tests` job. Naming the
+        # integration binaries keeps this job to what it is named for.
+        run: cargo test --test '*'
 
   # The spec's performance gates. Release only, since a debug build is roughly
   # 3x slower and would fail the render budget.
@@ -164,5 +181,13 @@ jobs:
       - name: Verify the binary starts and exits cleanly
         # --help must not touch the terminal or connect anywhere, so this works
         # on a headless runner.
+        #
+        # Windows names the executable `reddish-tui.exe`; the bare name does not
+        # resolve there.
         shell: bash
-        run: ./target/release/reddish-tui --help
+        run: |
+          BIN=./target/release/reddish-tui
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            BIN="$BIN.exe"
+          fi
+          "$BIN" --help

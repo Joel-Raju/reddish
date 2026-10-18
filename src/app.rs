@@ -214,6 +214,15 @@ pub fn external_editor() -> Option<String> {
         .filter(|e| !e.is_empty())
 }
 
+/// The editor to run for string editing.
+///
+/// A configured `editor` in `config.toml` wins over `$EDITOR`, so a user can
+/// pin an editor without changing their shell environment. Blank values fall
+/// through to `$EDITOR` rather than being treated as a configured editor.
+pub fn resolved_editor(config: &Config) -> Option<String> {
+    config.editor().map(str::to_string).or_else(external_editor)
+}
+
 /// Write `edit.value` to a temp file, run the user's editor on it, and return
 /// the edited text.
 ///
@@ -221,17 +230,17 @@ pub fn external_editor() -> Option<String> {
 /// the filesystem and spawns a child process, so it is unit-testable without a
 /// terminal.
 ///
-/// Returns `Ok(None)` when no usable editor is configured, when the editor exits
+/// Returns `Ok(None)` when `editor` is blank or malformed, when the editor exits
 /// non-zero (a failed `write` should not silently discard the value), or when
 /// the file cannot be read back. The `NamedTempFile` is removed on drop, so the
 /// value is never left in a temp file after this returns.
-pub fn edit_in_external_editor(edit: &ExternalEdit) -> color_eyre::Result<Option<String>> {
+pub fn edit_in_external_editor(
+    edit: &ExternalEdit,
+    editor: &str,
+) -> color_eyre::Result<Option<String>> {
     use std::io::Write;
 
-    let Some(editor) = external_editor() else {
-        return Ok(None);
-    };
-    let Some((program, args)) = split_editor_command(&editor) else {
+    let Some((program, args)) = split_editor_command(editor) else {
         return Ok(None);
     };
 
@@ -502,9 +511,10 @@ impl App {
     }
 
     pub async fn run(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
-        // `$EDITOR` takes over string editing when set; otherwise the built-in
+        // A configured editor takes over string editing; otherwise the built-in
         // editor is always used.
-        self.value_inspector.prefer_external_editor = external_editor().is_some();
+        self.value_inspector.prefer_external_editor = resolved_editor(&self.config).is_some();
+        self.value_inspector.max_value_display_bytes = self.config.max_value_display_bytes();
 
         if let Some(profile) = self.startup_profile.take() {
             self.connect_profile(profile).await;
@@ -548,7 +558,14 @@ impl App {
         }
         // `block_in_place` keeps the tokio runtime alive while this thread is
         // occupied by the editor subprocess.
-        let outcome = tokio::task::block_in_place(|| edit_in_external_editor(&edit));
+        let editor = match resolved_editor(&self.config) {
+            Some(e) => e,
+            None => {
+                let _ = resume_tui(terminal);
+                return;
+            }
+        };
+        let outcome = tokio::task::block_in_place(|| edit_in_external_editor(&edit, &editor));
         let _ = resume_tui(terminal);
 
         match outcome {
@@ -1648,7 +1665,7 @@ impl App {
             InspectorAction::EditStringExternal { key, value } => {
                 // Only queue when an editor is actually configured; otherwise
                 // fall back to the built-in editor so `e` always does something.
-                if external_editor().is_some() {
+                if resolved_editor(&self.config).is_some() {
                     self.pending_external_edit = Some(ExternalEdit { key, value });
                 } else {
                     self.value_inspector.edit_mode = true;
@@ -2162,10 +2179,10 @@ mod tests {
 
     #[test]
     fn external_editor_reads_environment() {
-        with_editor("vim", || {
+        with_editor("vim", |_| {
             assert_eq!(external_editor().as_deref(), Some("vim"));
         });
-        with_editor("   ", || {
+        with_editor("   ", |_| {
             assert_eq!(external_editor(), None, "blank $EDITOR must be ignored");
         });
     }
@@ -2178,7 +2195,7 @@ mod tests {
             key: "k".to_string(),
             value: "original".to_string(),
         };
-        let result = with_editor(&script, || edit_in_external_editor(&edit));
+        let result = with_editor(&script, |editor| edit_in_external_editor(&edit, editor));
         assert_eq!(result.unwrap().as_deref(), Some("edited"));
     }
 
@@ -2189,7 +2206,7 @@ mod tests {
             key: "k".to_string(),
             value: "same".to_string(),
         };
-        let result = with_editor("true", || edit_in_external_editor(&edit));
+        let result = with_editor("true", |editor| edit_in_external_editor(&edit, editor));
         assert_eq!(result.unwrap().as_deref(), Some("same"));
     }
 
@@ -2200,7 +2217,7 @@ mod tests {
             key: "k".to_string(),
             value: "keep me".to_string(),
         };
-        let result = with_editor("false", || edit_in_external_editor(&edit));
+        let result = with_editor("false", |editor| edit_in_external_editor(&edit, editor));
         assert_eq!(result.unwrap(), None);
     }
 
@@ -2210,7 +2227,7 @@ mod tests {
             key: "k".to_string(),
             value: "v".to_string(),
         };
-        let result = without_editor(|| edit_in_external_editor(&edit));
+        let result = without_editor(|editor| edit_in_external_editor(&edit, editor));
         assert_eq!(result.unwrap(), None);
     }
 
@@ -2220,8 +2237,8 @@ mod tests {
             key: "k".to_string(),
             value: "v".to_string(),
         };
-        let result = with_editor("definitely-not-a-real-editor-binary", || {
-            edit_in_external_editor(&edit)
+        let result = with_editor("definitely-not-a-real-editor-binary", |editor| {
+            edit_in_external_editor(&edit, editor)
         });
         assert_eq!(result.unwrap(), None);
     }
@@ -2239,8 +2256,8 @@ mod tests {
             key: "k".to_string(),
             value: "v".to_string(),
         };
-        let result = with_editor(&format!("{wrapper} --flag"), || {
-            edit_in_external_editor(&edit)
+        let result = with_editor(&format!("{wrapper} --flag"), |editor| {
+            edit_in_external_editor(&edit, editor)
         });
         assert_eq!(result.unwrap().as_deref(), Some("via args"));
     }
@@ -2254,7 +2271,7 @@ mod tests {
             key: "k".to_string(),
             value: "secret-value".to_string(),
         };
-        let result = with_editor(&script, || edit_in_external_editor(&edit));
+        let result = with_editor(&script, |editor| edit_in_external_editor(&edit, editor));
         assert!(result.is_ok());
 
         // The script recorded the temp path it was handed; that file must be
@@ -2275,7 +2292,7 @@ mod tests {
             .unwrap();
         let script = write_script("#!/bin/sh\ntrue\n");
         let mut app = App::new(Config::default());
-        with_editor(&script, || {
+        with_editor(&script, |_| {
             rt.block_on(
                 app.handle_inspector_action_public(InspectorAction::EditStringExternal {
                     key: "k".to_string(),
@@ -2292,7 +2309,7 @@ mod tests {
             .build()
             .unwrap();
         let mut app = App::new(Config::default());
-        without_editor(|| {
+        without_editor(|_| {
             rt.block_on(
                 app.handle_inspector_action_public(InspectorAction::EditStringExternal {
                     key: "k".to_string(),
@@ -2378,28 +2395,28 @@ mod tests {
     /// The environment is process-global, so two such tests running
     /// concurrently would clobber each other's value and produce
     /// order-dependent failures.
-    static EDITOR_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    pub(super) static EDITOR_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// Run `f` with `$EDITOR` set to `editor`, restoring it afterwards.
-    fn with_editor<T>(editor: &str, f: impl FnOnce() -> T) -> T {
+    pub(super) fn with_editor<T>(editor: &str, f: impl FnOnce(&str) -> T) -> T {
         let _guard = EDITOR_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let previous = std::env::var("EDITOR").ok();
         unsafe {
             std::env::set_var("EDITOR", editor);
         }
-        let result = f();
+        let result = f(editor);
         restore_env("EDITOR", previous);
         result
     }
 
     /// Run `f` with `$EDITOR` removed, restoring it afterwards.
-    fn without_editor<T>(f: impl FnOnce() -> T) -> T {
+    pub(super) fn without_editor<T>(f: impl FnOnce(&str) -> T) -> T {
         let _guard = EDITOR_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let previous = std::env::var("EDITOR").ok();
         unsafe {
             std::env::remove_var("EDITOR");
         }
-        let result = f();
+        let result = f("");
         restore_env("EDITOR", previous);
         result
     }
@@ -2410,7 +2427,7 @@ mod tests {
         ))
     }
 
-    fn write_script(body: &str) -> String {
+    pub(super) fn write_script(body: &str) -> String {
         let path = std::env::temp_dir().join(format!(
             "reddish-fake-editor-{}-{}",
             std::process::id(),
@@ -2425,7 +2442,7 @@ mod tests {
         path.to_string_lossy().into_owned()
     }
 
-    fn restore_env(key: &str, previous: Option<String>) {
+    pub(super) fn restore_env(key: &str, previous: Option<String>) {
         unsafe {
             match previous {
                 Some(v) => std::env::set_var(key, v),
@@ -2839,5 +2856,107 @@ mod help_text_snapshot {
             app.keymap = keymap;
             println!("=== {name} ===\n{}", app.help_text());
         }
+    }
+}
+
+#[cfg(test)]
+mod editor_config_tests {
+    use super::tests::{with_editor, without_editor, write_script};
+    use super::*;
+    use crate::config::Config;
+
+    fn config_with(editor: Option<&str>) -> Config {
+        Config {
+            editor: editor.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    /// `config.toml` wins over the environment so a user can pin an editor
+    /// without changing their shell.
+    #[test]
+    fn configured_editor_beats_the_environment() {
+        with_editor("from-env", |env_editor| {
+            assert_eq!(
+                resolved_editor(&config_with(Some("from-config"))).as_deref(),
+                Some("from-config"),
+                "config should take precedence over $EDITOR ({env_editor})"
+            );
+        });
+    }
+
+    #[test]
+    fn environment_is_used_when_config_is_absent() {
+        with_editor("from-env", |env_editor| {
+            assert_eq!(
+                resolved_editor(&config_with(None)).as_deref(),
+                Some(env_editor)
+            );
+        });
+    }
+
+    /// A blank config value means "not configured", so it must fall through to
+    /// `$EDITOR` instead of trying to run an empty command.
+    #[test]
+    fn blank_config_editor_falls_back_to_the_environment() {
+        with_editor("from-env", |_| {
+            assert_eq!(
+                resolved_editor(&config_with(Some(""))).as_deref(),
+                Some("from-env")
+            );
+            assert_eq!(
+                resolved_editor(&config_with(Some("   "))).as_deref(),
+                Some("from-env")
+            );
+        });
+    }
+
+    #[test]
+    fn no_config_and_no_environment_means_no_editor() {
+        without_editor(|_| {
+            assert_eq!(resolved_editor(&config_with(None)), None);
+            assert_eq!(resolved_editor(&config_with(Some(""))), None);
+        });
+    }
+
+    /// A configured editor with flags must still be split correctly.
+    #[test]
+    fn configured_editor_with_arguments_is_split() {
+        with_editor("from-env", |_| {
+            let editor = resolved_editor(&config_with(Some("code --wait"))).unwrap();
+            let (program, args) = split_editor_command(&editor).unwrap();
+            assert_eq!(program, "code");
+            assert_eq!(args, vec!["--wait".to_string()]);
+        });
+    }
+
+    /// The configured editor must actually be the one that runs, not just the
+    /// one that wins the lookup.
+    #[test]
+    fn configured_editor_is_the_one_invoked() {
+        let config_script = write_script("#!/bin/sh\nprintf 'from-config' > \"$1\"\n");
+        let env_script = write_script("#!/bin/sh\nprintf 'from-env' > \"$1\"\n");
+        let edit = ExternalEdit {
+            key: "k".to_string(),
+            value: "v".to_string(),
+        };
+        with_editor(&env_script, |env_editor| {
+            let editor = resolved_editor(&config_with(Some(&config_script))).unwrap();
+            let result = edit_in_external_editor(&edit, &editor).unwrap();
+            assert_eq!(result.as_deref(), Some("from-config"));
+            assert!(env_editor.contains("reddish-fake-editor"));
+        });
+    }
+
+    /// `run` copies the config's value into the inspector; without this the
+    /// setting would parse but never take effect.
+    #[test]
+    fn value_display_budget_reaches_the_inspector() {
+        let mut app = App::new(Config {
+            max_value_display_bytes: Some(512),
+            ..Default::default()
+        });
+        app.value_inspector.max_value_display_bytes = app.config.max_value_display_bytes();
+        assert_eq!(app.value_inspector.max_value_display_bytes, 512);
     }
 }

@@ -360,6 +360,9 @@ pub struct ValueInspector {
     pub zset_score_max: Option<String>,
     pub stream_cursor: usize,
     pub stream_compact: bool,
+    /// Byte budget for rendering a single string value; `usize::MAX` disables
+    /// truncation. Set from `config.toml` via `max_value_display_bytes`.
+    pub max_value_display_bytes: usize,
     /// When set, `e` on a string hands the value to `$EDITOR` instead of
     /// opening the built-in editor. Set from `app.rs` at startup.
     pub prefer_external_editor: bool,
@@ -404,6 +407,7 @@ impl ValueInspector {
             zset_score_max: None,
             stream_cursor: 0,
             stream_compact: true,
+            max_value_display_bytes: 1024 * 1024,
             prefer_external_editor: false,
             stream_follow: false,
             value_filter: String::new(),
@@ -1264,7 +1268,33 @@ impl ValueInspector {
                 Style::default().fg(Color::DarkGray),
             );
             lines.push(Line::from(vec![label, Span::raw(" ")]));
-            lines.extend(self.string_view.render_lines(s));
+            // Truncate before rendering. Building a styled line per source line
+            // for a multi-megabyte value is what blows the frame budget, so the
+            // cut happens on the raw string rather than on the output.
+            let budget = self.max_value_display_bytes;
+            let truncated = s.len() > budget;
+            let shown = if truncated {
+                // Cut on a char boundary: a byte index inside a multi-byte
+                // codepoint would panic.
+                let mut end = budget;
+                while end > 0 && !s.is_char_boundary(end) {
+                    end -= 1;
+                }
+                &s[..end]
+            } else {
+                s.as_str()
+            };
+            lines.extend(self.string_view.render_lines(shown));
+            if truncated {
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "... truncated at {} of {} bytes (max_value_display_bytes)",
+                        budget,
+                        s.len()
+                    ),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
         } else if let Some(value) = &self.value {
             for line in render_value_preview(value, &self.string_view).lines() {
                 lines.push(Line::from(line.to_string()));
@@ -2970,5 +3000,116 @@ mod tests {
         inspector.stream_show_groups = true;
         inspector.stream_groups = Some(vec![]);
         terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod truncation_tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// Render an inspector holding `value` and return the visible text.
+    fn render_text(value: &str, budget: usize, mode: StringViewMode) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
+        let mut inspector = ValueInspector::new();
+        inspector.max_value_display_bytes = budget;
+        inspector.string_view = mode;
+        inspector.set_value("k".to_string(), RedisValue::String(value.to_string()));
+        terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn small_value_is_not_truncated() {
+        let text = render_text("hello", 1024, StringViewMode::Raw);
+        assert!(text.contains("hello"), "got: {text}");
+        assert!(!text.contains("truncated"), "got: {text}");
+    }
+
+    #[test]
+    fn large_value_is_truncated_with_a_visible_marker() {
+        let big = "x".repeat(5000);
+        let text = render_text(&big, 100, StringViewMode::Raw);
+        assert!(
+            text.contains("truncated at 100 of 5000 bytes"),
+            "expected a truncation marker, got: {text}"
+        );
+        assert!(text.contains("max_value_display_bytes"), "got: {text}");
+    }
+
+    /// A byte budget that lands mid-codepoint must cut on a char boundary
+    /// rather than panicking on a slice that splits a character.
+    #[test]
+    fn truncation_respects_multi_byte_char_boundaries() {
+        // Each char is 3 bytes, so a budget of 100 lands inside the 34th.
+        let big = "あ".repeat(500);
+        let text = render_text(&big, 100, StringViewMode::Raw);
+        assert!(text.contains("truncated at 100"), "got: {text}");
+        // The point is that rendering did not panic; the content is partial.
+        assert!(!text.contains('\u{fffd}'), "no replacement chars: {text}");
+    }
+
+    /// The other view modes encode, so a raw byte budget is not a byte budget
+    /// for their output. Truncating the input first keeps all of them bounded.
+    #[test]
+    fn truncation_applies_to_every_view_mode() {
+        let big = "y".repeat(5000);
+        for mode in [
+            StringViewMode::Raw,
+            StringViewMode::Json,
+            StringViewMode::Base64,
+            StringViewMode::Hex,
+        ] {
+            let text = render_text(&big, 100, mode.clone());
+            assert!(
+                text.contains("truncated at 100"),
+                "{:?} should truncate, got: {text}",
+                mode.label()
+            );
+        }
+    }
+
+    /// `0` in the config means no limit, and the inspector receives
+    /// `usize::MAX` in that case.
+    #[test]
+    fn unlimited_budget_shows_the_whole_value() {
+        let big = "z".repeat(20_000);
+        let text = render_text(&big, usize::MAX, StringViewMode::Raw);
+        assert!(!text.contains("truncated"), "got: {text}");
+    }
+
+    /// The budget exists because a huge value blew the frame budget. Assert the
+    /// rendering actually stays cheap rather than just being short.
+    #[test]
+    fn truncation_keeps_render_cost_flat_as_the_value_grows() {
+        let small = "a".repeat(100_000);
+        let large = "a".repeat(2_000_000);
+
+        let time = |value: &str| {
+            let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
+            let mut inspector = ValueInspector::new();
+            inspector.max_value_display_bytes = 4096;
+            inspector.set_value("k".to_string(), RedisValue::String(value.to_string()));
+            let start = std::time::Instant::now();
+            for _ in 0..10 {
+                terminal.draw(|f| inspector.render(f, f.area())).unwrap();
+            }
+            start.elapsed()
+        };
+
+        let small_time = time(&small);
+        let large_time = time(&large);
+        assert!(
+            large_time < small_time * 10,
+            "render cost should not scale with the untruncated value: \
+             100KB took {small_time:?}, 2MB took {large_time:?}"
+        );
     }
 }

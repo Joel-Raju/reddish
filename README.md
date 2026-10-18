@@ -132,7 +132,38 @@ log_level = "info"
 color_scheme = "default"
 mouse_enabled = true
 confirm_deletes = true
+max_keys_in_memory = 500000
+
+# Editor used for string editing. Overrides $EDITOR when set.
+# editor = "hx"
+
+# Byte budget for rendering a single value. Larger values are truncated with a
+# visible marker. Use 0 for no limit. Default: 1048576 (1 MiB).
+max_value_display_bytes = 1048576
 ```
+
+### Quick start
+
+```bash
+redis-server --port 6379          # or use any reachable server
+cargo run -- --url redis://localhost:6379/0
+```
+
+Press `?` for the full key list. The overlay is generated from whichever
+keymap preset you have loaded, so it always shows the keys that actually work —
+if you use the emacs preset it will not tell you to press `q` to quit.
+
+Suggested first steps:
+
+| Key | Action |
+|-----|--------|
+| `1` `2` `3` `4` | Switch between Keys, REPL, Info and Pub/Sub |
+| `/` | Search keys by name, fuzzy by default, `Ctrl+r` toggles regex |
+| `Enter` | Inspect the selected key's value |
+| `a` | Expand or collapse a namespace |
+| `e` | Edit a string (see `$EDITOR` below) |
+| `Ctrl+p` | Command palette |
+| `q` | Quit |
 
 ### Connection profiles
 
@@ -244,6 +275,18 @@ rather than the panes behind it.
 `$EDITOR` may include flags, e.g. `code --wait` or `emacsclient -nw`. An editor
 that exits non-zero is treated as a cancel, so a failed edit cannot silently
 discard the value.
+
+To pin an editor without changing your shell environment, set `editor` in
+`config.toml`; it takes precedence over `$EDITOR`. A blank value falls back to
+`$EDITOR`.
+
+### Large values
+
+`max_value_display_bytes` (default 1 MiB) bounds how much of a string value is
+rendered. Anything longer is cut with a `... truncated at N of M bytes` marker
+rather than drawn in full, since a multi-megabyte value would stall the frame.
+Set it to `0` to disable the limit. The value is still fetched from Redis in
+full — this bounds rendering, not what the client downloads.
 
 ### Search overlay shortcuts
 

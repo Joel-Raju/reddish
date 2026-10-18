@@ -10,11 +10,11 @@
 
 | Metric | Value |
 |--------|-------|
-| **Overall v1 Completion** | ~95% |
+| **Overall v1 Completion** | ~98% |
 | **Milestones with Gate Tests** | 8 (M0–M8) — all feature gates satisfied |
-| **Gate Tests Passing** | ~80% of specified test rows exist and pass |
+| **Gate Tests Passing** | ~98% of specified test rows exist and pass |
 | **Major Architecture Pieces** | 100% implemented |
-| **UI Polish / Advanced Features** | 90% implemented |
+| **UI Polish / Advanced Features** | 94% implemented |
 | **Performance / Benchmarks** | 100% implemented |
 
 ### Measured Performance (release build, 10K keys)
@@ -38,34 +38,23 @@ implemented. What remains is **specified test rows that do not exist yet**,
 plus a handful of small spec features. Counted honestly rather than claimed
 complete — see the tables above for the authoritative per-row status.
 
-**Missing test rows (16)** — grouped by milestone:
+**Missing test rows (2)** — grouped by milestone:
 
 | Milestone | Rows | Nature |
 |-----------|------|--------|
-| M0 | 0.13, 0.14, 0.15 | Stress tests: concurrent mutation, extreme resize, CLI flag conflicts |
-| M2 | 2.31, 2.32, 2.33 | Stream XADD/XDEL round-trip; `InputWidget` typing and cancel |
-| M3 | 3.15–3.17, 3.24, 3.26 | REPL history push/browse/persistence/cap; pipeline partial error; `Ctrl+L` clear |
-| M4 | 4.23 | `SLOWLOG RESET` (the feature is also missing, not just the test) |
-| M5 | 5.16, 5.19–5.21 | PSUBSCRIBE integration; search finds keys, progress transitions, query re-score |
-| M6 | 6.14 | SSH tunnel live test — needs a real SSH daemon, correctly deferred |
+| M3 | 3.24 | `test_execute_pipeline_partial_error` |
+| M6 | 6.14 | `test_ssh_tunnel_opens_and_closes` — needs a real SSH daemon, correctly deferred |
 
-Note 0.15 (CLI flag conflicts) is substantially covered by the keybinding
-collision test added in this work; the remaining gap is CLI-level rather than
-keymap-level.
-
-**Missing small features (9)**
+**Missing small features (6)**
 
 | Item | Ref | Nature |
 |------|-----|---------|
 | REPL argument/subcommand hints | 3.8 | `CONFIG <Tab>` suggests `GET`/`SET`/`REWRITE` |
 | Pub/Sub auto-scroll follow | 5.5 | Tail the message pane as messages arrive |
-| `SLOWLOG RESET` + `SLOWLOG LEN` | 4.7 | Client methods and keybinding; `LEN` in the panel header |
 | Key browser sort by memory | 4.2 | `MEMORY USAGE` is per-key and lazily fetched, so this needs a design decision |
 | Show/hide TTL and memory columns | 4.2 | Column toggles |
 | Inline key rename in the inspector | 4.3 | `r` is rename in the key browser only |
 | Set operations panel in the inspector | 4.3 | Union/intersect/diff exist in the browser only |
-| Config `editor` key | 4.9 | `$EDITOR` is read from the environment but not overridable in `config.toml` |
-| Config `max_value_display_bytes` | 4.9 | Parsed by neither the struct nor the renderers; large values are not truncated |
 
 **Deviation from spec**
 
@@ -512,8 +501,8 @@ The original audit predated Phases A–E. The following were reported as
 | `color_scheme` | ⚠️ Partial | Parsed but not dynamically applied to all widgets |
 | `mouse_enabled` | ✅ Done | |
 | `confirm_deletes` | ⚠️ Partial | Field exists but confirmation logic is hardcoded |
-| `editor` | ❌ Missing | `$EDITOR` not used |
-| `max_value_display_bytes` | ❌ Missing | |
+| `editor` | ✅ Done | Overrides `$EDITOR`; blank falls through to it |
+| `max_value_display_bytes` | ✅ Done | Truncates at render time with a visible marker; 0 = unlimited |
 | Vim/Emacs presets | ✅ Done | |
 | TOML keybinding override | ✅ Done | |
 
@@ -554,11 +543,11 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 
 ### Next Recommended Sub-Milestone
 
-**The 16 missing test rows** (see Remaining Gaps above). They are the highest
-value remaining work because each pins behaviour that currently has no
-regression cover, and several exercise code paths that turned out to hold real
-bugs when first tested — the FLUSHDB interference and the unreachable key
-bindings were both found this way.
+**The 8 items in Remaining Gaps above**, in the order listed. Writing the
+missing tests proved its worth twice over: they turned up a stale query cache in
+global search that silently matched every candidate, and a test-isolation bug
+where `ReplWidget::new()` read and wrote the developer's real history file.
+Both were invisible until something exercised the code path.
 
 ---
 
@@ -571,12 +560,15 @@ optional features below plus the residual M8 test rows.
 
 ### P2 — Should Have for v1
 
-1. **The 16 missing test rows listed above** — highest value, since each pins
-   behaviour that currently has no regression cover.
-2. **`SLOWLOG RESET` + `SLOWLOG LEN`** (4.7) — the only missing slowlog feature.
-3. **Config `editor` and `max_value_display_bytes`** (4.9) — both are documented
-   config keys that are silently ignored today.
-4. **Full-screen editor popup** (E2) — `TextAreaEditor` renders inline in the value pane; the only remaining deviation from the spec.
+1. **`test_execute_pipeline_partial_error`** (3.24) — the only missing test row
+   that does not need external infrastructure.
+2. **REPL subcommand hints** (3.8) and **Pub/Sub auto-scroll** (5.5) — both
+   contained, and the two highest-value remaining features.
+3. **Key browser memory sort and column toggles** (4.2) — needs a decision on
+   lazily-fetched `MEMORY USAGE` before it can be implemented honestly.
+4. **Inspector-side set operations and inline rename** (4.3) — both exist in the
+   key browser; these would extend them to the value pane.
+5. **Full-screen editor popup** (E2) — `TextAreaEditor` renders inline in the value pane; the only remaining deviation from the spec.
 
 ### P3 — Nice to Have / Post-v1
 

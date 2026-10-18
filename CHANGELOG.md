@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recalled with `Alt+Up` / `Alt+Down`.
 - **Search progress** — the overlay title shows the live candidate count while
   a scan is in flight.
+- **`$EDITOR` integration** — when set, editing a string key suspends the TUI
+  and opens the editor on the value via a `NamedTempFile`. Supports editors
+  with flags (`code --wait`); the file is deleted on exit, and the value is
+  saved back only if it changed. Unset or blank falls back to the built-in editor.
 - **JSON syntax highlighting** in the string view: keys yellow, strings green,
   numbers cyan, `true`/`false`/`null` magenta, punctuation dimmed. Invalid
   JSON falls back to plain text.

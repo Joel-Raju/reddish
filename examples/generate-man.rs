@@ -53,7 +53,11 @@ Recent global search queries, most recent first, capped at 100 entries.
 .SH ENVIRONMENT
 .TP
 .B $EDITOR
-Ignored in v0.1.0; string values are edited with the built\-in editor.
+When set, editing a string key (\fBe\fR in the value inspector) suspends the TUI
+and opens this editor on the value. The value is written to a temporary file
+that is removed when the editor exits, and the result is saved back to Redis
+only if it differs. A leading program plus flags is supported, e.g.
+\fBcode --wait\fR. Unset or blank means the built\-in editor is used instead.
 .TP
 .B REDIS\_URL, REDIS\_PASSWORD
 Convenience values for a password reference of kind environment.

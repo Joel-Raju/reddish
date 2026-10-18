@@ -190,6 +190,82 @@ pub enum Tab {
     PubSub,
 }
 
+/// A string edit handed to the user's `$EDITOR`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalEdit {
+    pub key: String,
+    pub value: String,
+}
+
+/// Split an `$EDITOR` value into a program and its leading arguments.
+///
+/// Handles the common forms: `vim`, `code --wait`, `emacsclient -nw`.
+fn split_editor_command(editor: &str) -> Option<(String, Vec<String>)> {
+    let mut parts = editor.split_whitespace().map(str::to_string);
+    let program = parts.next()?;
+    Some((program, parts.collect()))
+}
+
+/// The editor to use, if `$EDITOR` names one.
+pub fn external_editor() -> Option<String> {
+    std::env::var("EDITOR")
+        .ok()
+        .map(|e| e.trim().to_string())
+        .filter(|e| !e.is_empty())
+}
+
+/// Write `edit.value` to a temp file, run the user's editor on it, and return
+/// the edited text.
+///
+/// The caller is responsible for suspending the TUI; this function only touches
+/// the filesystem and spawns a child process, so it is unit-testable without a
+/// terminal.
+///
+/// Returns `Ok(None)` when no usable editor is configured, when the editor exits
+/// non-zero (a failed `write` should not silently discard the value), or when
+/// the file cannot be read back. The `NamedTempFile` is removed on drop, so the
+/// value is never left in a temp file after this returns.
+pub fn edit_in_external_editor(edit: &ExternalEdit) -> color_eyre::Result<Option<String>> {
+    use std::io::Write;
+
+    let Some(editor) = external_editor() else {
+        return Ok(None);
+    };
+    let Some((program, args)) = split_editor_command(&editor) else {
+        return Ok(None);
+    };
+
+    let mut file = tempfile::NamedTempFile::new()?;
+    file.write_all(edit.value.as_bytes())?;
+    file.flush()?;
+
+    let status = std::process::Command::new(&program)
+        .args(&args)
+        .arg(file.path())
+        .status();
+
+    match status {
+        Ok(s) if s.success() => Ok(std::fs::read_to_string(file.path()).ok()),
+        _ => Ok(None),
+    }
+}
+
+/// Leave the alternate screen and disable raw mode so a child process can
+/// use the terminal normally.
+fn suspend_tui(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> std::io::Result<()> {
+    use crossterm::{cursor, execute, terminal::LeaveAlternateScreen};
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, cursor::Show)?;
+    crossterm::terminal::disable_raw_mode()
+}
+
+/// Undo [`suspend_tui`] and clear the screen, since the editor redrew it.
+fn resume_tui(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> std::io::Result<()> {
+    use crossterm::{cursor, execute, terminal::EnterAlternateScreen};
+    crossterm::terminal::enable_raw_mode()?;
+    execute!(terminal.backend_mut(), EnterAlternateScreen, cursor::Hide)?;
+    terminal.clear()
+}
+
 /// Geometry captured during the last render so mouse clicks can be resolved.
 ///
 /// Ratatui is immediate-mode: nothing is retained between frames, so click
@@ -241,6 +317,9 @@ pub struct App {
     /// Set when a mouse click switches to the Info tab; `render` cannot await,
     /// so the refresh is deferred to the next tick.
     info_refresh_pending: bool,
+    /// A string edit awaiting the external editor, consumed by `run` (which
+    /// owns the `Terminal` and so can suspend the TUI around the subprocess).
+    pub pending_external_edit: Option<ExternalEdit>,
 }
 
 impl App {
@@ -280,6 +359,7 @@ impl App {
             overlay_input: None,
             geometry: std::cell::Cell::new(RenderGeometry::default()),
             info_refresh_pending: false,
+            pending_external_edit: None,
         }
     }
 
@@ -422,6 +502,10 @@ impl App {
     }
 
     pub async fn run(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+        // `$EDITOR` takes over string editing when set; otherwise the built-in
+        // editor is always used.
+        self.value_inspector.prefer_external_editor = external_editor().is_some();
+
         if let Some(profile) = self.startup_profile.take() {
             self.connect_profile(profile).await;
         }
@@ -436,9 +520,57 @@ impl App {
             if let Ok(Some(event)) = event {
                 self.handle_event(event).await;
             }
+
+            // The external editor owns the terminal, so it is driven here where
+            // the TUI can be suspended around the child process.
+            if self.pending_external_edit.is_some() {
+                self.run_pending_external_edit(terminal).await;
+            }
         }
 
         Ok(())
+    }
+
+    /// Suspend the TUI, run the user's editor, restore the screen, and apply
+    /// the result if the value actually changed.
+    async fn run_pending_external_edit(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) {
+        let Some(edit) = self.pending_external_edit.take() else {
+            return;
+        };
+        let original = edit.value.clone();
+
+        if suspend_tui(terminal).is_err() {
+            self.error_message = Some("Could not suspend the terminal".to_string());
+            return;
+        }
+        // `block_in_place` keeps the tokio runtime alive while this thread is
+        // occupied by the editor subprocess.
+        let outcome = tokio::task::block_in_place(|| edit_in_external_editor(&edit));
+        let _ = resume_tui(terminal);
+
+        match outcome {
+            Ok(Some(new_value)) if new_value != original => {
+                if self.readonly {
+                    self.error_message =
+                        Some("Read-only mode: edit blocked (press Esc)".to_string());
+                } else {
+                    self.handle_inspector_action(InspectorAction::WriteString {
+                        key: edit.key.clone(),
+                        value: new_value,
+                    })
+                    .await;
+                }
+            }
+            // Unchanged, cancelled, or no editor configured: leave the value
+            // alone without reporting an error.
+            Ok(_) => {}
+            Err(err) => {
+                self.error_message = Some(format!("External editor failed: {err}"));
+            }
+        }
     }
 
     async fn handle_event(&mut self, event: Event) {
@@ -740,14 +872,23 @@ impl App {
 
         match self.active_tab {
             Tab::Keys => {
+                // The inspector gets first refusal on every key. Detect
+                // consumption from its state rather than from the returned
+                // action: prompts like the hash filter return `None` yet still
+                // claim the key, and letting the key browser see it too would
+                // open two prompts at once (this is what made `i` open both a
+                // list-insert and a set-intersection prompt).
+                let before = self.value_inspector.consumed_state();
                 let inspector_action = self
                     .value_inspector
                     .handle_event_with_keymap(&Event::Key(key), &self.keymap);
-                if self.value_inspector.edit_mode {
-                    if let Some(action) = inspector_action {
-                        self.handle_inspector_action(action).await;
-                    }
-                } else if inspector_action.is_none()
+                let consumed = self.value_inspector.consumed_state() != before;
+
+                if let Some(action) = inspector_action.as_ref() {
+                    self.handle_inspector_action(action.clone()).await;
+                }
+                if !consumed
+                    && inspector_action.is_none()
                     && let Some(action) = self
                         .key_browser
                         .handle_event_with_keymap(&Event::Key(key), &self.keymap)
@@ -1205,6 +1346,13 @@ impl App {
         }
     }
 
+    /// Test seam: the real `handle_inspector_action` is private, so expose a
+    /// wrapper that unit tests outside this module cannot reach.
+    #[cfg(test)]
+    pub async fn handle_inspector_action_public(&mut self, action: InspectorAction) {
+        self.handle_inspector_action(action).await;
+    }
+
     async fn handle_inspector_action(&mut self, action: InspectorAction) {
         match action {
             InspectorAction::WriteString { key, value } => {
@@ -1472,6 +1620,18 @@ impl App {
             InspectorAction::InvalidInput(msg) => {
                 self.status_bar.push_error(msg.clone());
                 self.error_message = Some(msg);
+            }
+            InspectorAction::EditStringExternal { key, value } => {
+                // Only queue when an editor is actually configured; otherwise
+                // fall back to the built-in editor so `e` always does something.
+                if external_editor().is_some() {
+                    self.pending_external_edit = Some(ExternalEdit { key, value });
+                } else {
+                    self.value_inspector.edit_mode = true;
+                    self.value_inspector.text_editor = Some(
+                        crate::ui::widgets::text_area_editor::TextAreaEditor::new(value),
+                    );
+                }
             }
             InspectorAction::CopyValue(val) => {
                 #[cfg(not(test))]
@@ -1776,6 +1936,7 @@ fn spawn_search_scan(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::redis::types::RedisValue;
     use std::process::{Child, Command};
     use std::time::Duration;
 
@@ -1817,6 +1978,312 @@ mod tests {
             mode: ConnectionMode::Standalone,
             tls: None,
             ssh_tunnel: None,
+        }
+    }
+
+    // ---- $EDITOR integration (E2, 2.7, 8.3) ----
+
+    #[test]
+    fn split_editor_command_handles_plain_program() {
+        assert_eq!(
+            split_editor_command("vim"),
+            Some(("vim".to_string(), vec![]))
+        );
+    }
+
+    #[test]
+    fn split_editor_command_handles_program_with_arguments() {
+        assert_eq!(
+            split_editor_command("code --wait"),
+            Some(("code".to_string(), vec!["--wait".to_string()]))
+        );
+    }
+
+    #[test]
+    fn split_editor_command_trims_and_collapses_whitespace() {
+        assert_eq!(
+            split_editor_command("  emacsclient   -nw  "),
+            Some(("emacsclient".to_string(), vec!["-nw".to_string()]))
+        );
+    }
+
+    #[test]
+    fn split_editor_command_rejects_empty() {
+        assert_eq!(split_editor_command(""), None);
+        assert_eq!(split_editor_command("   "), None);
+    }
+
+    #[test]
+    fn external_editor_reads_environment() {
+        with_editor("vim", || {
+            assert_eq!(external_editor().as_deref(), Some("vim"));
+        });
+        with_editor("   ", || {
+            assert_eq!(external_editor(), None, "blank $EDITOR must be ignored");
+        });
+    }
+
+    /// Use a trivial shell script as the "editor" so the test needs no TUI.
+    #[test]
+    fn edit_in_external_editor_round_trips_a_change() {
+        let script = write_script("#!/bin/sh\nprintf 'edited' > \"$1\"\n");
+        let edit = ExternalEdit {
+            key: "k".to_string(),
+            value: "original".to_string(),
+        };
+        let result = with_editor(&script, || edit_in_external_editor(&edit));
+        assert_eq!(result.unwrap().as_deref(), Some("edited"));
+    }
+
+    #[test]
+    fn edit_in_external_editor_returns_current_value_when_unchanged() {
+        // `true` is a no-op editor: it leaves the file alone.
+        let edit = ExternalEdit {
+            key: "k".to_string(),
+            value: "same".to_string(),
+        };
+        let result = with_editor("true", || edit_in_external_editor(&edit));
+        assert_eq!(result.unwrap().as_deref(), Some("same"));
+    }
+
+    #[test]
+    fn edit_in_external_editor_does_nothing_when_editor_fails() {
+        // `false` exits non-zero, which must not discard the value.
+        let edit = ExternalEdit {
+            key: "k".to_string(),
+            value: "keep me".to_string(),
+        };
+        let result = with_editor("false", || edit_in_external_editor(&edit));
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn edit_in_external_editor_returns_none_when_editor_is_unset() {
+        let edit = ExternalEdit {
+            key: "k".to_string(),
+            value: "v".to_string(),
+        };
+        let result = without_editor(|| edit_in_external_editor(&edit));
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn edit_in_external_editor_returns_none_for_a_missing_program() {
+        let edit = ExternalEdit {
+            key: "k".to_string(),
+            value: "v".to_string(),
+        };
+        let result = with_editor("definitely-not-a-real-editor-binary", || {
+            edit_in_external_editor(&edit)
+        });
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn edit_in_external_editor_supports_an_editor_with_arguments() {
+        // The inner editor writes to its *last* argument, which is the file
+        // path append_edit passed after the wrapper's own flags.
+        let inner = write_script(
+            "#!/bin/sh\nfor a in \"$@\"; do last=\"$a\"; done\nprintf 'via args' > \"$last\"\n",
+        );
+        // Wrap so the program is invoked with a leading flag of its own.
+        let wrapper = write_script(&format!("#!/bin/sh\nexec {} --wait \"$@\"\n", inner));
+        let edit = ExternalEdit {
+            key: "k".to_string(),
+            value: "v".to_string(),
+        };
+        let result = with_editor(&format!("{wrapper} --flag"), || {
+            edit_in_external_editor(&edit)
+        });
+        assert_eq!(result.unwrap().as_deref(), Some("via args"));
+    }
+
+    /// The value must not survive in a temp file once the editor returns.
+    #[test]
+    fn temp_file_is_removed_after_editing() {
+        let script =
+            write_script("#!/bin/sh\nprintf '%s' \"$1\" > \"$0.leaked\"\ncat > /dev/null\n");
+        let edit = ExternalEdit {
+            key: "k".to_string(),
+            value: "secret-value".to_string(),
+        };
+        let result = with_editor(&script, || edit_in_external_editor(&edit));
+        assert!(result.is_ok());
+
+        // The script recorded the temp path it was handed; that file must be
+        // gone now that NamedTempFile has been dropped.
+        let leaked = std::path::PathBuf::from(format!("{script}.leaked"));
+        let recorded = std::fs::read_to_string(&leaked).expect("script recorded the temp path");
+        let temp_path = std::path::PathBuf::from(recorded.trim());
+        assert!(!temp_path.exists(), "temp file leaked at {temp_path:?}");
+        let _ = std::fs::remove_file(&leaked);
+    }
+
+    #[test]
+    fn edit_action_is_queued_when_an_editor_exists() {
+        // A runtime is built up front; block_on cannot be called from inside
+        // another runtime, which is why this is not a #[tokio::test].
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let script = write_script("#!/bin/sh\ntrue\n");
+        let mut app = App::new(Config::default());
+        with_editor(&script, || {
+            rt.block_on(
+                app.handle_inspector_action_public(InspectorAction::EditStringExternal {
+                    key: "k".to_string(),
+                    value: "v".to_string(),
+                }),
+            );
+        });
+        assert!(app.pending_external_edit.is_some());
+    }
+
+    #[test]
+    fn edit_action_is_not_queued_when_no_editor_exists() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let mut app = App::new(Config::default());
+        without_editor(|| {
+            rt.block_on(
+                app.handle_inspector_action_public(InspectorAction::EditStringExternal {
+                    key: "k".to_string(),
+                    value: "v".to_string(),
+                }),
+            );
+        });
+        assert!(
+            app.pending_external_edit.is_none(),
+            "must not queue without an editor"
+        );
+    }
+
+    #[test]
+    fn inspector_edit_key_prefers_external_editor_when_enabled() {
+        let mut inspector = ValueInspector::new();
+        inspector.set_value("k".to_string(), RedisValue::String("hello".to_string()));
+        inspector.prefer_external_editor = true;
+
+        let action = inspector.handle_event(&crossterm_event('e'));
+        assert_eq!(
+            action,
+            Some(InspectorAction::EditStringExternal {
+                key: "k".to_string(),
+                value: "hello".to_string(),
+            })
+        );
+        assert!(
+            !inspector.edit_mode,
+            "must not open the built-in editor as well"
+        );
+        assert!(inspector.text_editor.is_none());
+    }
+
+    #[test]
+    fn inspector_edit_key_uses_builtin_editor_by_default() {
+        let mut inspector = ValueInspector::new();
+        inspector.set_value("k".to_string(), RedisValue::String("hello".to_string()));
+
+        assert_eq!(inspector.handle_event(&crossterm_event('e')), None);
+        assert!(inspector.edit_mode);
+        assert!(inspector.text_editor.is_some());
+    }
+
+    #[test]
+    fn consumed_state_changes_when_a_prompt_opens() {
+        use crate::ui::value_inspector::PromptMode;
+        let mut inspector = ValueInspector::new();
+        let mut map = indexmap::IndexMap::new();
+        map.insert("f1".to_string(), "v".to_string());
+        inspector.set_value("h".to_string(), RedisValue::Hash(map));
+
+        let before = inspector.consumed_state();
+        inspector.handle_event(&Event::Key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('f'),
+            crossterm::event::KeyModifiers::CONTROL,
+        )));
+        let after = inspector.consumed_state();
+        assert_ne!(
+            before, after,
+            "opening a prompt must be reported as consuming the key"
+        );
+        assert_eq!(inspector.prompt_mode, Some(PromptMode::HashFilter));
+    }
+
+    #[test]
+    fn consumed_state_unchanged_for_an_unrelated_key() {
+        let mut inspector = ValueInspector::new();
+        inspector.set_value(
+            "l".to_string(),
+            RedisValue::List(vec!["a".to_string(), "b".to_string()]),
+        );
+        let before = inspector.consumed_state();
+        // A digit is bound to tab switching globally, so the inspector ignores it.
+        inspector.handle_event(&crossterm_event('7'));
+        assert_eq!(before, inspector.consumed_state());
+    }
+
+    // ---- helpers ----
+
+    /// Serializes tests that mutate `$EDITOR`.
+    ///
+    /// The environment is process-global, so two such tests running
+    /// concurrently would clobber each other's value and produce
+    /// order-dependent failures.
+    static EDITOR_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Run `f` with `$EDITOR` set to `editor`, restoring it afterwards.
+    fn with_editor<T>(editor: &str, f: impl FnOnce() -> T) -> T {
+        let _guard = EDITOR_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var("EDITOR").ok();
+        unsafe {
+            std::env::set_var("EDITOR", editor);
+        }
+        let result = f();
+        restore_env("EDITOR", previous);
+        result
+    }
+
+    /// Run `f` with `$EDITOR` removed, restoring it afterwards.
+    fn without_editor<T>(f: impl FnOnce() -> T) -> T {
+        let _guard = EDITOR_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = std::env::var("EDITOR").ok();
+        unsafe {
+            std::env::remove_var("EDITOR");
+        }
+        let result = f();
+        restore_env("EDITOR", previous);
+        result
+    }
+
+    fn crossterm_event(c: char) -> Event {
+        Event::Key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Char(c),
+        ))
+    }
+
+    fn write_script(body: &str) -> String {
+        let path = std::env::temp_dir().join(format!(
+            "reddish-fake-editor-{}-{}",
+            std::process::id(),
+            body.len()
+        ));
+        std::fs::write(&path, body).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        path.to_string_lossy().into_owned()
+    }
+
+    fn restore_env(key: &str, previous: Option<String>) {
+        unsafe {
+            match previous {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
         }
     }
 

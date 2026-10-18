@@ -202,7 +202,7 @@ rather than the panes behind it.
 
 | Action | Vim | Emacs | Description |
 |--------|-----|-------|-------------|
-| edit | `e` | `Ctrl+e` | Edit current item |
+| edit | `e` | `Ctrl+e` | Edit current item (see `$EDITOR` below) |
 | delete | `D` | `Ctrl+d` | Delete current item |
 | copy | `y` | `Ctrl+w` | Copy current item |
 | set_ttl | `t` | `Ctrl+t` | Set TTL on inspected key |
@@ -230,6 +230,20 @@ rather than the panes behind it.
 > `q` quits the app from anywhere, so inspector bindings deliberately avoid it.
 > The vim preset binds the hash filter to `Ctrl+f` because `/` is already the
 > global search key.
+
+#### Editing strings
+
+`e` on a string key opens an editor. Which one depends on the environment:
+
+- **`$EDITOR` set** — the TUI suspends (leaves the alternate screen and disables
+  raw mode), the value is written to a temporary file, and your editor is opened
+  on it. The file is deleted when the editor exits. The result is written back
+  to Redis only if it actually changed, so `:q` without edits issues no `SET`.
+- **`$EDITOR` unset or blank** — the built-in editor opens in the value pane.
+
+`$EDITOR` may include flags, e.g. `code --wait` or `emacsclient -nw`. An editor
+that exits non-zero is treated as a cancel, so a failed edit cannot silently
+discard the value.
 
 ### Search overlay shortcuts
 

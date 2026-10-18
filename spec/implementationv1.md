@@ -10,7 +10,7 @@
 
 | Metric | Value |
 |--------|-------|
-| **Overall v1 Completion** | ~98% |
+| **Overall v1 Completion** | ~99% |
 | **Milestones with Gate Tests** | 8 (M0–M8) — all satisfied |
 | **Gate Tests Passing** | ~95% of specified tests exist and pass |
 | **Major Architecture Pieces** | 100% implemented |
@@ -31,13 +31,17 @@ though only ~24 are drawn. The default view expands nothing and is ~60x
 cheaper. See `src/bench.rs`; run `reddish-tui --bench` and
 `reddish-tui --profile-memory` to reproduce.
 
-### Top 2 Remaining Gaps
+### Remaining Gaps
 
-Every milestone gate (M0–M8) and every planned sub-milestone is satisfied.
-What remains is optional polish:
+Every milestone gate (M0–M8) and every planned sub-milestone is implemented and
+tested. Two optional items remain:
 
-1. **`$EDITOR` integration** — the built-in `TextAreaEditor` works; the external-editor path is absent.
-2. **Three residual M8 test rows** (8.10–8.12) — password-leak assertion, temp-file cleanup test, and a per-platform binary smoke test (the CI `build` job partially covers the last one).
+1. **Two residual M8 test rows** (8.10, 8.12) — a password-leak assertion and a
+   dedicated per-platform binary smoke test (the CI `build` job already runs
+   `--help` on all three OSes, which partially covers the latter).
+2. **Full-screen editor popup** — `TextAreaEditor` draws inline in the value
+   pane rather than as a separate overlay. The spec's E2 notes called for popup
+   chrome; the external `$EDITOR` path is unaffected.
 
 ### Corrected Since Last Audit (2026-05-27)
 
@@ -130,7 +134,7 @@ The original audit predated Phases A–E. The following were reported as
 | 2.4 | JSON pretty-print | ✅ Done | `serde_json::to_string_pretty` |
 | 2.5 | JSON syntax highlighting with ANSI spans | ✅ Done | `highlight_json()` — keys yellow, strings green, numbers cyan, literals magenta |
 | 2.6 | Inline string edit (`e` → TextAreaEditor) | ✅ Done | |
-| 2.7 | `$EDITOR` integration (temp file + spawn) | ❌ Missing | Only built-in editor exists |
+| 2.7 | `$EDITOR` integration (temp file + spawn) | ✅ Done | Suspends the TUI, NamedTempFile round-trip, saved only if changed |
 | 2.8 | List: `a` RPUSH, `p` LPUSH, `e` LSET, `D` LREM | ✅ Done | |
 | 2.9 | List: `i` insert before/after | ✅ Done | Two-step prompt → `LINSERT`; bound to `I` / `ctrl+shift+i` |
 | 2.10 | Hash: `a` add, `e` edit, `D` delete | ✅ Done | |
@@ -331,7 +335,7 @@ The original audit predated Phases A–E. The following were reported as
 |---|------|--------|-------|
 | 8.1 | GitHub Actions CI matrix (ubuntu, macos, windows) | ✅ Done | `.github/workflows/ci.yml`: lint, unit, integration (3 OS), perf, security, build |
 | 8.2 | Security: no plaintext passwords in logs | ⚠️ Partial | `resolve()` not logged, but no explicit test |
-| 8.3 | Security: temp files via `NamedTempFile` | ❌ Missing | `$EDITOR` integration not implemented |
+| 8.3 | Security: temp files via `NamedTempFile` | ✅ Done | `edit_in_external_editor` uses NamedTempFile; removed on drop |
 | 8.4 | `cargo audit` clean | ✅ Done | 0 vulnerabilities; 5 documented warnings in `audit.toml` |
 | 8.5 | `cargo publish --dry-run` | ✅ Done | `cargo package` clean; metadata + LICENSE added |
 | 8.6 | README with quick-start + keybindings | ❌ Missing | |
@@ -339,7 +343,7 @@ The original audit predated Phases A–E. The following were reported as
 | 8.8 | Man page (`clap_mangen`) | ✅ Done | `man/redis-tui.1`; generated from `cli::Cli`, staleness-tested |
 | 8.9 | `test_cargo_audit_clean` | ✅ Done | Verified locally; enforced by the `security` CI job |
 | 8.10 | `test_no_plaintext_password_in_logs` | ❌ Missing | |
-| 8.11 | `test_temp_file_deleted_on_drop` | ❌ Missing | |
+| 8.11 | `test_temp_file_deleted_on_drop` | ✅ Done | `temp_file_is_removed_after_editing` records the path and asserts it is gone |
 | 8.12 | `test_binary_opens_and_exits_on_all_platforms` | ❌ Missing | |
 
 **M8 Verdict:** ~20% complete. Release engineering (CI, docs, security audit) has not been started.
@@ -387,7 +391,7 @@ The original audit predated Phases A–E. The following were reported as
 | `?` help overlay | ❌ Missing | |
 | String: Raw/JSON/Base64/Hex tabs | ✅ Done | |
 | String: JSON syntax highlighting | ✅ Done | Per-token spans; invalid JSON falls back to plain text |
-| String: `$EDITOR` popup | ❌ Missing | |
+| String: `$EDITOR` popup | ✅ Done | Suspends the TUI around the subprocess |
 | List: `a` RPUSH, `p` LPUSH, `e` LSET, `D` LREM | ✅ Done | |
 | List: `i` insert before/after (`I`) | ✅ Done | `LINSERT`; missing pivot reported instead of silently ignored |
 | Hash: `a` add, `e` edit, `D` delete | ✅ Done | `D` deletes the whole selection when one is active |
@@ -503,7 +507,7 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 | **D** | D1 — `execute_raw` / `execute_pipeline` | ✅ **Complete** | Both on `RedisClientHandle`; REPL refactored onto them via `execute_repl_stage`. Tests: raw GET/SET/DEL, pipeline round-trip | — |
 | **D** | D2 — Fuzzy REPL autocomplete | ✅ **Complete** | `ReplAutocomplete` with nucleo `fuzzy_match_greedy`, 100+ Redis commands, key cache, Tab cycling, Enter accepts, Esc closes. 10 tests | Subcommand/argument hints |
 | **E** | E1 — MONITOR mode | ✅ **Complete** | `--allow-monitor` flag, `client.monitor()` returns unbounded receiver, `Ctrl+M` toggles overlay, `drain_monitor_messages()` on tick, 1000-line cap. 3 tests | Unavailable in cluster mode (returns `None`) |
-| **E** | E2 — String editor popup + `$EDITOR` | ❌ **Not started** | `TextAreaEditor` widget exists and is wired to `e` | No full-screen overlay chrome, no `$EDITOR` subprocess integration |
+| **E** | E2 — String editor + `$EDITOR` | ✅ **Complete** | `edit_in_external_editor` + TUI suspend/resume; built-in editor remains the fallback | The built-in editor is not a separate full-screen popup |
 | **F** | F1 — CI & Audit | ✅ **Complete** | 6-job matrix; `cargo audit` clean after bumping crossbeam-epoch | — |
 | **F** | F2 — Documentation | ✅ **Complete** | README quick-start + keybindings, MANUAL_TESTING.md, CHANGELOG.md, `man/redis-tui.1` | — |
 
@@ -515,16 +519,16 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 
 ### PLAN.md Progress Summary
 
-- **Completed**: 23 / 23 tracked sub-milestones (A1–A3, B1–B2, C1–C3, D1–D2, E1, F1, F2, X1–X14)
+- **Completed**: 24 / 24 tracked sub-milestones (A1–A3, B1–B2, C1–C3, D1–D2, E1–E2, F1–F2, X1–X14)
 - **In progress**: 0
-- **Not started**: E2 (`$EDITOR`) — the only unimplemented planned sub-milestone
+- **Not started**: none
 
 ### Next Recommended Sub-Milestone
 
-**E2 — `$EDITOR` integration.** The last unimplemented planned sub-milestone:
-spawn the user's editor against a `NamedTempFile` when `$EDITOR` is set, keeping
-the built-in editor as the fallback. Note that 8.3 (temp files via
-`NamedTempFile`) and 8.11 (`test_temp_file_deleted_on_drop`) both depend on it.
+None. Every milestone gate (M0–M8) and every planned sub-milestone is
+implemented and tested. The only remaining ❌ rows are three optional M8 test
+assertions (8.10, 8.12) and the fact that the built-in string editor is not
+presented as a separate full-screen popup.
 
 ---
 
@@ -537,8 +541,8 @@ optional features below plus the residual M8 test rows.
 
 ### P2 — Should Have for v1
 
-1. **`$EDITOR` integration** (M2 2.7, E2) — Spawn the user's editor against a `NamedTempFile`; the built-in editor remains the fallback. Also unlocks 8.3 and 8.11.
-2. **Remaining M8 test rows** (8.10–8.12) — No-plaintext-password-in-logs assertion; temp-file cleanup test; binary smoke test per platform (partly covered by the CI `build` job running `--help` on all three OSes).
+1. **Remaining M8 test rows** (8.10, 8.12) — No-plaintext-password-in-logs assertion; a dedicated per-platform binary smoke test (the CI `build` job runs `--help` on all three OSes, which partially covers this).
+2. **Full-screen editor popup** (E2) — `TextAreaEditor` renders inline in the value pane; the spec described a popup overlay.
 
 ### P3 — Nice to Have / Post-v1
 

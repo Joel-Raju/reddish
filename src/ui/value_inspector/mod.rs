@@ -290,6 +290,12 @@ pub enum InspectorAction {
     },
     /// Reload the current stream value (used by follow mode).
     StreamRefresh,
+    /// Hand a string value to the user's `$EDITOR`. The app layer performs the
+    /// terminal suspend/resume and the file round-trip.
+    EditStringExternal {
+        key: String,
+        value: String,
+    },
     /// Client-side validation failure; surfaces in the status bar, no I/O.
     InvalidInput(String),
     StreamToggleGroups,
@@ -354,6 +360,9 @@ pub struct ValueInspector {
     pub zset_score_max: Option<String>,
     pub stream_cursor: usize,
     pub stream_compact: bool,
+    /// When set, `e` on a string hands the value to `$EDITOR` instead of
+    /// opening the built-in editor. Set from `app.rs` at startup.
+    pub prefer_external_editor: bool,
     /// When true, the tick handler reloads the stream so new entries appear.
     pub stream_follow: bool,
     pub stream_show_groups: bool,
@@ -395,6 +404,7 @@ impl ValueInspector {
             zset_score_max: None,
             stream_cursor: 0,
             stream_compact: true,
+            prefer_external_editor: false,
             stream_follow: false,
             value_filter: String::new(),
             stream_show_groups: false,
@@ -606,6 +616,21 @@ impl ValueInspector {
 
     pub fn clear_value_filter(&mut self) {
         self.value_filter.clear();
+    }
+
+    /// Cheap fingerprint of the interactive state a key press may have claimed.
+    ///
+    /// `app.rs` compares this before and after dispatching a key to decide
+    /// whether the key browser should also see it. Comparing state rather than
+    /// the returned action is necessary because prompts return `None` while
+    /// still consuming the keystroke.
+    pub fn consumed_state(&self) -> (bool, bool, bool, bool) {
+        (
+            self.edit_mode,
+            self.text_editor.is_some(),
+            self.list_prompt.is_some(),
+            self.prompt_mode.is_some(),
+        )
     }
 
     pub fn handle_event(&mut self, event: &Event) -> Option<InspectorAction> {
@@ -845,6 +870,12 @@ impl ValueInspector {
         if keymap.matches("edit", key)
             && let Some(RedisValue::String(ref s)) = self.value
         {
+            if self.prefer_external_editor {
+                return Some(InspectorAction::EditStringExternal {
+                    key: self.key.clone().unwrap_or_default(),
+                    value: s.clone(),
+                });
+            }
             self.edit_mode = true;
             self.text_editor = Some(TextAreaEditor::new(s.clone()));
         }

@@ -7,14 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-18
+
+A keyboard-driven Redis TUI: connection management, a namespace-grouped key
+browser, a typed value inspector covering all six Redis types, a REPL with
+fuzzy autocomplete, Pub/Sub, global key search, and a server dashboard with
+per-second stats and slow-log analysis.
+
+Six themes, vim and emacs keymap presets, cluster / sentinel / TLS support,
+`$EDITOR` integration, and enforced performance budgets. `--readonly` blocks
+every write, and the REPL refuses `FLUSHDB`, `FLUSHALL` and `KEYS *`.
+
+### Added
+
 - **Pub/Sub follow mode** — press `f` to toggle. The message pane tails the
   live feed by default; pausing freezes the viewport so a busy channel cannot
   move your reading position. Scrolling into history detaches automatically and
   scrolling back to the newest message re-attaches. The title always shows
   `[f] follow` or `[f] PAUSED`.
-
-### Added
-
 - **The built-in string editor is now a popup.** Pressing `e` used to replace
   the value pane with the editor, hiding the value you were editing. It now
   draws a centred overlay, so the original stays visible around it. The popup
@@ -77,8 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **REPL** with `;;` pipelines, shell-style quoting, persisted history with
   deduplication, `Ctrl+L` clear, and fuzzy command/key autocomplete.
 - **Command palette** (`Ctrl+P`), **help overlay**, **confirm dialogs**.
-- **Five built-in themes** (default, dracula, nord, solarized, gruvbox) with
-  vim and emacs keymap presets and TOML overrides.
+- **Five built-in themes** (default, dracula, nord, solarized_dark,
+  gruvbox_dark) with vim and emacs keymap presets and TOML overrides.
 - **Safety policy** — `--readonly` mode, plus blocking of `FLUSHDB`/`FLUSHALL`
   and `KEYS *` in the REPL.
 - **Reconnect** with exponential backoff and jitter.
@@ -151,7 +161,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dropped four unused dependencies** (`openssh`, `anyhow`, `tui-textarea`,
   `xdg`). `openssh` was Unix-only and was the sole reason the crate did not
   compile on Windows at all.
-
 - An unknown `--theme` is now rejected with the list of valid names instead of
   silently falling back to the default. `--help` previously advertised
   `solarized` and `gruvbox`, which were never real theme names.
@@ -172,11 +181,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The ZSet range-query binding moved from `q` to `Q`, and the hash filter from
   `/` to `Ctrl+f`, because `q` quits from anywhere and `/` opens global search.
 - `cargo fmt --check` and `clippy -D warnings` are now enforced in CI.
-
-## [0.1.0]
-
-Initial release: connection management, namespace key browser, value inspector
-for all six Redis types, REPL, pub/sub, search, and the server info dashboard.
 
 [Unreleased]: https://github.com/Joel-Raju/reddish/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/Joel-Raju/reddish/releases/tag/v0.1.0

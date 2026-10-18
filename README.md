@@ -160,6 +160,10 @@ mouse_enabled = true
 confirm_deletes = true
 max_keys_in_memory = 500000
 
+# Set to false to delete without a confirmation prompt.
+# Read-only mode overrides this either way.
+# confirm_deletes = true
+
 # Editor used for string editing. Overrides $EDITOR when set.
 # editor = "hx"
 

@@ -118,6 +118,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Help overlay is generated from the active keymap.** It previously showed the
   vim bindings unconditionally, so it told emacs users to press `q` to quit.
 
+- **`confirm_deletes` is now honoured.** Setting `confirm_deletes = false` in
+  `config.toml` skipped nothing — the key was parsed and exposed but never
+  read, so the confirmation prompt appeared regardless. Read-only mode still
+  overrides it.
+- **The status bar shows a live latency.** `StatusBar::latency_ms` was never
+  assigned anywhere, so the field it renders was permanently blank. A PING
+  every ~1s now fills it in; a failed probe keeps the previous reading rather
+  than blanking the field.
+
 ### Changed
 
 - An unknown `--theme` is now rejected with the list of valid names instead of

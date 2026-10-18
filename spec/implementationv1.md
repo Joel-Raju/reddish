@@ -54,7 +54,8 @@ the authoritative per-row status.
 | Set: operations panel in inspector | 4.3 | Union/intersect/diff exist in the key browser only |
 
 **Known weak spots in existing rows** (not missing — present but weaker than
-the spec describes):
+the spec describes). These are the rows still marked ⚠️ Partial in the tables
+above, with the reason restated:
 
 | Row | Nature |
 |-----|--------|
@@ -62,12 +63,10 @@ the spec describes):
 | 0.11 | `test_app_quits_on_q` sets `should_quit` directly rather than driving the event loop |
 | 1.18 | `test_scanner_never_uses_keys_command` is a structural check, not a mock-based one |
 | 2.34 | Per-type render tests exist; there is no single loop over every `RedisValue` variant |
-| 3.11 / 4.29 | `redis_value_to_string` covers every `redis::Value` variant but does not indent nested replies |
-| 2.12 | Quick-connect bar is a label; it does not parse and connect a pasted URL |
-| 2.13 | Status bar shows latency but refreshes it only on reconnect, not on a periodic ping |
-| 4.4 | In-browser filter (`/`) is the global search overlay; there is no separate list filter |
-| 4.7 | `y` yank copies the raw value, not JSON-serialized for complex types |
-| 4.14 | `confirm_deletes` is parsed and exposed but the confirmation prompt is unconditional |
+| 3.11 | `redis_value_to_string` covers every `redis::Value` variant but does not indent nested replies |
+| Quick-connect bar | A label; it does not parse and connect a pasted `redis://` URL |
+| Filter (`/`) | Bound to the global search overlay; there is no separate in-list filter |
+| `y` yank | Copies the raw value, not JSON-serialized for complex types |
 
 **Deviation from spec**
 
@@ -390,7 +389,7 @@ The original audit predated Phases A–E. The following were reported as
 | `~/.config/redis-tui/connections.toml` | ✅ Done | |
 | Password env/keychain refs | ✅ Done | |
 | Quick-connect bar (`redis://` URL paste) | ⚠️ Partial | Text label exists, no actual URL parsing + connect |
-| Connection status bar with latency | ⚠️ Partial | State shown; latency updated on reconnect only, not periodic ping |
+| Connection status bar with latency | ✅ Done | PING every ~1s; a failed probe keeps the last reading |
 | `Ctrl+R` force reconnect | ✅ Done | |
 
 ### 4.2 Key Browser
@@ -513,7 +512,7 @@ The original audit predated Phases A–E. The following were reported as
 | `refresh_interval_ms` | ✅ Done | |
 | `color_scheme` | ✅ Done | Installed at startup and read by every render site via `theme::current()` |
 | `mouse_enabled` | ✅ Done | |
-| `confirm_deletes` | ⚠️ Partial | Field exists but confirmation logic is hardcoded |
+| `confirm_deletes` | ✅ Done | `false` skips the prompt; read-only mode still applies |
 | `editor` | ✅ Done | Overrides `$EDITOR`; blank falls through to it |
 | `max_value_display_bytes` | ✅ Done | Truncates at render time with a visible marker; 0 = unlimited |
 | Vim/Emacs presets | ✅ Done | |
@@ -573,21 +572,17 @@ optional features below plus the residual M8 test rows.
 
 ### P2 — Should Have for v1
 
-1. **`confirm_deletes` is never read** (4.14) — the same class of bug as the
-   `editor` and `color_scheme` keys that were documented and silently ignored:
-   setting `confirm_deletes = false` changes nothing, because the prompt is
-   unconditional.
-2. **Periodic latency ping** (2.13) — the status bar shows latency but only
-   refreshes it on reconnect, so the number goes stale while connected.
-3. **Key browser memory sort and column toggles** (4.2) — needs a decision on
+1. **Quick-connect URL bar** — the bar is a label; it does not parse a pasted
+   `redis://` URL and connect.
+2. **Key browser memory sort and column toggles** (4.2) — needs a decision on
    lazily-fetched `MEMORY USAGE` before it can be implemented honestly.
-4. **Inspector-side set operations and inline rename** (4.3) — both exist in the
+3. **Inspector-side set operations and inline rename** (4.3) — both exist in the
    key browser; these would extend them to the value pane.
-5. **Quick-connect URL bar** (2.12) — the bar is a label; it does not parse a
-   pasted `redis://` URL and connect.
-6. **`test_ssh_tunnel_opens_and_closes`** (6.14) — correctly deferred; needs a
+4. **Strengthen the ⚠️ Partial rows listed above** — each is a test or feature
+   that exists but is weaker than the spec describes.
+5. **`test_ssh_tunnel_opens_and_closes`** (6.14) — correctly deferred; needs a
    live SSH daemon.
-7. **Full-screen editor popup** (E2) — `TextAreaEditor` renders inline in the value pane; the only remaining deviation from the spec.
+6. **Full-screen editor popup** (E2) — `TextAreaEditor` renders inline in the value pane; the only remaining deviation from the spec.
 
 ### P3 — Nice to Have / Post-v1
 

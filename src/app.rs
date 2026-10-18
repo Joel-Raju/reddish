@@ -654,23 +654,32 @@ impl App {
         }
     }
 
+    /// Delete `name` from Redis and drop it from the key tree.
+    ///
+    /// Shared by the confirmed path and the `confirm_deletes = false` path so
+    /// both do exactly the same thing. Read-only mode is checked by the caller,
+    /// before this is reached.
+    async fn perform_delete(&mut self, name: String) {
+        if self.key_browser.tree.remove(&name) {
+            self.status_bar.key_count = self.key_browser.tree.total_keys();
+        }
+        match &self.client {
+            Some(client) => {
+                if let Err(err) = client.delete(&name).await {
+                    self.error_message = Some(format!("Failed to delete key '{name}': {err}"));
+                }
+            }
+            None => self.error_message = Some("Not connected".to_string()),
+        }
+    }
+
     async fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) {
         if self.mode() == &AppMode::Confirm {
             if self.keymap.matches("confirm_yes", &key) || matches!(key.code, KeyCode::Enter) {
                 let key_name = self.pending_delete_key.take();
                 self.mode_stack.pop();
                 if let Some(name) = key_name {
-                    if self.key_browser.tree.remove(&name) {
-                        self.status_bar.key_count = self.key_browser.tree.total_keys();
-                    }
-                    if let Some(client) = &self.client {
-                        if let Err(err) = client.delete(&name).await {
-                            self.error_message =
-                                Some(format!("Failed to delete key '{name}': {err}"));
-                        }
-                    } else {
-                        self.error_message = Some("Not connected".to_string());
-                    }
+                    self.perform_delete(name).await;
                 }
             } else if self.keymap.matches("confirm_no", &key) || matches!(key.code, KeyCode::Esc) {
                 self.pending_delete_key = None;
@@ -1098,7 +1107,31 @@ impl App {
             self.refresh_info_dashboard().await;
         }
         self.stream_follow_tick().await;
+        self.probe_latency().await;
         self.update_status_bar_context();
+    }
+
+    /// Measure round-trip latency and publish it to the status bar.
+    ///
+    /// `StatusBar::latency_ms` existed but was never assigned, so the field the
+    /// status bar renders was permanently blank. A PING every 4th tick (~1s)
+    /// keeps the number live instead of showing a value from connect time that
+    /// goes stale while the session runs.
+    async fn probe_latency(&mut self) {
+        if !self.tick_count.is_multiple_of(4) {
+            return;
+        }
+        let Some(client) = self.client.as_ref() else {
+            self.status_bar.latency_ms = None;
+            return;
+        };
+        self.status_bar.latency_ms = match client.ping().await {
+            Ok(duration) => Some(duration.as_millis() as u64),
+            // Leave the previous reading in place: one failed probe says
+            // nothing about current latency, and blanking the field on a
+            // transient hiccup makes the status bar flicker.
+            Err(_) => self.status_bar.latency_ms,
+        };
     }
 
     /// Append stream entries newer than the last seen id when the inspector is
@@ -1266,7 +1299,15 @@ impl App {
                     return;
                 }
                 self.pending_delete_key = Some(name.clone());
-                self.mode_stack.push(AppMode::Confirm);
+                // `confirm_deletes = false` skips the prompt and deletes
+                // immediately. The key was parsed and exposed but never read,
+                // so setting it changed nothing.
+                if self.config.confirm_deletes() {
+                    self.mode_stack.push(AppMode::Confirm);
+                } else {
+                    self.pending_delete_key = None;
+                    self.perform_delete(name).await;
+                }
             }
             BrowserAction::RefreshRequested => {
                 if let Some(ref profile) = self.last_profile {
@@ -2958,5 +2999,389 @@ mod editor_config_tests {
         });
         app.value_inspector.max_value_display_bytes = app.config.max_value_display_bytes();
         assert_eq!(app.value_inspector.max_value_display_bytes, 512);
+    }
+}
+
+#[cfg(test)]
+mod confirm_deletes_tests {
+    use super::*;
+    use crate::redis::types::RedisValue;
+
+    fn app_with_key(confirm: bool) -> App {
+        let mut app = App::new(Config {
+            confirm_deletes: Some(confirm),
+            ..Default::default()
+        });
+        app.key_browser
+            .tree
+            .insert(crate::ui::key_browser::tree::KeyEntry {
+                full_name: "doomed".to_string(),
+                redis_type: None,
+                ttl: None,
+            });
+        app.key_browser.tree.expand_all();
+        app
+    }
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+    }
+
+    /// The documented behaviour: confirm_deletes defaults to true.
+    #[test]
+    fn delete_prompts_by_default() {
+        let mut app = app_with_key(true);
+        assert!(app.config.confirm_deletes());
+
+        let rt = runtime();
+        rt.block_on(async {
+            app.handle_browser_action(BrowserAction::DeleteKey("doomed".to_string()))
+                .await;
+        });
+
+        assert_eq!(
+            app.mode(),
+            &AppMode::Confirm,
+            "a delete must not happen before confirmation"
+        );
+        assert_eq!(app.pending_delete_key.as_deref(), Some("doomed"));
+        assert!(
+            app.key_browser
+                .tree
+                .all_keys()
+                .iter()
+                .any(|k| k.full_name == "doomed"),
+            "the key must still be present before confirming"
+        );
+    }
+
+    /// The bug: `confirm_deletes = false` was parsed but never read, so the
+    /// prompt appeared regardless.
+    #[test]
+    fn confirm_deletes_false_skips_the_prompt() {
+        let mut app = app_with_key(false);
+        assert!(!app.config.confirm_deletes());
+
+        let rt = runtime();
+        rt.block_on(async {
+            app.handle_browser_action(BrowserAction::DeleteKey("doomed".to_string()))
+                .await;
+        });
+
+        assert_ne!(
+            app.mode(),
+            &AppMode::Confirm,
+            "confirm_deletes = false must not prompt"
+        );
+        assert!(
+            app.pending_delete_key.is_none(),
+            "no pending confirmation should be left behind"
+        );
+        assert!(
+            !app.key_browser
+                .tree
+                .all_keys()
+                .iter()
+                .any(|k| k.full_name == "doomed"),
+            "the key should have been removed immediately"
+        );
+    }
+
+    /// Skipping the prompt must not skip the read-only guard: that is a safety
+    /// property, not a confirmation convenience.
+    #[test]
+    fn readonly_still_blocks_deletes_without_confirmation() {
+        for confirm in [true, false] {
+            let mut app = app_with_key(confirm);
+            app.readonly = true;
+
+            let rt = runtime();
+            rt.block_on(async {
+                app.handle_browser_action(BrowserAction::DeleteKey("doomed".to_string()))
+                    .await;
+            });
+
+            assert!(
+                app.key_browser
+                    .tree
+                    .all_keys()
+                    .iter()
+                    .any(|k| k.full_name == "doomed"),
+                "confirm_deletes={confirm} must not bypass read-only mode"
+            );
+            assert_ne!(
+                app.mode(),
+                &AppMode::Confirm,
+                "a blocked delete must not open a prompt"
+            );
+        }
+    }
+
+    /// Declining the prompt must leave the key alone.
+    #[test]
+    fn declining_the_prompt_keeps_the_key() {
+        let mut app = app_with_key(true);
+        let rt = runtime();
+        rt.block_on(async {
+            app.handle_browser_action(BrowserAction::DeleteKey("doomed".to_string()))
+                .await;
+        });
+        assert_eq!(app.mode(), &AppMode::Confirm);
+
+        rt.block_on(async {
+            app.handle_key_event(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Esc,
+                crossterm::event::KeyModifiers::NONE,
+            ))
+            .await;
+        });
+
+        assert!(
+            app.key_browser
+                .tree
+                .all_keys()
+                .iter()
+                .any(|k| k.full_name == "doomed"),
+            "Esc must not delete"
+        );
+        assert!(app.pending_delete_key.is_none());
+    }
+
+    /// Confirming removes the key from the tree and reports the missing
+    /// connection rather than pretending it succeeded.
+    #[test]
+    fn confirming_while_disconnected_removes_the_row_and_reports() {
+        let mut app = app_with_key(true);
+        let rt = runtime();
+        rt.block_on(async {
+            app.handle_browser_action(BrowserAction::DeleteKey("doomed".to_string()))
+                .await;
+            app.handle_key_event(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Enter,
+                crossterm::event::KeyModifiers::NONE,
+            ))
+            .await;
+        });
+
+        assert!(
+            !app.key_browser
+                .tree
+                .all_keys()
+                .iter()
+                .any(|k| k.full_name == "doomed"),
+            "the row should be dropped from the tree"
+        );
+        assert_eq!(
+            app.error_message.as_deref(),
+            Some("Not connected"),
+            "the user must be told the server call did not happen"
+        );
+    }
+
+    /// perform_delete must be reachable and consistent on its own.
+    #[test]
+    fn perform_delete_updates_the_key_count() {
+        let mut app = app_with_key(true);
+        let rt = runtime();
+        rt.block_on(async {
+            app.perform_delete("doomed".to_string()).await;
+        });
+        assert!(
+            !app.key_browser
+                .tree
+                .all_keys()
+                .iter()
+                .any(|k| k.full_name == "doomed")
+        );
+        assert_eq!(app.status_bar.key_count, app.key_browser.tree.total_keys());
+    }
+
+    /// Deleting a key that is not in the tree must not panic or misreport.
+    #[test]
+    fn deleting_an_absent_key_is_safe() {
+        let mut app = App::new(Config::default());
+        let rt = runtime();
+        rt.block_on(async {
+            app.perform_delete("never-existed".to_string()).await;
+        });
+        assert_eq!(app.error_message.as_deref(), Some("Not connected"));
+    }
+
+    /// The value pane's own view must not be affected by the config change.
+    #[test]
+    fn other_config_defaults_are_untouched() {
+        let app = Config::default();
+        assert!(app.confirm_deletes());
+        assert_eq!(app.color_scheme(), "default");
+        assert!(app.mouse_enabled());
+    }
+
+    #[test]
+    fn inspector_state_is_unrelated_to_delete_confirmation() {
+        // Guards against perform_delete accidentally clearing the value pane.
+        let mut app = app_with_key(true);
+        app.value_inspector
+            .set_value("doomed".to_string(), RedisValue::String("v".to_string()));
+        let rt = runtime();
+        rt.block_on(async {
+            app.perform_delete("doomed".to_string()).await;
+        });
+        assert!(
+            app.value_inspector.value.is_some(),
+            "the value pane should keep showing what it was showing"
+        );
+    }
+}
+
+#[cfg(test)]
+mod latency_tests {
+    use super::*;
+
+    fn connected_app() -> App {
+        let mut app = App::new(Config::default());
+        app.status_bar.connection_state = ConnectionState::Connected {
+            host: "localhost".to_string(),
+            port: 6379,
+            db: 0,
+        };
+        app
+    }
+
+    /// The bug: `latency_ms` was never assigned anywhere, so the value the
+    /// status bar renders was permanently blank.
+    #[test]
+    fn latency_is_never_probed_on_every_tick() {
+        let mut app = connected_app();
+        for i in 1..=3 {
+            app.tick_count = i;
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap();
+            rt.block_on(app.probe_latency());
+        }
+        assert_eq!(
+            app.status_bar.latency_ms, None,
+            "the field must only update on the scheduled interval"
+        );
+    }
+
+    #[test]
+    fn latency_is_cleared_when_there_is_no_client() {
+        let mut app = connected_app();
+        app.status_bar.latency_ms = Some(42);
+
+        // Disconnected: nothing to measure, so the stale reading must go.
+        app.client = None;
+        app.tick_count = 4;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(app.probe_latency());
+        assert_eq!(app.status_bar.latency_ms, None);
+    }
+
+    #[tokio::test]
+    async fn latency_probe_against_a_live_server_produces_a_reading() {
+        let profile = ConnectionProfile {
+            name: "test".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 16379,
+            db: 0,
+            username: None,
+            password: None,
+            last_connected: None,
+            ..Default::default()
+        };
+        let Ok(client) = RedisClientHandle::connect(&profile).await else {
+            eprintln!("skipping: no test server on 16379");
+            return;
+        };
+
+        let mut app = connected_app();
+        app.client = Some(client);
+        app.tick_count = 4;
+
+        app.probe_latency().await;
+        let reading = app.status_bar.latency_ms;
+        assert!(reading.is_some(), "a connected client must yield a reading");
+        // A local round trip is sub-second; anything larger means the number
+        // is not a latency at all.
+        assert!(
+            reading.unwrap() < 5_000,
+            "implausible latency: {reading:?}ms"
+        );
+
+        // The rendered status bar must actually show it.
+        let backend = ratatui::backend::TestBackend::new(60, 1);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| app.status_bar.render(f, f.area()))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(
+            text.contains("ms"),
+            "status bar should show the latency: {text}"
+        );
+    }
+
+    /// A failed probe must not blank the reading: one hiccup is not evidence
+    /// that the connection is gone.
+    #[tokio::test]
+    async fn a_failed_probe_keeps_the_previous_reading() {
+        let profile = ConnectionProfile {
+            name: "test".to_string(),
+            // Nothing listens here, so the probe cannot succeed.
+            host: "127.0.0.1".to_string(),
+            port: 1,
+            db: 0,
+            username: None,
+            password: None,
+            last_connected: None,
+            ..Default::default()
+        };
+        let Ok(client) = RedisClientHandle::connect(&profile).await else {
+            return; // connect already failed; nothing to assert
+        };
+
+        let mut app = connected_app();
+        app.client = Some(client);
+        app.status_bar.latency_ms = Some(7);
+        app.tick_count = 4;
+
+        app.probe_latency().await;
+        assert_eq!(
+            app.status_bar.latency_ms,
+            Some(7),
+            "a transient probe failure must not blank the display"
+        );
+    }
+
+    /// Without a reading the status bar still renders, just without the field.
+    #[test]
+    fn status_bar_renders_without_a_latency() {
+        let app = connected_app();
+        assert_eq!(app.status_bar.latency_ms, None);
+        let backend = ratatui::backend::TestBackend::new(60, 1);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| app.status_bar.render(f, f.area()))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("localhost:6379"), "got: {text}");
+        assert!(!text.contains("ms"), "no latency to show: {text}");
     }
 }

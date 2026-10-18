@@ -262,6 +262,20 @@ rather than the panes behind it.
 > The vim preset binds the hash filter to `Ctrl+f` because `/` is already the
 > global search key.
 
+### Pub/Sub
+
+The message pane renders newest-first and tails the live feed by default.
+
+| Key | Description |
+|-----|-------------|
+| `f` | Toggle follow. Turning it on snaps back to the newest message; turning it off freezes the viewport so a busy channel cannot move your reading position. |
+| `Down` | Scroll into older history. This detaches follow automatically, so the next message will not yank you back. |
+| `Up` | Scroll toward the newest message. Reaching it resumes following. |
+| `Ctrl+l` | Clear the buffer. |
+
+The pane title always shows either `[f] follow` or `[f] PAUSED`, so it is
+never ambiguous which mode you are in.
+
 #### Editing strings
 
 `e` on a string key opens an editor. Which one depends on the environment:

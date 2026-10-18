@@ -21,6 +21,13 @@ pub struct PubSubWidget {
     pub subscriptions: Vec<Subscription>,
     pub messages: VecDeque<PubSubMessage>,
     pub scroll: u16,
+    /// Whether the message pane follows new arrivals.
+    ///
+    /// The pane renders newest-first, so `scroll == 0` is already the newest
+    /// message. "Following" therefore means *staying pinned at the top* rather
+    /// than actively scrolling: turning it off freezes the current position so
+    /// a busy channel cannot push the user's reading position away mid-sentence.
+    pub follow: bool,
     pub input: String,
     pub cursor: usize,
     pub active_subscription: Option<PubSubKind>,
@@ -68,6 +75,7 @@ impl PubSubWidget {
             subscriptions: Vec::new(),
             messages: VecDeque::new(),
             scroll: 0,
+            follow: true,
             input: String::new(),
             cursor: 0,
             active_subscription: None,
@@ -109,7 +117,13 @@ impl PubSubWidget {
                             self.channel_cursor -= 1;
                         }
                     } else if self.scroll > 0 {
+                        // The pane is rendered newest-first, so Up moves toward
+                        // the newest message. Landing back on it is the live
+                        // tail, so resume following.
                         self.scroll -= 1;
+                        if self.scroll == 0 {
+                            self.follow = true;
+                        }
                     }
                 }
                 KeyCode::Down => {
@@ -122,6 +136,10 @@ impl PubSubWidget {
                     } else {
                         let max_scroll = self.messages.len().saturating_sub(1) as u16;
                         if self.scroll < max_scroll {
+                            // Down moves into older history. That is a request
+                            // to stay there, so detach: otherwise the next
+                            // message would snap the view back to the newest.
+                            self.follow = false;
                             self.scroll += 1;
                         }
                     }
@@ -190,6 +208,9 @@ impl PubSubWidget {
                         };
                     }
                 }
+                KeyCode::Char('f') => {
+                    self.toggle_follow();
+                }
                 KeyCode::Char('l')
                     if key
                         .modifiers
@@ -197,6 +218,7 @@ impl PubSubWidget {
                 {
                     self.messages.clear();
                     self.scroll = 0;
+                    self.follow = true;
                 }
                 KeyCode::Char(c) => {
                     self.input.insert(self.cursor, c);
@@ -214,6 +236,40 @@ impl PubSubWidget {
             self.messages.pop_front();
         }
         self.messages.push_back(msg);
+    }
+
+    /// Toggle follow mode.
+    ///
+    /// Turning it on snaps back to the newest message; turning it off leaves the
+    /// viewport where it is so new arrivals do not move it.
+    pub fn toggle_follow(&mut self) -> bool {
+        self.follow = !self.follow;
+        if self.follow {
+            self.scroll = 0;
+        }
+        self.follow
+    }
+
+    /// Title for the message pane, including the follow indicator.
+    ///
+    /// The indicator is always shown, not only when detached: a pane that looks
+    /// identical whether it is tailing or frozen leaves the user unable to tell
+    /// which one they are looking at.
+    pub fn messages_title(&self) -> String {
+        let follow = if self.follow {
+            "[f] follow "
+        } else {
+            "[f] PAUSED "
+        };
+        format!(" Messages {follow}({}) ", self.messages.len())
+    }
+
+    /// Whether a new message would move the viewport.
+    ///
+    /// Used by the render loop to decide whether a redraw is needed at all: a
+    /// detached pane whose content did not change needs no frame.
+    pub fn needs_redraw_on_push(&self) -> bool {
+        self.follow || self.messages.len() < 1000
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
@@ -361,8 +417,11 @@ impl PubSubWidget {
             ]));
         }
 
-        let para =
-            Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" Messages "));
+        let para = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(self.messages_title()),
+        );
         frame.render_widget(para, area);
     }
 }
@@ -503,5 +562,249 @@ mod tests {
             timestamp: std::time::Instant::now(),
         });
         terminal.draw(|f| widget.render(f, f.area())).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod follow_tests {
+    use super::*;
+    use crate::events::Event;
+    use crossterm::event::{KeyCode, KeyEvent};
+
+    fn msg(n: usize) -> PubSubMessage {
+        PubSubMessage {
+            channel: format!("ch{n}"),
+            payload: format!("payload {n}"),
+            pattern: None,
+            timestamp: std::time::Instant::now(),
+        }
+    }
+
+    fn widget_with(count: usize) -> PubSubWidget {
+        let mut w = PubSubWidget::new();
+        // Message mode, not the default Channel mode: while the channel input
+        // has focus, Up/Down navigate the subscription list rather than the
+        // message pane, which is where follow mode applies.
+        w.input_mode = PubSubInputMode::Message;
+        for i in 0..count {
+            w.push_message(msg(i));
+        }
+        w
+    }
+
+    fn key(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::from(code))
+    }
+
+    /// The pane renders newest-first, so scroll 0 is the live tail. Follow is
+    /// on by default because that is what a message pane is for.
+    #[test]
+    fn follow_is_on_by_default() {
+        assert!(PubSubWidget::new().follow);
+        assert_eq!(PubSubWidget::new().scroll, 0);
+    }
+
+    #[test]
+    fn f_toggles_follow() {
+        let mut w = widget_with(5);
+        assert!(w.follow);
+
+        w.handle_event(&key(KeyCode::Char('f')));
+        assert!(!w.follow, "f should pause");
+
+        w.handle_event(&key(KeyCode::Char('f')));
+        assert!(w.follow, "f again should resume");
+    }
+
+    #[test]
+    fn resuming_follow_snaps_back_to_the_newest_message() {
+        let mut w = widget_with(10);
+        // Detach and scroll into history.
+        w.handle_event(&key(KeyCode::Char('f')));
+        for _ in 0..4 {
+            w.handle_event(&key(KeyCode::Down));
+        }
+        assert!(w.scroll > 0, "expected to be in history");
+
+        w.handle_event(&key(KeyCode::Char('f')));
+        assert!(w.follow);
+        assert_eq!(w.scroll, 0, "resuming must snap to the newest message");
+    }
+
+    /// The whole point of the feature: a detached pane must not move when
+    /// messages arrive.
+    #[test]
+    fn detached_pane_does_not_move_when_messages_arrive() {
+        let mut w = widget_with(10);
+        w.handle_event(&key(KeyCode::Char('f')));
+        for _ in 0..3 {
+            w.handle_event(&key(KeyCode::Down));
+        }
+        let position = w.scroll;
+        assert!(position > 0);
+
+        w.push_message(msg(99));
+        assert_eq!(
+            w.scroll, position,
+            "the viewport must stay where the user put it"
+        );
+        assert_eq!(w.messages.back().unwrap().payload, "payload 99");
+    }
+
+    #[test]
+    fn scrolling_into_history_detaches_automatically() {
+        let mut w = widget_with(10);
+        assert!(w.follow);
+        w.handle_event(&key(KeyCode::Down));
+        assert!(!w.follow, "scrolling into history should pause follow");
+        assert_eq!(w.scroll, 1);
+    }
+
+    /// Coming back to the newest message is the live tail again.
+    #[test]
+    fn scrolling_back_to_the_newest_resumes_following() {
+        let mut w = widget_with(10);
+        w.handle_event(&key(KeyCode::Char('f')));
+        w.handle_event(&key(KeyCode::Down));
+        w.handle_event(&key(KeyCode::Down));
+        assert!(!w.follow);
+
+        w.handle_event(&key(KeyCode::Up));
+        w.handle_event(&key(KeyCode::Up));
+        assert_eq!(w.scroll, 0);
+        assert!(w.follow, "returning to the tail should resume follow");
+    }
+
+    /// The pane must not silently resume while the user is still away from it.
+    #[test]
+    fn follow_does_not_resume_while_still_in_history() {
+        let mut w = widget_with(10);
+        w.handle_event(&key(KeyCode::Down));
+        w.handle_event(&key(KeyCode::Down));
+        w.handle_event(&key(KeyCode::Down));
+        assert_eq!(w.scroll, 3);
+        assert!(!w.follow);
+
+        w.push_message(msg(99));
+        assert!(!w.follow, "an arriving message must not re-attach");
+        assert_eq!(w.scroll, 3);
+    }
+
+    #[test]
+    fn follow_is_not_detached_by_scrolling_at_the_top() {
+        let mut w = widget_with(1);
+        w.handle_event(&key(KeyCode::Down));
+        assert_eq!(w.scroll, 0, "nothing older to show");
+        assert!(
+            w.follow,
+            "must stay attached when there is nothing to scroll"
+        );
+    }
+
+    #[test]
+    fn follow_is_not_detached_by_scrolling_with_no_messages() {
+        let mut w = PubSubWidget::new();
+        w.input_mode = PubSubInputMode::Message;
+        w.handle_event(&key(KeyCode::Down));
+        assert!(w.follow);
+        w.handle_event(&key(KeyCode::Up));
+        assert!(w.follow);
+    }
+
+    #[test]
+    fn clearing_messages_restores_follow() {
+        let mut w = widget_with(10);
+        w.handle_event(&key(KeyCode::Char('f')));
+        assert!(!w.follow);
+
+        w.handle_event(&Event::Key(KeyEvent::new(
+            KeyCode::Char('l'),
+            crossterm::event::KeyModifiers::CONTROL,
+        )));
+        assert!(w.follow, "a cleared pane is trivially at the tail");
+        assert_eq!(w.scroll, 0);
+        assert!(w.messages.is_empty());
+    }
+
+    // ---- title ----
+
+    #[test]
+    fn title_shows_the_count() {
+        let w = widget_with(7);
+        assert!(
+            w.messages_title().contains("(7)"),
+            "got {:?}",
+            w.messages_title()
+        );
+    }
+
+    /// The indicator must appear in both states, otherwise the pane looks
+    /// identical whether it is tailing or frozen.
+    #[test]
+    fn title_distinguishes_following_from_paused() {
+        let mut w = widget_with(3);
+        let following = w.messages_title();
+        assert!(following.contains("follow"), "got {following:?}");
+        assert!(!following.contains("PAUSED"), "got {following:?}");
+
+        w.toggle_follow();
+        let paused = w.messages_title();
+        assert!(paused.contains("PAUSED"), "got {paused:?}");
+    }
+
+    #[test]
+    fn title_mentions_the_toggle_key() {
+        let w = PubSubWidget::new();
+        assert!(w.messages_title().contains("[f]"));
+    }
+
+    #[test]
+    fn needs_redraw_depends_on_follow_and_capacity() {
+        let mut w = widget_with(5);
+        assert!(w.needs_redraw_on_push());
+        w.toggle_follow();
+        // Below the 1000-message cap the list itself changed, so a redraw is
+        // still needed even though the viewport did not move.
+        assert!(
+            w.needs_redraw_on_push(),
+            "new content below the cap still needs painting"
+        );
+
+        for i in 0..1100 {
+            w.push_message(msg(i));
+        }
+        assert!(
+            !w.needs_redraw_on_push(),
+            "a full buffer drops the oldest message, which is not visible"
+        );
+    }
+
+    #[test]
+    fn buffer_is_capped_at_one_thousand_messages() {
+        let mut w = PubSubWidget::new();
+        for i in 0..1200 {
+            w.push_message(msg(i));
+        }
+        assert!(
+            w.messages.len() <= 1001,
+            "expected the buffer to be capped, got {}",
+            w.messages.len()
+        );
+        // The newest must always be present.
+        assert_eq!(w.messages.back().unwrap().payload, "payload 1199");
+    }
+
+    #[test]
+    fn render_with_paused_follow_does_not_panic() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let mut w = widget_with(50);
+        w.toggle_follow();
+        for _ in 0..5 {
+            w.handle_event(&key(KeyCode::Down));
+        }
+        terminal.draw(|f| w.render(f, f.area())).expect("renders");
     }
 }

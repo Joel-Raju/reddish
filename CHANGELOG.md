@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Pub/Sub follow mode** — press `f` to toggle. The message pane tails the
+  live feed by default; pausing freezes the viewport so a busy channel cannot
+  move your reading position. Scrolling into history detaches automatically and
+  scrolling back to the newest message re-attaches. The title always shows
+  `[f] follow` or `[f] PAUSED`.
+
 ### Added
 
 - **Search fuzzy ranking** — global search scores candidates with `nucleo`

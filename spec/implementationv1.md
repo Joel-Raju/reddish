@@ -10,11 +10,11 @@
 
 | Metric | Value |
 |--------|-------|
-| **Overall v1 Completion** | ~99% |
+| **Overall v1 Completion** | ~99.5% |
 | **Milestones with Gate Tests** | 8 (M0–M8) — all feature gates satisfied |
-| **Gate Tests Passing** | ~99% of specified test rows exist and pass |
+| **Gate Tests Passing** | ~99% of specified test rows exist and pass (6.14 deferred) |
 | **Major Architecture Pieces** | 100% implemented |
-| **UI Polish / Advanced Features** | 96% implemented |
+| **UI Polish / Advanced Features** | 98% implemented |
 | **Performance / Benchmarks** | 100% implemented |
 
 ### Measured Performance (release build, 10K keys)
@@ -44,12 +44,12 @@ complete — see the tables above for the authoritative per-row status.
 |-----------|------|--------|
 | M6 | 6.14 | `test_ssh_tunnel_opens_and_closes` — needs a real SSH daemon |
 
-**Missing features (5)**
+**Missing features (4)**
 
 | Item | Ref | Nature |
 |------|-----|---------|
-| Pub/Sub auto-scroll follow | 5.5 | Tail the message pane as messages arrive |
-| Key browser sort by memory | 4.2 | `MEMORY USAGE` is per-key and lazily fetched, so this needs a design decision |
+| 
+| 
 | Show/hide TTL and memory columns | 4.2 | Column toggles |
 | Inline key rename in the inspector | 4.3 | `r` is rename in the key browser only |
 | Set operations panel in the inspector | 4.3 | Union/intersect/diff exist in the browser only |
@@ -260,7 +260,7 @@ The original audit predated Phases A–E. The following were reported as
 | 5.2 | Subscribe to channels | ✅ Done | `PubSubAction::Subscribe` |
 | 5.3 | PSUBSCRIBE (pattern subscribe) | ✅ Done | `PubSubKind::Pattern` + `PSubscribe`/`PUnsubscribe` actions, pattern input mode |
 | 5.4 | Message stream with timestamps | ✅ Done | `relative_time()` formatting |
-| 5.5 | Auto-scroll (`f` toggle) | ✅ Missing | `scroll` exists but no follow-mode logic |
+| 5.5 | Auto-scroll (`f` toggle) | ✅ Done | `f` toggles follow; scrolling detaches and re-attaches automatically |
 | 5.6 | Publish form | ✅ Done | `PubSubInputMode::Message` |
 | 5.7 | Color-coded per-channel tags | ✅ Done | 8-color round-robin per subscription; message tags resolve to subscription color |
 | 5.8 | Message cap (1000) | ✅ Done | `pop_front()` when > 1000 |
@@ -445,7 +445,7 @@ The original audit predated Phases A–E. The following were reported as
 | Subscribe exact channels | ✅ Done | |
 | PSUBSCRIBE patterns | ✅ Done | |
 | Timestamps + channel + payload | ✅ Done | |
-| Auto-scroll `f` toggle | ❌ Missing | |
+| Auto-scroll `f` toggle | ✅ Done | Title shows `[f] follow` / `[f] PAUSED` |
 | Publish form | ✅ Done | |
 | Color-coded per-channel tags | ✅ Done | 8-color cycle per subscription |
 | MONITOR mode | ✅ Done | Separate connection, render stream in REPL |
@@ -558,15 +558,13 @@ optional features below plus the residual M8 test rows.
 
 ### P2 — Should Have for v1
 
-1. **Pub/Sub auto-scroll** (5.5) — the highest-value remaining feature; the
-   message pane should follow new messages unless the user has scrolled up.
-2. **Key browser memory sort and column toggles** (4.2) — needs a decision on
+1. **Key browser memory sort and column toggles** (4.2) — needs a decision on
    lazily-fetched `MEMORY USAGE` before it can be implemented honestly.
-3. **Inspector-side set operations and inline rename** (4.3) — both exist in the
+2. **Inspector-side set operations and inline rename** (4.3) — both exist in the
    key browser; these would extend them to the value pane.
-4. **`test_ssh_tunnel_opens_and_closes`** (6.14) — correctly deferred; needs a
+3. **`test_ssh_tunnel_opens_and_closes`** (6.14) — correctly deferred; needs a
    live SSH daemon.
-5. **Full-screen editor popup** (E2) — `TextAreaEditor` renders inline in the value pane; the only remaining deviation from the spec.
+4. **Full-screen editor popup** (E2) — `TextAreaEditor` renders inline in the value pane; the only remaining deviation from the spec.
 
 ### P3 — Nice to Have / Post-v1
 

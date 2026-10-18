@@ -80,9 +80,125 @@ impl ReplAutocomplete {
         scored.sort_by(|a, b| b.1.cmp(&a.1));
         scored.into_iter().take(limit).map(|(s, _)| s).collect()
     }
+
+    /// Subcommands of `command`, if it has a documented set.
+    ///
+    /// Used to suggest the second token: typing `CONFIG` and pressing Tab
+    /// should offer `GET`/`SET`/`REWRITE` rather than key names, since the
+    /// second argument of these commands is a subcommand and nothing else.
+    pub fn subcommands_for(command: &str) -> &'static [&'static str] {
+        let upper = command.to_uppercase();
+        SUBCOMMANDS
+            .iter()
+            .find(|(name, _)| *name == upper)
+            .map(|(_, subs)| *subs)
+            .unwrap_or(&[])
+    }
+
+    /// Whether `command` has subcommands worth suggesting.
+    pub fn has_subcommands(command: &str) -> bool {
+        !Self::subcommands_for(command).is_empty()
+    }
+
+    /// Fuzzy matches among `command`'s subcommands.
+    ///
+    /// An empty `input` offers the first `limit` subcommands in their
+    /// documented order, which is what Tab on a bare `CONFIG ` should show.
+    pub fn suggest_subcommands(&mut self, command: &str, input: &str, limit: usize) -> Vec<String> {
+        let subs = Self::subcommands_for(command);
+        if subs.is_empty() {
+            return Vec::new();
+        }
+
+        // A trailing space means the user has finished the subcommand token and
+        // wants to see the options rather than filter them.
+        if input.is_empty() {
+            return subs.iter().take(limit).map(|s| s.to_string()).collect();
+        }
+
+        let needle = Utf32String::from(input);
+        let mut scored: Vec<(String, u16)> = subs
+            .iter()
+            .filter_map(|sub| {
+                let haystack = Utf32String::from(*sub);
+                self.matcher
+                    .fuzzy_match_greedy(haystack.slice(..), needle.slice(..))
+                    .map(|score| (sub.to_string(), score))
+            })
+            .collect();
+
+        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        scored.into_iter().take(limit).map(|(s, _)| s).collect()
+    }
 }
 
+/// Commands whose second argument is a subcommand rather than a key.
+///
+/// Only commands with a small, stable subcommand set are listed; suggesting
+/// nothing is better than suggesting an incomplete list. Order is the order a
+/// reader would expect to scan them in.
+const SUBCOMMANDS: &[(&str, &[&str])] = &[
+    (
+        "ACL",
+        &[
+            "CAT", "DELUSER", "GETUSER", "LIST", "LOAD", "LOG", "SAVE", "SETUSER", "USERS",
+            "WHOAMI",
+        ],
+    ),
+    (
+        "CLIENT",
+        &[
+            "GETNAME", "ID", "INFO", "KILL", "LIST", "NO-EVICT", "PAUSE", "REPLY", "SETNAME",
+            "UNPAUSE",
+        ],
+    ),
+    (
+        "CLUSTER",
+        &[
+            "COUNTKEYSINSLOT",
+            "FAILOVER",
+            "FORGET",
+            "GETKEYSINSLOT",
+            "INFO",
+            "KEYSLOT",
+            "MEET",
+            "MYID",
+            "NODES",
+            "REPLICATE",
+            "RESET",
+            "SAVECONFIG",
+            "SETSLOT",
+            "SHARDS",
+            "SLAVES",
+            "SLOTS",
+        ],
+    ),
+    ("CONFIG", &["GET", "RESETSTAT", "REWRITE", "SET"]),
+    (
+        "FUNCTION",
+        &[
+            "DELETE", "DUMP", "FLUSH", "KILL", "LIST", "LOAD", "RESTORE", "STATS",
+        ],
+    ),
+    (
+        "LATENCY",
+        &["DOCTOR", "GRAPH", "HISTORY", "HISTOGRAM", "LATEST", "RESET"],
+    ),
+    (
+        "MEMORY",
+        &["DOCTOR", "MALLOC-STATS", "PURGE", "STATS", "USAGE"],
+    ),
+    (
+        "OBJECT",
+        &["ENCODING", "FREQ", "IDLETIME", "REFCOUNT", "SLOWLOG"],
+    ),
+    ("SCRIPT", &["DEBUG", "EXISTS", "FLUSH", "KILL", "LOAD"]),
+    ("SLOWLOG", &["GET", "LEN", "RESET"]),
+    ("XINFO", &["CONSUMERS", "GROUPS", "STREAM"]),
+];
+
 const COMMON_REDIS_COMMANDS: &[&str] = &[
+    "ACL",
     "APPEND",
     "BITCOUNT",
     "CLIENT",
@@ -101,6 +217,7 @@ const COMMON_REDIS_COMMANDS: &[&str] = &[
     "EXPIREAT",
     "FLUSHALL",
     "FLUSHDB",
+    "FUNCTION",
     "GET",
     "GETBIT",
     "GETRANGE",
@@ -122,6 +239,7 @@ const COMMON_REDIS_COMMANDS: &[&str] = &[
     "INCRBY",
     "INFO",
     "KEYS",
+    "LATENCY",
     "LINDEX",
     "LINSERT",
     "LLEN",
@@ -132,12 +250,14 @@ const COMMON_REDIS_COMMANDS: &[&str] = &[
     "LREM",
     "LSET",
     "LTRIM",
+    "MEMORY",
     "MGET",
     "MONITOR",
     "MOVE",
     "MSET",
     "MSETNX",
     "MULTI",
+    "OBJECT",
     "PERSIST",
     "PEXPIRE",
     "PING",
@@ -290,5 +410,101 @@ mod tests {
         ac.update_key_cache(vec!["foo".to_string()]);
         let results = ac.suggest_keys("", 5);
         assert!(results.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod subcommand_tests {
+    use super::*;
+
+    fn ac() -> ReplAutocomplete {
+        ReplAutocomplete::new()
+    }
+
+    // ---- lookup ----
+
+    #[test]
+    fn commands_with_subcommands_are_recognised() {
+        for cmd in ["CONFIG", "config", "CoNfIg", "CLIENT", "XINFO"] {
+            assert!(
+                ReplAutocomplete::has_subcommands(cmd),
+                "{cmd} should have subcommands"
+            );
+        }
+    }
+
+    #[test]
+    fn commands_without_subcommands_are_not_claimed_to_have_them() {
+        // GET/SET take keys, so suggesting subcommands here would be wrong.
+        for cmd in ["GET", "SET", "MGET", "DEL", "LPUSH", "HGETALL", ""] {
+            assert!(
+                !ReplAutocomplete::has_subcommands(cmd),
+                "{cmd} has no subcommand set"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_command_returns_an_empty_set() {
+        assert!(ReplAutocomplete::subcommands_for("NOTACOMMAND").is_empty());
+    }
+
+    // ---- suggestions ----
+
+    #[test]
+    fn empty_input_lists_the_options_in_documented_order() {
+        let mut a = ac();
+        let subs = a.suggest_subcommands("CONFIG", "", 10);
+        assert_eq!(subs, vec!["GET", "RESETSTAT", "REWRITE", "SET"]);
+    }
+
+    #[test]
+    fn a_trailing_space_still_lists_the_options() {
+        // Tab on `CONFIG ` should show the choices, not an empty list.
+        let mut a = ac();
+        assert!(!a.suggest_subcommands("CONFIG", "", 8).is_empty());
+    }
+
+    #[test]
+    fn prefix_filters_the_subcommands() {
+        let mut a = ac();
+        let subs = a.suggest_subcommands("CLIENT", "l", 10);
+        assert!(subs.contains(&"LIST".to_string()), "got {subs:?}");
+        assert!(
+            !subs.contains(&"GETNAME".to_string()),
+            "LIST prefix should not match GETNAME: {subs:?}"
+        );
+    }
+
+    #[test]
+    fn fuzzy_matching_finds_a_mid_word_subcommand() {
+        let mut a = ac();
+        let subs = a.suggest_subcommands("MEMORY", "usag", 5);
+        assert_eq!(subs, vec!["USAGE"]);
+    }
+
+    #[test]
+    fn subcommand_limit_is_respected() {
+        let mut a = ac();
+        assert_eq!(a.suggest_subcommands("CLUSTER", "", 3).len(), 3);
+    }
+
+    #[test]
+    fn command_without_subcommands_yields_nothing() {
+        let mut a = ac();
+        assert!(a.suggest_subcommands("GET", "", 8).is_empty());
+    }
+
+    #[test]
+    fn every_listed_command_is_also_in_the_command_list() {
+        // A subcommand set for a command the completer does not know about
+        // would be unreachable.
+        let a = ac();
+        for (name, _) in SUBCOMMANDS {
+            assert!(
+                a.commands.iter().any(|c| c == name),
+                "{name} has subcommands but is not in COMMON_REDIS_COMMANDS"
+            );
+        }
     }
 }

@@ -1719,24 +1719,28 @@ async fn test_execute_pipeline_round_trip() {
 
     let results = client.execute_pipeline(&cmds).await.unwrap();
     assert_eq!(results.len(), 3);
+    assert!(
+        results.iter().all(|r| !r.is_error()),
+        "a valid pipeline must not error: {results:?}"
+    );
     // See test_execute_raw_get_set: OK reply varies between Redis 7 and 8.
     assert!(
         matches!(
-            results[0],
-            redis::Value::SimpleString(_) | redis::Value::Okay
+            results[0].value(),
+            Some(redis::Value::SimpleString(_) | redis::Value::Okay)
         ),
         "unexpected SET reply: {:?}",
         results[0]
     );
     assert!(
         matches!(
-            results[1],
-            redis::Value::SimpleString(_) | redis::Value::Okay
+            results[1].value(),
+            Some(redis::Value::SimpleString(_) | redis::Value::Okay)
         ),
         "unexpected SET reply: {:?}",
         results[1]
     );
-    assert!(matches!(results[2], redis::Value::Array(_)));
+    assert!(matches!(results[2].value(), Some(redis::Value::Array(_))));
 
     // Cleanup
     client
@@ -1745,6 +1749,127 @@ async fn test_execute_pipeline_round_trip() {
             "pipe_a".to_string(),
             "pipe_b".to_string(),
         ])
+        .await
+        .unwrap();
+}
+
+// ---- Pipeline partial errors (3.24) ----
+
+#[tokio::test]
+async fn test_execute_pipeline_partial_error() {
+    let client = RedisClientHandle::connect(&test_profile()).await.unwrap();
+    let mut c = standalone(&client);
+
+    // A command that fails (wrong arity) sits between two that succeed.
+    let cmds = vec![
+        vec![
+            "SET".to_string(),
+            "pipe_partial".to_string(),
+            "before".to_string(),
+        ],
+        vec![
+            "LPUSH".to_string(),
+            "pipe_partial".to_string(), // missing the value operand
+        ],
+        vec!["GET".to_string(), "pipe_partial".to_string()],
+    ];
+
+    let results = client.execute_pipeline(&cmds).await.unwrap();
+
+    // One outcome per command: the failure does not shorten the pipeline.
+    assert_eq!(results.len(), 3, "got {results:?}");
+
+    assert!(!results[0].is_error(), "first command should succeed");
+    assert!(
+        results[1].is_error(),
+        "the malformed command must report an error"
+    );
+    assert!(
+        !results[2].is_error(),
+        "a command after the failure must still run"
+    );
+    assert!(
+        matches!(results[2].value(), Some(redis::Value::BulkString(_))),
+        "the trailing GET should return the value set by the first command, got {:?}",
+        results[2]
+    );
+
+    // The write before the failure is visible server-side, proving it ran.
+    let stored: String = redis::cmd("GET")
+        .arg("pipe_partial")
+        .query_async(&mut c)
+        .await
+        .unwrap();
+    assert_eq!(stored, "before");
+
+    redis::cmd("DEL")
+        .arg("pipe_partial")
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_execute_pipeline_reports_errors_in_position() {
+    let client = RedisClientHandle::connect(&test_profile()).await.unwrap();
+
+    // Every command fails, in different ways.
+    let cmds = vec![
+        vec!["NOSUCHCOMMAND".to_string()],
+        vec!["GET".to_string()],
+        vec![
+            "EXPIRE".to_string(),
+            "k".to_string(),
+            "not-a-number".to_string(),
+        ],
+    ];
+
+    let results = client.execute_pipeline(&cmds).await.unwrap();
+    assert_eq!(results.len(), 3);
+    for (i, r) in results.iter().enumerate() {
+        assert!(r.is_error(), "command {i} should have failed: {r:?}");
+        let message = r.error().unwrap();
+        assert!(!message.is_empty(), "error {i} has no message");
+    }
+}
+
+#[tokio::test]
+async fn test_execute_pipeline_empty_input_is_empty_output() {
+    let client = RedisClientHandle::connect(&test_profile()).await.unwrap();
+    let results = client.execute_pipeline(&[]).await.unwrap();
+    assert!(results.is_empty());
+}
+
+#[tokio::test]
+async fn test_execute_pipeline_error_does_not_stop_later_writes() {
+    let client = RedisClientHandle::connect(&test_profile()).await.unwrap();
+    let mut c = standalone(&client);
+
+    let cmds = vec![
+        vec!["NOSUCHCOMMAND".to_string()],
+        vec![
+            "SET".to_string(),
+            "pipe_after_error".to_string(),
+            "written".to_string(),
+        ],
+    ];
+
+    let results = client.execute_pipeline(&cmds).await.unwrap();
+    assert!(results[0].is_error());
+
+    let stored: String = redis::cmd("GET")
+        .arg("pipe_after_error")
+        .query_async(&mut c)
+        .await
+        .unwrap();
+    assert_eq!(
+        stored, "written",
+        "a failing command must not roll back or skip later commands"
+    );
+
+    redis::cmd("DEL")
+        .arg("pipe_after_error")
+        .query_async::<()>(&mut c)
         .await
         .unwrap();
 }

@@ -90,6 +90,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stream follow mode now caps its buffer at 5000 entries and adjusts the
   cursor when the oldest are dropped, so a long session cannot grow unbounded.
 
+- **REPL subcommand hints** — `CONFIG <Tab>` now suggests `GET`, `SET`,
+  `REWRITE` rather than every key in the database. Covers 11 commands whose
+  second argument is a subcommand (`ACL`, `CLIENT`, `CLUSTER`, `CONFIG`,
+  `FUNCTION`, `LATENCY`, `MEMORY`, `OBJECT`, `SCRIPT`, `SLOWLOG`, `XINFO`).
+  Past the second token the argument is a key again, so key suggestions resume.
+- **Pipeline errors no longer abort** — a failing command in a
+  `cmd1 | cmd2 | cmd3` line records its own error and the remaining commands
+  still run. Previously the first failure discarded every earlier result.
+- **Honoured the documented `editor` and `max_value_display_bytes` config
+  keys.** `editor` overrides `$EDITOR`; large values are truncated at render
+  time with a visible marker instead of stalling the frame.
+- **Help overlay is generated from the active keymap.** It previously showed the
+  vim bindings unconditionally, so it told emacs users to press `q` to quit.
+
 ### Changed
 
 - `PasswordRef` now has a hand-written `Debug` that redacts `Plaintext`

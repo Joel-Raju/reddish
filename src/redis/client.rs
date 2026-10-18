@@ -40,6 +40,39 @@ impl SetOpType {
 
 pub type RedisResult<T> = std::result::Result<T, RedisError>;
 
+/// Result of a single command within a pipeline.
+///
+/// A pipeline reports per-command outcomes rather than a single pass/fail,
+/// because Redis executes each command independently and one bad command in a
+/// `cmd1 | cmd2 | cmd3` line does not prevent `cmd1` from having run.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PipelineOutcome {
+    /// The command succeeded.
+    Value(redis::Value),
+    /// The command failed. The pipeline continued past it.
+    Error(String),
+}
+
+impl PipelineOutcome {
+    pub fn is_error(&self) -> bool {
+        matches!(self, PipelineOutcome::Error(_))
+    }
+
+    pub fn value(&self) -> Option<&redis::Value> {
+        match self {
+            PipelineOutcome::Value(v) => Some(v),
+            PipelineOutcome::Error(_) => None,
+        }
+    }
+
+    pub fn error(&self) -> Option<&str> {
+        match self {
+            PipelineOutcome::Error(e) => Some(e),
+            PipelineOutcome::Value(_) => None,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum RedisError {
     #[error("connection failed: {0}")]
@@ -1626,10 +1659,23 @@ impl RedisClientHandle {
         }
     }
 
-    pub async fn execute_pipeline(&self, cmds: &[Vec<String>]) -> Result<Vec<redis::Value>> {
+    /// Run a sequence of commands, returning one outcome per command.
+    ///
+    /// A command that fails does not abort the pipeline: its slot holds
+    /// `PipelineOutcome::Error` and the remaining commands still run. This
+    /// matches how a real Redis pipeline behaves, where each command's reply is
+    /// independent, and it means one bad command in a `cmd1 | cmd2 | cmd3` line
+    /// does not silently discard the results of `cmd1`.
+    ///
+    /// The `Result` is therefore only about the pipeline as a whole; per-command
+    /// failures live in the returned vector.
+    pub async fn execute_pipeline(&self, cmds: &[Vec<String>]) -> Result<Vec<PipelineOutcome>> {
         let mut results = Vec::with_capacity(cmds.len());
         for cmd in cmds {
-            results.push(self.execute_raw(cmd).await?);
+            match self.execute_raw(cmd).await {
+                Ok(value) => results.push(PipelineOutcome::Value(value)),
+                Err(err) => results.push(PipelineOutcome::Error(err.to_string())),
+            }
         }
         Ok(results)
     }

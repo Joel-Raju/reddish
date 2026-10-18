@@ -151,12 +151,28 @@ impl ReplWidget {
         if !trimmed.contains(' ') {
             self.ac_suggestions = self.autocomplete.suggest_commands(trimmed, 8);
         } else {
-            let tokens = tokenize_shell_like(trimmed);
-            if tokens.len() >= 2 {
-                let last = &tokens[tokens.len() - 1];
-                self.ac_suggestions = self.autocomplete.suggest_keys(last, 8);
+            // Split into the tokens already finished and the token the cursor
+            // is currently inside. A trailing space means the current token is
+            // empty, which is the `CONFIG <Tab>` case that must list the
+            // subcommand options rather than filter them.
+            let mut tokens = tokenize_shell_like(trimmed);
+            let partial = if trimmed.ends_with(char::is_whitespace) {
+                String::new()
             } else {
+                tokens.pop().unwrap_or_default()
+            };
+
+            if tokens.is_empty() {
                 self.ac_suggestions.clear();
+            } else if tokens.len() == 1 && ReplAutocomplete::has_subcommands(&tokens[0]) {
+                // On the second token, a command with subcommands wants those
+                // rather than key names: `CONFIG <Tab>` must offer GET/SET, not
+                // every key in the database.
+                self.ac_suggestions = self
+                    .autocomplete
+                    .suggest_subcommands(&tokens[0], &partial, 8);
+            } else {
+                self.ac_suggestions = self.autocomplete.suggest_keys(&partial, 8);
             }
         }
         self.ac_selected = 0;
@@ -432,6 +448,94 @@ mod tests {
         assert!(repl.ac_visible);
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
         assert_eq!(repl.input, "GET ");
+    }
+
+    #[test]
+    fn test_repl_tab_offers_subcommands_not_keys() {
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
+        // A populated key cache makes this a real test: without the subcommand
+        // branch, every key would be offered here.
+        repl.update_key_cache(vec![
+            "user:1001".to_string(),
+            "user:1002".to_string(),
+            "get".to_string(),
+            "re".to_string(),
+        ]);
+        for c in "CONFIG ".chars() {
+            repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+        }
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+
+        assert!(repl.ac_visible, "expected subcommand suggestions");
+        assert!(
+            repl.ac_suggestions.contains(&"GET".to_string()),
+            "expected GET among {:?}",
+            repl.ac_suggestions
+        );
+        assert!(
+            !repl.ac_suggestions.contains(&"user:1001".to_string()),
+            "keys must not be offered for a subcommand position: {:?}",
+            repl.ac_suggestions
+        );
+    }
+
+    #[test]
+    fn test_repl_subcommand_can_be_accepted() {
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
+        for c in "CONFIG g".chars() {
+            repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+        }
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+        assert!(repl.ac_visible);
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
+        assert_eq!(
+            repl.input, "CONFIG GET",
+            "accepting must replace only the subcommand token"
+        );
+    }
+
+    /// Past the subcommand the argument is a key again.
+    #[test]
+    fn test_repl_third_token_suggests_keys_again() {
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
+        repl.update_key_cache(vec!["user:1001".to_string(), "user:1002".to_string()]);
+        for c in "CONFIG GET user".chars() {
+            repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+        }
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+        assert!(repl.ac_visible);
+        assert!(
+            repl.ac_suggestions.contains(&"user:1001".to_string()),
+            "expected key suggestions, got {:?}",
+            repl.ac_suggestions
+        );
+    }
+
+    /// A command whose second argument is a key must keep suggesting keys.
+    #[test]
+    fn test_repl_plain_command_still_suggests_keys() {
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
+        repl.update_key_cache(vec!["user:1001".to_string()]);
+        for c in "GET user".chars() {
+            repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+        }
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+        assert!(repl.ac_visible);
+        assert_eq!(repl.ac_suggestions, vec!["user:1001".to_string()]);
+    }
+
+    #[test]
+    fn test_repl_subcommand_suggestion_is_hidden_once_typed_over() {
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
+        repl.update_key_cache(vec!["user:1001".to_string()]);
+        for c in "CONFIG nonsense".chars() {
+            repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char(c))));
+        }
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
+        assert!(
+            !repl.ac_visible,
+            "a subcommand that matches nothing must fall back to nothing, not keys"
+        );
     }
 
     #[test]

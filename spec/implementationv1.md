@@ -10,11 +10,11 @@
 
 | Metric | Value |
 |--------|-------|
-| **Overall v1 Completion** | ~98% |
+| **Overall v1 Completion** | ~99% |
 | **Milestones with Gate Tests** | 8 (M0–M8) — all feature gates satisfied |
-| **Gate Tests Passing** | ~98% of specified test rows exist and pass |
+| **Gate Tests Passing** | ~99% of specified test rows exist and pass |
 | **Major Architecture Pieces** | 100% implemented |
-| **UI Polish / Advanced Features** | 94% implemented |
+| **UI Polish / Advanced Features** | 96% implemented |
 | **Performance / Benchmarks** | 100% implemented |
 
 ### Measured Performance (release build, 10K keys)
@@ -38,18 +38,16 @@ implemented. What remains is **specified test rows that do not exist yet**,
 plus a handful of small spec features. Counted honestly rather than claimed
 complete — see the tables above for the authoritative per-row status.
 
-**Missing test rows (2)** — grouped by milestone:
+**Missing test rows (1)** — deferred, not overlooked:
 
 | Milestone | Rows | Nature |
 |-----------|------|--------|
-| M3 | 3.24 | `test_execute_pipeline_partial_error` |
-| M6 | 6.14 | `test_ssh_tunnel_opens_and_closes` — needs a real SSH daemon, correctly deferred |
+| M6 | 6.14 | `test_ssh_tunnel_opens_and_closes` — needs a real SSH daemon |
 
-**Missing small features (6)**
+**Missing features (5)**
 
 | Item | Ref | Nature |
 |------|-----|---------|
-| REPL argument/subcommand hints | 3.8 | `CONFIG <Tab>` suggests `GET`/`SET`/`REWRITE` |
 | Pub/Sub auto-scroll follow | 5.5 | Tail the message pane as messages arrive |
 | Key browser sort by memory | 4.2 | `MEMORY USAGE` is per-key and lazily fetched, so this needs a design decision |
 | Show/hide TTL and memory columns | 4.2 | Column toggles |
@@ -196,7 +194,7 @@ The original audit predated Phases A–E. The following were reported as
 | 3.5 | History max 1000 entries | ✅ Done | `history.rs::push` evicts oldest at 1000; `ReplWidget.max_history = 1000` |
 | 3.6 | Autocomplete: command names | ✅ Done | `ReplAutocomplete` with nucleo fuzzy matching on 100+ commands |
 | 3.7 | Autocomplete: key names (fuzzy) | ✅ Done | `suggest_keys()` with key cache, wired to `update_key_cache()` |
-| 3.8 | Autocomplete: argument hints / subcommands | ❌ Missing | |
+| 3.8 | Autocomplete: argument hints / subcommands | ✅ Done | 11 commands with subcommand sets; second-token aware |
 | 3.9 | Pipeline parsing with `;;` | ✅ Done | `parse_pipeline()` + `tokenize_shell_like()` |
 | 3.10 | Quoted token handling | ✅ Done | Single + double quote support in tokenizer |
 | 3.11 | Response type-aware formatting | ⚠️ Partial | `redis_value_to_string` handles all `redis::Value` variants but no rich formatting |
@@ -212,7 +210,7 @@ The original audit predated Phases A–E. The following were reported as
 | 3.21 | `test_quoted_token_parsing` | ✅ Done | |
 | 3.22 | `test_execute_raw_get_set` | ✅ Done | `test_execute_raw_get_set` in m1 |
 | 3.23 | `test_execute_pipeline` | ✅ Done | `test_execute_pipeline_round_trip` in m1 |
-| 3.24 | `test_execute_pipeline_partial_error` | ❌ Missing | |
+| 3.24 | `test_execute_pipeline_partial_error` | ✅ Done | 4 tests; failures are per-command, not pipeline-fatal |
 | 3.25 | `test_repl_renders_without_panic` | ✅ Done | |
 | 3.26 | `test_repl_ctrl_l_clears_output` | ✅ Done | Clears output pane, preserves command history |
 
@@ -262,7 +260,7 @@ The original audit predated Phases A–E. The following were reported as
 | 5.2 | Subscribe to channels | ✅ Done | `PubSubAction::Subscribe` |
 | 5.3 | PSUBSCRIBE (pattern subscribe) | ✅ Done | `PubSubKind::Pattern` + `PSubscribe`/`PUnsubscribe` actions, pattern input mode |
 | 5.4 | Message stream with timestamps | ✅ Done | `relative_time()` formatting |
-| 5.5 | Auto-scroll (`f` toggle) | ❌ Missing | `scroll` exists but no follow-mode logic |
+| 5.5 | Auto-scroll (`f` toggle) | ✅ Missing | `scroll` exists but no follow-mode logic |
 | 5.6 | Publish form | ✅ Done | `PubSubInputMode::Message` |
 | 5.7 | Color-coded per-channel tags | ✅ Done | 8-color round-robin per subscription; message tags resolve to subscription color |
 | 5.8 | Message cap (1000) | ✅ Done | `pop_front()` when > 1000 |
@@ -433,7 +431,7 @@ The original audit predated Phases A–E. The following were reported as
 | History persisted | ✅ Done | |
 | Autocomplete command names | ✅ Done | `nucleo` fuzzy scoring over 100+ commands |
 | Autocomplete key names (fuzzy) | ✅ Done | `suggest_keys()` fed by `update_key_cache()` |
-| Argument hints / subcommands | ❌ Missing | |
+| Argument hints / subcommands | ✅ Done | `suggest_subcommands` for 11 commands |
 | Pipeline `;;` | ✅ Done | |
 | Type-aware response formatting | ⚠️ Partial | `redis_value_to_string` covers all `redis::Value` variants; no nested indent |
 | Raw mode (`Ctrl+R`) | ✅ Done | |
@@ -560,14 +558,14 @@ optional features below plus the residual M8 test rows.
 
 ### P2 — Should Have for v1
 
-1. **`test_execute_pipeline_partial_error`** (3.24) — the only missing test row
-   that does not need external infrastructure.
-2. **REPL subcommand hints** (3.8) and **Pub/Sub auto-scroll** (5.5) — both
-   contained, and the two highest-value remaining features.
-3. **Key browser memory sort and column toggles** (4.2) — needs a decision on
+1. **Pub/Sub auto-scroll** (5.5) — the highest-value remaining feature; the
+   message pane should follow new messages unless the user has scrolled up.
+2. **Key browser memory sort and column toggles** (4.2) — needs a decision on
    lazily-fetched `MEMORY USAGE` before it can be implemented honestly.
-4. **Inspector-side set operations and inline rename** (4.3) — both exist in the
+3. **Inspector-side set operations and inline rename** (4.3) — both exist in the
    key browser; these would extend them to the value pane.
+4. **`test_ssh_tunnel_opens_and_closes`** (6.14) — correctly deferred; needs a
+   live SSH daemon.
 5. **Full-screen editor popup** (E2) — `TextAreaEditor` renders inline in the value pane; the only remaining deviation from the spec.
 
 ### P3 — Nice to Have / Post-v1

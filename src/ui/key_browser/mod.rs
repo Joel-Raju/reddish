@@ -924,10 +924,28 @@ mod windowing_tests {
         }
     }
 
-    /// The point of the optimization: frame cost must not scale with the number
-    /// of rows, only with what is drawn.
+    /// Render cost must grow far more slowly than the row count.
+    ///
+    /// The bound is empirical, not arbitrary. Measured with 100 rows against
+    /// 10,000 — a 100x increase in rows:
+    ///
+    /// ```text
+    ///   windowed    ~4.9x    <- what this allows up to 9x of
+    ///   un-windowed ~13.0x   <- the state a regression returns to
+    /// ```
+    ///
+    /// Rendering is still O(rows) because `sorted_rows` walks the whole tree to
+    /// learn the row count and to sort it; windowing only removed the per-row
+    /// `ListItem` allocation, which was the dominant cost. So this cannot
+    /// assert flat timing and does not try to — it pins the gap between the two
+    /// states, which is what protects the optimization.
+    ///
+    /// A 5x bound was tried first and failed on a GitHub runner at 6.2x, which
+    /// is how the true windowed figure was established in the first place.
     #[test]
     fn render_cost_does_not_scale_with_the_row_count() {
+        // Best of three: the test binary shares a CPU with everything else
+        // running in CI, and a slow neighbour should not fail the build.
         let time = |count: usize| {
             let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
             let b = browser_with(count);
@@ -942,11 +960,11 @@ mod windowing_tests {
             start.elapsed()
         };
 
-        let small = time(100);
-        let large = time(10_000);
+        let small = time(100).min(time(100)).min(time(100));
+        let large = time(10_000).min(time(10_000)).min(time(10_000));
 
         assert!(
-            large < small * 5,
+            large < small * 9,
             "20 frames over 100 rows took {small:?} but over 10,000 rows took \
              {large:?}: the window is not being applied"
         );

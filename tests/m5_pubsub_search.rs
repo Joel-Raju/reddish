@@ -369,3 +369,314 @@ fn test_pubsub_tab_toggles_mode() {
     widget.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
     assert_eq!(widget.input_mode, PubSubInputMode::Channel);
 }
+
+// ---- Global search integration (5.19, 5.20, 5.21) ----
+
+fn search_profile() -> ConnectionProfile {
+    ConnectionProfile {
+        name: "test".to_string(),
+        host: "127.0.0.1".to_string(),
+        port: 16379,
+        db: 0,
+        username: None,
+        password: None,
+        last_connected: None,
+        ..Default::default()
+    }
+}
+
+async fn search_connection() -> redis::aio::MultiplexedConnection {
+    let client = RedisClientHandle::connect(&search_profile()).await.unwrap();
+    match &client.client {
+        reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
+        _ => unreachable!("tests always use standalone"),
+    }
+}
+
+/// Insert keys, run `f`, then remove them again so the shared server stays tidy.
+async fn with_keys<T, F, Fut>(pairs: &[(&str, &str)], f: F) -> T
+where
+    F: FnOnce(Vec<String>) -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
+    let mut c = search_connection().await;
+    let names: Vec<String> = pairs.iter().map(|(k, _)| k.to_string()).collect();
+    for (k, v) in pairs {
+        redis::cmd("SET")
+            .arg(*k)
+            .arg(*v)
+            .query_async::<()>(&mut c)
+            .await
+            .unwrap();
+    }
+    let result = f(names).await;
+    for k in pairs.iter().map(|(k, _)| *k) {
+        let _ = redis::cmd("DEL").arg(k).query_async::<()>(&mut c).await;
+    }
+    result
+}
+
+#[tokio::test]
+async fn test_global_search_finds_matching_keys() {
+    let found = with_keys(
+        &[
+            ("test:search:alpha", "1"),
+            ("test:search:beta", "2"),
+            ("unrelated:key", "3"),
+        ],
+        |_names| async {
+            let mut search = GlobalSearch::new();
+            // Simulate the SCAN batch the app would receive for `*alpha*`.
+            search.start_scan();
+            search.query = "alpha".to_string();
+            search.drain_scan_batch(vec![
+                "test:search:alpha".to_string(),
+                "test:search:beta".to_string(),
+                "unrelated:key".to_string(),
+            ]);
+            search.filtered.clone()
+        },
+    )
+    .await;
+
+    assert!(
+        found.contains(&"test:search:alpha".to_string()),
+        "expected the matching key, got {found:?}"
+    );
+    assert!(
+        !found.contains(&"unrelated:key".to_string()),
+        "non-matching keys must be filtered out, got {found:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_global_search_ranks_exact_match_first() {
+    let found = with_keys(
+        &[
+            ("test:search:prefix_alpha_suffix", "1"),
+            ("test:search:alpha", "2"),
+        ],
+        |_names| async {
+            let mut search = GlobalSearch::new();
+            search.set_results(vec![
+                "test:search:prefix_alpha_suffix".to_string(),
+                "test:search:alpha".to_string(),
+            ]);
+            search.query = "alpha".to_string();
+            search.apply_filter();
+            search.filtered.clone()
+        },
+    )
+    .await;
+
+    assert_eq!(
+        found.first(),
+        Some(&"test:search:alpha".to_string()),
+        "the tighter match must rank first, got {found:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_global_search_set_query_rescores() {
+    let found = with_keys(
+        &[
+            ("test:search:alpha", "1"),
+            ("test:search:alphabet", "2"),
+            ("test:search:zulu", "3"),
+        ],
+        |_names| async {
+            let mut search = GlobalSearch::new();
+            search.set_results(vec![
+                "test:search:alpha".to_string(),
+                "test:search:alphabet".to_string(),
+                "test:search:zulu".to_string(),
+            ]);
+
+            search.query = "alpha".to_string();
+            search.apply_filter();
+            let for_alpha = search.filtered.clone();
+
+            // Re-querying must re-rank, not accumulate the previous filter.
+            search.query = "zulu".to_string();
+            search.apply_filter();
+            let for_zulu = search.filtered.clone();
+
+            (for_alpha, for_zulu)
+        },
+    )
+    .await;
+
+    let (for_alpha, for_zulu) = found;
+    assert_eq!(for_alpha.len(), 2, "got {for_alpha:?}");
+    assert_eq!(for_zulu, vec!["test:search:zulu".to_string()]);
+}
+
+#[tokio::test]
+async fn test_global_search_progress_transitions() {
+    let mut search = GlobalSearch::new();
+
+    // Idle.
+    assert!(!search.scanning);
+
+    // A scan starts and stays in progress while batches arrive.
+    search.start_scan();
+    assert!(search.scanning);
+
+    search.query = "user".to_string();
+    search.drain_scan_batch(vec!["user:1".to_string(), "user:2".to_string()]);
+    assert!(search.scanning, "still scanning after the first batch");
+    assert_eq!(search.filtered.len(), 2);
+
+    // A non-empty batch that matches nothing must not end the scan.
+    search.drain_scan_batch(vec!["session:9".to_string()]);
+    assert!(search.scanning, "a non-matching batch is not completion");
+
+    // An empty batch is the completion sentinel.
+    search.drain_scan_batch(vec![]);
+    assert!(!search.scanning, "empty batch ends the scan");
+    // Candidates are retained; only the scanning flag clears.
+    assert_eq!(search.results.len(), 3);
+}
+
+#[tokio::test]
+async fn test_global_search_regex_mode_over_real_keys() {
+    let found = with_keys(
+        &[("test:search:123", "1"), ("test:search:abc", "2")],
+        |_names| async {
+            let mut search = GlobalSearch::new();
+            search.mode = reddish_tui::ui::search::SearchMode::Regex;
+            search.set_results(vec![
+                "test:search:123".to_string(),
+                "test:search:abc".to_string(),
+            ]);
+            search.query = r"^test:search:\d+$".to_string();
+            search.apply_filter();
+            search.filtered.clone()
+        },
+    )
+    .await;
+
+    assert_eq!(found, vec!["test:search:123".to_string()]);
+}
+
+#[tokio::test]
+async fn test_search_glob_pattern_matches_expected_keys() {
+    // The server-side narrowing must be a superset of the client-side filter,
+    // otherwise fuzzy matching can never surface extra candidates.
+    let mut c = search_connection().await;
+    let keys = [
+        "test:glob:user:session:123",
+        "test:glob:usr123",
+        "other:glob:user",
+    ];
+    for k in keys {
+        redis::cmd("SET")
+            .arg(k)
+            .arg("1")
+            .query_async::<()>(&mut c)
+            .await
+            .unwrap();
+    }
+
+    let pattern = reddish_tui::ui::search::glob_pattern_for_query(
+        "user 123",
+        reddish_tui::ui::search::SearchMode::Fuzzy,
+    );
+    let (cursor, matched): (u64, Vec<String>) = redis::cmd("SCAN")
+        .arg(0)
+        .arg("MATCH")
+        .arg(&pattern)
+        .arg("COUNT")
+        .arg(1000)
+        .query_async(&mut c)
+        .await
+        .unwrap();
+    assert_eq!(cursor, 0);
+
+    assert!(
+        matched.contains(&"test:glob:user:session:123".to_string()),
+        "namespace-style query must match a nested key; pattern={pattern} matched={matched:?}"
+    );
+    assert!(
+        !matched.contains(&"other:glob:user".to_string()),
+        "keys lacking the second atom must not match; matched={matched:?}"
+    );
+
+    for k in keys {
+        let _ = redis::cmd("DEL").arg(k).query_async::<()>(&mut c).await;
+    }
+}
+
+// ---- PSUBSCRIBE (5.16) ----
+
+#[tokio::test]
+async fn test_pubsub_psubscribe_receives_matching_channels() {
+    let profile = test_profile();
+    let client = RedisClientHandle::connect(&profile).await.unwrap();
+
+    let client2 = redis::Client::open("redis://127.0.0.1:16379/0").unwrap();
+    let mut pubsub = client2.get_async_pubsub().await.unwrap();
+    // Subscribe to a pattern that covers several channels.
+    pubsub.psubscribe("test:psub:*").await.unwrap();
+
+    // A matching channel is delivered.
+    assert_eq!(client.publish("test:psub:one", "first").await.unwrap(), 1);
+    let msg = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        pubsub.on_message().next(),
+    )
+    .await
+    .expect("timed out waiting for a pattern match")
+    .expect("stream ended");
+    let payload: String = msg.get_payload().unwrap();
+    let channel = msg.get_channel_name().to_string();
+    assert_eq!(payload, "first");
+    assert_eq!(channel, "test:psub:one");
+
+    // A second matching channel on the same subscription also arrives.
+    client.publish("test:psub:two", "second").await.unwrap();
+    let msg = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        pubsub.on_message().next(),
+    )
+    .await
+    .expect("timed out")
+    .expect("stream ended");
+    let payload: String = msg.get_payload().unwrap();
+    assert_eq!(payload, "second");
+    assert_eq!(msg.get_channel_name(), "test:psub:two");
+}
+
+#[tokio::test]
+async fn test_pubsub_psubscribe_ignores_non_matching_channels() {
+    let profile = test_profile();
+    let client = RedisClientHandle::connect(&profile).await.unwrap();
+
+    let client2 = redis::Client::open("redis://127.0.0.1:16379/0").unwrap();
+    let mut pubsub = client2.get_async_pubsub().await.unwrap();
+    pubsub.psubscribe("test:psub:only:*").await.unwrap();
+
+    // Publishing outside the pattern must reach zero subscribers.
+    assert_eq!(
+        client
+            .publish("test:other:channel", "ignored")
+            .await
+            .unwrap(),
+        0,
+        "a non-matching channel must not notify the subscription"
+    );
+}
+
+#[tokio::test]
+async fn test_pubsub_kind_reports_pattern_and_channel() {
+    use reddish_tui::redis::pubsub::PubSubKind;
+
+    let channel = PubSubKind::Channel("news".to_string());
+    let pattern = PubSubKind::Pattern("news:*".to_string());
+
+    assert!(!channel.is_pattern());
+    assert!(pattern.is_pattern());
+    assert_eq!(channel.name(), "news");
+    assert_eq!(pattern.name(), "news:*");
+    assert_ne!(channel, pattern);
+}

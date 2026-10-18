@@ -3,7 +3,9 @@ use ratatui::backend::TestBackend;
 use reddish_tui::config::connections::ConnectionProfile;
 use reddish_tui::events::Event;
 use reddish_tui::redis::client::RedisClientHandle;
-use reddish_tui::redis::server::{ServerInfo, SlowLogEntry, slowlog_get};
+use reddish_tui::redis::server::{
+    ServerInfo, SlowLogEntry, slowlog_get, slowlog_len, slowlog_reset,
+};
 use reddish_tui::ui::info_dashboard::{InfoDashboard, SystemStats};
 
 fn test_profile() -> ConnectionProfile {
@@ -391,4 +393,174 @@ fn test_info_dashboard_render_with_sparklines() {
         ..Default::default()
     });
     let _ = terminal.draw(|f| dashboard.render(f, f.area()));
+}
+
+// ---- SLOWLOG RESET / LEN (4.23, 4.7) ----
+
+fn slowlog_profile() -> ConnectionProfile {
+    ConnectionProfile {
+        name: "test".to_string(),
+        host: "127.0.0.1".to_string(),
+        port: 16379,
+        db: 0,
+        username: None,
+        password: None,
+        last_connected: None,
+        ..Default::default()
+    }
+}
+
+async fn standalone(client: &RedisClientHandle) -> redis::aio::MultiplexedConnection {
+    match &client.client {
+        reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
+        _ => unreachable!("tests always use standalone"),
+    }
+}
+
+/// Serializes tests that mutate the shared server's slowlog configuration.
+///
+/// `slowlog-log-slower-than` is server-wide state, so two tests changing it at
+/// once would restore stale values and leave the server misconfigured.
+///
+/// A `tokio::sync::Mutex` rather than `std::sync::Mutex` because the guard is
+/// held across `.await` points, which the blocking one must not do.
+static SLOWLOG_CONFIG_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Restores `slowlog-log-slower-than` when dropped, including on panic.
+///
+/// Uses a synchronous connection because `Drop` cannot await, and this must
+/// still run when the test unwinds.
+struct ThresholdGuard {
+    original: String,
+}
+
+impl Drop for ThresholdGuard {
+    fn drop(&mut self) {
+        let Ok(client) = redis::Client::open("redis://127.0.0.1:16379/0") else {
+            return;
+        };
+        let Ok(mut conn) = client.get_connection() else {
+            return;
+        };
+        let _ = redis::cmd("CONFIG")
+            .arg("SET")
+            .arg("slowlog-log-slower-than")
+            .arg(&self.original)
+            .query::<()>(&mut conn);
+    }
+}
+
+/// Lower the slowlog threshold to 0, run `f`, then restore the original value.
+///
+/// `DEBUG SLEEP` is unavailable (Redis ships with `enable-debug-command no`),
+/// so dropping the threshold is the only reliable way to make the server
+/// record a query. Returns the server's entry count observed inside `f`.
+///
+/// The caller must hold `SLOWLOG_CONFIG_LOCK` for the whole test, not just
+/// across this call: the slowlog itself is shared, so another test resetting it
+/// between here and the caller's assertions would make them flaky.
+async fn with_slowlog_threshold_zero(
+    client: &RedisClientHandle,
+    f: impl AsyncFnOnce() -> (),
+) -> i64 {
+    let mut c = standalone(client).await;
+
+    // CONFIG GET replies with a [name, value] array.
+    let original: Vec<String> = redis::cmd("CONFIG")
+        .arg("GET")
+        .arg("slowlog-log-slower-than")
+        .query_async(&mut c)
+        .await
+        .expect("read slowlog threshold");
+    let original_value = original
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| "10000".to_string());
+
+    redis::cmd("CONFIG")
+        .arg("SET")
+        .arg("slowlog-log-slower-than")
+        .arg("0")
+        .query_async::<()>(&mut c)
+        .await
+        .expect("lower slowlog threshold");
+
+    let _restore = ThresholdGuard {
+        original: original_value,
+    };
+
+    f().await;
+
+    slowlog_len(client).await.unwrap_or(0) as i64
+}
+
+#[tokio::test]
+async fn test_slowlog_len_reports_server_count() {
+    let _lock = SLOWLOG_CONFIG_LOCK.lock().await;
+    let client = RedisClientHandle::connect(&slowlog_profile())
+        .await
+        .unwrap();
+
+    // Start from a known state so the assertion is not order-dependent.
+    slowlog_reset(&client).await.unwrap();
+    assert_eq!(slowlog_len(&client).await.unwrap(), 0);
+
+    let recorded = with_slowlog_threshold_zero(&client, async || {
+        let mut c = standalone(&client).await;
+        redis::cmd("PING").query_async::<()>(&mut c).await.unwrap();
+    })
+    .await;
+
+    assert!(
+        recorded >= 1,
+        "expected at least one slowlog entry, got {recorded}"
+    );
+
+    slowlog_reset(&client).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_slowlog_reset_clears_the_log() {
+    let _lock = SLOWLOG_CONFIG_LOCK.lock().await;
+    let client = RedisClientHandle::connect(&slowlog_profile())
+        .await
+        .unwrap();
+
+    let recorded = with_slowlog_threshold_zero(&client, async || {
+        let mut c = standalone(&client).await;
+        redis::cmd("PING").query_async::<()>(&mut c).await.unwrap();
+    })
+    .await;
+
+    // Ensure there is something to clear, so the test cannot pass vacuously.
+    if recorded == 0 {
+        eprintln!("skipping: server recorded no query even at threshold 0");
+        return;
+    }
+    assert!(!slowlog_get(&client, 10).await.unwrap().is_empty());
+
+    slowlog_reset(&client).await.unwrap();
+
+    assert_eq!(
+        slowlog_len(&client).await.unwrap(),
+        0,
+        "SLOWLOG RESET must empty the log"
+    );
+    assert!(
+        slowlog_get(&client, 10).await.unwrap().is_empty(),
+        "entries must be gone after a reset"
+    );
+}
+
+#[tokio::test]
+async fn test_slowlog_reset_is_idempotent() {
+    // Shares the server's slowlog with the other tests here, so it must take
+    // the same lock: a concurrent reset would make the length assertion flaky.
+    let _lock = SLOWLOG_CONFIG_LOCK.lock().await;
+    let client = RedisClientHandle::connect(&slowlog_profile())
+        .await
+        .unwrap();
+    slowlog_reset(&client).await.unwrap();
+    slowlog_reset(&client).await.unwrap();
+    assert_eq!(slowlog_len(&client).await.unwrap(), 0);
 }

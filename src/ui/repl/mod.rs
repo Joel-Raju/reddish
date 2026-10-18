@@ -96,15 +96,27 @@ impl Default for ReplWidget {
 
 impl ReplWidget {
     pub fn new() -> Self {
-        let history_path = dirs::data_dir()
+        Self::with_history_path(Self::default_history_path())
+    }
+
+    /// Where the command history is persisted.
+    fn default_history_path() -> std::path::PathBuf {
+        dirs::data_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("redis-tui")
-            .join("history");
+            .join("history")
+    }
 
+    /// Build a widget whose history is stored at `path`.
+    ///
+    /// Exposed so tests can use an isolated file. `new()` reads *and writes*
+    /// the user's real history, so using it in tests would both pollute their
+    /// data directory and make results depend on test execution order.
+    pub fn with_history_path(path: std::path::PathBuf) -> Self {
         Self {
             input: String::new(),
             history: VecDeque::new(),
-            command_history: CommandHistory::load(&history_path),
+            command_history: CommandHistory::load(&path),
             cursor: 0,
             scroll: 0,
             max_history: 1000,
@@ -381,9 +393,20 @@ impl ReplWidget {
 
 #[cfg(test)]
 mod tests {
-    use super::{ReplWidget, parse_pipeline, tokenize_shell_like};
+    use super::{ReplLine, ReplLineStatus, ReplWidget, parse_pipeline, tokenize_shell_like};
     use crate::events::Event;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    /// Unique, isolated history path per test, so tests never read or write
+    /// the developer's real REPL history.
+    fn temp_history_path() -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir()
+            .join(format!("reddish-repl-test-{}-{n}", std::process::id()))
+            .join("history")
+    }
 
     #[test]
     fn test_tokenize_shell_like_quotes() {
@@ -402,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_repl_tab_autocomplete() {
-        let mut repl = ReplWidget::new();
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('g'))));
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
@@ -413,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_repl_tab_cycles_suggestions() {
-        let mut repl = ReplWidget::new();
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
         assert!(repl.ac_visible);
@@ -427,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_repl_shift_tab_cycles_back() {
-        let mut repl = ReplWidget::new();
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
@@ -440,7 +463,7 @@ mod tests {
 
     #[test]
     fn test_repl_enter_accepts_suggestion() {
-        let mut repl = ReplWidget::new();
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('g'))));
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('e'))));
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
@@ -453,8 +476,84 @@ mod tests {
     }
 
     #[test]
+    fn test_repl_ctrl_l_clears_output() {
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
+        // Mirror the real flow: Enter pushes an Info line, then the result
+        // fills it in. add_result only updates an existing entry.
+        for cmd in ["GET a", "GET b"] {
+            repl.history.push_back(ReplLine {
+                input: cmd.to_string(),
+                output: String::new(),
+                status: ReplLineStatus::Info,
+            });
+            repl.add_result(cmd, "value".to_string(), ReplLineStatus::Success);
+        }
+        assert_eq!(repl.history.len(), 2);
+
+        let ctrl_l = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL);
+        repl.handle_event(&Event::Key(ctrl_l));
+
+        assert!(repl.history.is_empty(), "Ctrl+L must clear the output pane");
+    }
+
+    #[test]
+    fn test_repl_ctrl_l_does_not_clear_command_history() {
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
+        repl.command_history.push("GET a".to_string());
+        repl.command_history.push("GET b".to_string());
+        repl.history.push_back(ReplLine {
+            input: "GET a".to_string(),
+            output: String::new(),
+            status: ReplLineStatus::Info,
+        });
+        repl.add_result("GET a", "hello".to_string(), ReplLineStatus::Success);
+
+        let ctrl_l = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL);
+        repl.handle_event(&Event::Key(ctrl_l));
+
+        assert!(repl.history.is_empty(), "output pane cleared");
+        assert_eq!(
+            repl.command_history.len(),
+            2,
+            "Ctrl+L clears output, not the persisted command history"
+        );
+    }
+
+    #[test]
+    fn test_repl_ctrl_r_toggles_raw_mode() {
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
+        assert!(!repl.raw_mode);
+        let ctrl_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
+        repl.handle_event(&Event::Key(ctrl_r));
+        assert!(repl.raw_mode);
+        repl.handle_event(&Event::Key(ctrl_r));
+        assert!(!repl.raw_mode);
+    }
+
+    #[test]
+    fn test_repl_output_is_capped_at_max_history() {
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
+        for i in 0..(repl.max_history + 50) {
+            repl.history.push_back(ReplLine {
+                input: format!("GET k{i}"),
+                output: String::new(),
+                status: ReplLineStatus::Info,
+            });
+            if repl.history.len() > repl.max_history {
+                repl.history.pop_front();
+            }
+        }
+        assert_eq!(repl.history.len(), repl.max_history);
+        // Oldest entries must be the ones dropped.
+        assert!(
+            repl.history.front().unwrap().input.starts_with("GET k50"),
+            "expected the oldest entries evicted"
+        );
+    }
+
+    #[test]
     fn test_repl_esc_closes_autocomplete() {
-        let mut repl = ReplWidget::new();
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('g'))));
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
         assert!(repl.ac_visible);
@@ -465,7 +564,7 @@ mod tests {
 
     #[test]
     fn test_repl_typing_closes_autocomplete() {
-        let mut repl = ReplWidget::new();
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('g'))));
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
         assert!(repl.ac_visible);
@@ -476,7 +575,7 @@ mod tests {
 
     #[test]
     fn test_repl_key_cache_suggestions() {
-        let mut repl = ReplWidget::new();
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
         repl.update_key_cache(vec!["user:123".to_string(), "user:456".to_string()]);
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('G'))));
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('E'))));
@@ -493,7 +592,7 @@ mod tests {
     fn test_repl_render_with_autocomplete_does_not_panic() {
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let mut repl = ReplWidget::new();
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('g'))));
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
         assert!(repl.ac_visible);
@@ -502,7 +601,7 @@ mod tests {
 
     #[test]
     fn test_repl_monitor_toggle() {
-        let mut repl = ReplWidget::new();
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
         assert!(!repl.monitor_visible);
 
         let ctrl_m = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL);
@@ -516,7 +615,7 @@ mod tests {
 
     #[test]
     fn test_repl_monitor_push_line() {
-        let mut repl = ReplWidget::new();
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
         repl.push_monitor_line("GET foo".to_string());
         repl.push_monitor_line("SET bar 1".to_string());
         assert_eq!(repl.monitor_lines.len(), 2);
@@ -528,7 +627,7 @@ mod tests {
     fn test_repl_render_with_monitor_does_not_panic() {
         let backend = ratatui::backend::TestBackend::new(80, 24);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
-        let mut repl = ReplWidget::new();
+        let mut repl = ReplWidget::with_history_path(temp_history_path());
         repl.monitor_visible = true;
         repl.push_monitor_line("GET foo".to_string());
         repl.push_monitor_line("SET bar 1".to_string());

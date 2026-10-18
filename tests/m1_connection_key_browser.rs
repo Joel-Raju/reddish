@@ -1533,6 +1533,76 @@ async fn test_stream_xtrim_rejects_bad_strategy() {
 }
 
 #[tokio::test]
+async fn test_stream_xadd_xdel_round_trip() {
+    let client = RedisClientHandle::connect(&test_profile()).await.unwrap();
+    let key = "test:m2:xadd_xdel";
+    let mut c = standalone(&client);
+
+    redis::cmd("DEL")
+        .arg(key)
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
+
+    let id = client
+        .xadd(key, "*", &[("event", "created"), ("actor", "ada")])
+        .await
+        .unwrap();
+    assert!(!id.is_empty());
+
+    // The entry must read back with both fields intact.
+    let entries = client.xrange(key).await.unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].id, id);
+    assert_eq!(
+        entries[0].fields.get("event").map(String::as_str),
+        Some("created")
+    );
+    assert_eq!(
+        entries[0].fields.get("actor").map(String::as_str),
+        Some("ada")
+    );
+
+    // Appending a second entry keeps both.
+    let second = client
+        .xadd(key, "*", &[("event", "deleted")])
+        .await
+        .unwrap();
+    assert_ne!(id, second);
+    assert_eq!(client.xrange(key).await.unwrap().len(), 2);
+
+    // XDEL removes only the named entry.
+    client.xdel(key, &id).await.unwrap();
+    let remaining = client.xrange(key).await.unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].id, second);
+
+    redis::cmd("DEL")
+        .arg(key)
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_stream_xdel_missing_entry_is_idempotent() {
+    let client = RedisClientHandle::connect(&test_profile()).await.unwrap();
+    let key = "test:m2:xdel_missing";
+    let mut c = standalone(&client);
+
+    client.xadd(key, "*", &[("f", "v")]).await.unwrap();
+    // XDEL on an absent id is a no-op returning 0, not an error.
+    client.xdel(key, "99999999999-99").await.unwrap();
+    assert_eq!(client.xrange(key).await.unwrap().len(), 1);
+
+    redis::cmd("DEL")
+        .arg(key)
+        .query_async::<()>(&mut c)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn test_stream_xrange_after_returns_only_newer_entries() {
     let client = RedisClientHandle::connect(&test_profile()).await.unwrap();
     let key = "test:m2:xrange_after";

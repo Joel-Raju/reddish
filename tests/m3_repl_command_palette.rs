@@ -21,9 +21,17 @@ fn test_repl_line_status() {
     assert!(matches!(err_line.status, ReplLineStatus::Error(ref s) if s == "ERR"));
 }
 
+/// Isolated history path so tests never touch the developer's real REPL
+/// history file.
+fn temp_history_path(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir()
+        .join(format!("reddish-repl-it-{}-{name}", std::process::id()))
+        .join("history")
+}
+
 #[test]
 fn test_repl_widget_history_and_navigation() {
-    let mut repl = ReplWidget::new();
+    let mut repl = ReplWidget::with_history_path(temp_history_path("nav"));
     // Type a command
     repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('P'))));
     repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('I'))));
@@ -49,7 +57,7 @@ fn test_repl_widget_history_and_navigation() {
 fn test_repl_widget_renders_without_panic() {
     let backend = TestBackend::new(80, 24);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
-    let mut repl = ReplWidget::new();
+    let mut repl = ReplWidget::with_history_path(temp_history_path("render"));
     repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('X'))));
     repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
     let _ = terminal.draw(|f| repl.render(f, f.area()));

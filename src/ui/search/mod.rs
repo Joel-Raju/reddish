@@ -323,6 +323,11 @@ impl GlobalSearch {
             self.scanning = false;
             return;
         }
+        // Rebuild the cached query state first. `atoms` is a cache, and if the
+        // query changed without `apply_filter` running (which the app does not
+        // do, but a caller might) the cache would be stale and every candidate
+        // would score as a match.
+        self.refresh_query_state();
         let mut scored_any = false;
         for item in batch {
             if !self.seen.insert(item.clone()) {

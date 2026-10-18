@@ -85,6 +85,40 @@ fn build_redis_url(profile: &ConnectionProfile, host: &str, port: u16) -> RedisR
     Ok(format!("{scheme}://{auth}{host}:{port}/{}", profile.db))
 }
 
+/// Strip the password from a Redis URL so it is safe to log or display.
+///
+/// Connection URLs embed credentials (`redis://user:pass@host:port/db`), and
+/// error messages from the underlying client can quote the URL back. Anything
+/// between the last `:` before the `@` and the `@` itself is replaced.
+///
+/// ```
+/// use reddish_tui::redis::client::redact_url;
+/// assert_eq!(
+///     redact_url("redis://user:hunter2@localhost:6379/0"),
+///     "redis://user:<redacted>@localhost:6379/0"
+/// );
+/// ```
+pub fn redact_url(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    let Some((authority, tail)) = rest.split_once('/') else {
+        return url.to_string();
+    };
+    let Some((credentials, host)) = authority.rsplit_once('@') else {
+        return url.to_string();
+    };
+
+    match credentials.split_once(':') {
+        // user:password -> keep the user, redact the password.
+        Some((user, _)) => format!("{scheme}://{user}:{REDACTED}@{host}/{tail}"),
+        // A bare username carries no secret.
+        None => url.to_string(),
+    }
+}
+
+const REDACTED: &str = "<redacted>";
+
 async fn connect_with_timeout(url: &str) -> RedisResult<MultiplexedConnection> {
     let client = redis::Client::open(url)
         .map_err(|e| RedisError::ConnectionFailed(format!("invalid redis URL: {e}")))?;
@@ -1755,4 +1789,86 @@ pub fn parse_cluster_nodes(raw: &str) -> color_eyre::Result<Vec<ClusterNode>> {
         });
     }
     Ok(nodes)
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+
+    const SECRET: &str = "hunter2-super-secret";
+
+    #[test]
+    fn url_with_password_is_redacted() {
+        let url = format!("redis://user:{SECRET}@localhost:6379/0");
+        let redacted = redact_url(&url);
+        assert!(!redacted.contains(SECRET), "leaked: {redacted}");
+        assert_eq!(redacted, "redis://user:<redacted>@localhost:6379/0");
+    }
+
+    #[test]
+    fn url_with_password_and_no_user_is_redacted() {
+        let url = format!("redis://:{SECRET}@localhost:6379/2");
+        let redacted = redact_url(&url);
+        assert!(!redacted.contains(SECRET), "leaked: {redacted}");
+        assert_eq!(redacted, "redis://:<redacted>@localhost:6379/2");
+    }
+
+    #[test]
+    fn tls_url_is_redacted() {
+        let url = format!("rediss://user:{SECRET}@redis.example.com:6380/1");
+        let redacted = redact_url(&url);
+        assert!(!redacted.contains(SECRET), "leaked: {redacted}");
+        assert!(redacted.starts_with("rediss://user:<redacted>@"));
+    }
+
+    #[test]
+    fn url_without_credentials_is_unchanged() {
+        let url = "redis://localhost:6379/0";
+        assert_eq!(redact_url(url), url);
+    }
+
+    #[test]
+    fn url_with_username_only_is_unchanged() {
+        // No password, so nothing to redact.
+        let url = "redis://user@localhost:6379/0";
+        assert_eq!(redact_url(url), url);
+    }
+
+    #[test]
+    fn non_url_strings_are_unchanged() {
+        assert_eq!(redact_url("not a url"), "not a url");
+        assert_eq!(redact_url(""), "");
+    }
+
+    /// The URL built for a profile with a password must be redactable, which
+    /// is the case that matters since it is what reaches error messages.
+    #[test]
+    fn built_url_with_password_is_redactable() {
+        let profile = ConnectionProfile {
+            name: "t".to_string(),
+            username: Some("app".to_string()),
+            password: Some(crate::config::connections::PasswordRef::Plaintext(
+                SECRET.to_string(),
+            )),
+            ..Default::default()
+        };
+        let url = build_redis_url(&profile, "localhost", 6379).unwrap();
+        assert!(url.contains(SECRET), "precondition: url embeds the secret");
+        let redacted = redact_url(&url);
+        assert!(
+            !redacted.contains(SECRET),
+            "secret survives redaction: {redacted}"
+        );
+    }
+
+    #[test]
+    fn built_url_without_password_is_unchanged() {
+        let profile = ConnectionProfile {
+            name: "t".to_string(),
+            ..Default::default()
+        };
+        let url = build_redis_url(&profile, "localhost", 6379).unwrap();
+        assert_eq!(url, "redis://localhost:6379/0");
+        assert_eq!(redact_url(&url), url);
+    }
 }

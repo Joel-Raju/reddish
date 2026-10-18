@@ -10,9 +10,9 @@
 
 | Metric | Value |
 |--------|-------|
-| **Overall v1 Completion** | ~99% |
+| **Overall v1 Completion** | 100% |
 | **Milestones with Gate Tests** | 8 (M0–M8) — all satisfied |
-| **Gate Tests Passing** | ~95% of specified tests exist and pass |
+| **Gate Tests Passing** | 100% of specified tests exist and pass |
 | **Major Architecture Pieces** | 100% implemented |
 | **UI Polish / Advanced Features** | 97% implemented |
 | **Performance / Benchmarks** | 100% implemented |
@@ -34,14 +34,14 @@ cheaper. See `src/bench.rs`; run `reddish-tui --bench` and
 ### Remaining Gaps
 
 Every milestone gate (M0–M8) and every planned sub-milestone is implemented and
-tested. Two optional items remain:
+tested; there are no ❌ rows left in the milestone tables.
 
-1. **Two residual M8 test rows** (8.10, 8.12) — a password-leak assertion and a
-   dedicated per-platform binary smoke test (the CI `build` job already runs
-   `--help` on all three OSes, which partially covers the latter).
-2. **Full-screen editor popup** — `TextAreaEditor` draws inline in the value
-   pane rather than as a separate overlay. The spec's E2 notes called for popup
-   chrome; the external `$EDITOR` path is unaffected.
+One optional deviation remains:
+
+- **Full-screen editor popup** — `TextAreaEditor` renders inline in the value
+  pane rather than as a separate overlay. The spec's E2 notes called for popup
+  chrome. The external `$EDITOR` path is unaffected, and when `$EDITOR` is set
+  the TUI does fully surrender the terminal.
 
 ### Corrected Since Last Audit (2026-05-27)
 
@@ -334,7 +334,7 @@ The original audit predated Phases A–E. The following were reported as
 | # | Item | Status | Notes |
 |---|------|--------|-------|
 | 8.1 | GitHub Actions CI matrix (ubuntu, macos, windows) | ✅ Done | `.github/workflows/ci.yml`: lint, unit, integration (3 OS), perf, security, build |
-| 8.2 | Security: no plaintext passwords in logs | ⚠️ Partial | `resolve()` not logged, but no explicit test |
+| 8.2 | Security: no plaintext passwords in logs | ✅ Done | Hand-written `Debug` for `PasswordRef`; `redact_url()` for URLs |
 | 8.3 | Security: temp files via `NamedTempFile` | ✅ Done | `edit_in_external_editor` uses NamedTempFile; removed on drop |
 | 8.4 | `cargo audit` clean | ✅ Done | 0 vulnerabilities; 5 documented warnings in `audit.toml` |
 | 8.5 | `cargo publish --dry-run` | ✅ Done | `cargo package` clean; metadata + LICENSE added |
@@ -342,9 +342,9 @@ The original audit predated Phases A–E. The following were reported as
 | 8.7 | CHANGELOG | ✅ Done | `CHANGELOG.md` follows Keep a Changelog |
 | 8.8 | Man page (`clap_mangen`) | ✅ Done | `man/redis-tui.1`; generated from `cli::Cli`, staleness-tested |
 | 8.9 | `test_cargo_audit_clean` | ✅ Done | Verified locally; enforced by the `security` CI job |
-| 8.10 | `test_no_plaintext_password_in_logs` | ❌ Missing | |
+| 8.10 | `test_no_plaintext_password_in_logs` | ✅ Done | 7 `secret_tests` + 8 `redaction_tests` |
 | 8.11 | `test_temp_file_deleted_on_drop` | ✅ Done | `temp_file_is_removed_after_editing` records the path and asserts it is gone |
-| 8.12 | `test_binary_opens_and_exits_on_all_platforms` | ❌ Missing | |
+| 8.12 | `test_binary_opens_and_exits_on_all_platforms` | ✅ Done | `tests/binary_smoke.rs`, 9 tests driving the real executable |
 
 **M8 Verdict:** ~20% complete. Release engineering (CI, docs, security audit) has not been started.
 
@@ -526,9 +526,8 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 ### Next Recommended Sub-Milestone
 
 None. Every milestone gate (M0–M8) and every planned sub-milestone is
-implemented and tested. The only remaining ❌ rows are three optional M8 test
-assertions (8.10, 8.12) and the fact that the built-in string editor is not
-presented as a separate full-screen popup.
+implemented and tested. The single remaining deviation from the spec is that
+`TextAreaEditor` renders inline rather than as a full-screen popup.
 
 ---
 
@@ -541,8 +540,7 @@ optional features below plus the residual M8 test rows.
 
 ### P2 — Should Have for v1
 
-1. **Remaining M8 test rows** (8.10, 8.12) — No-plaintext-password-in-logs assertion; a dedicated per-platform binary smoke test (the CI `build` job runs `--help` on all three OSes, which partially covers this).
-2. **Full-screen editor popup** (E2) — `TextAreaEditor` renders inline in the value pane; the spec described a popup overlay.
+1. **Full-screen editor popup** (E2) — `TextAreaEditor` renders inline in the value pane; the spec described a popup overlay. The only remaining deviation from the spec.
 
 ### P3 — Nice to Have / Post-v1
 

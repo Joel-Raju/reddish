@@ -56,11 +56,37 @@ pub struct SshTunnelConfig {
     pub local_port: u16,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// How a connection's password is obtained.
+///
+/// `Debug` is implemented by hand rather than derived: `Plaintext` holds the
+/// secret itself, and the derived output would print it into any log line,
+/// panic message, or test failure that formats a profile. The derived
+/// `Serialize` is intentional and separate — it is what writes the value to
+/// `connections.toml`.
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub enum PasswordRef {
     Plaintext(String),
     Env(String),
     Keychain { service: String, account: String },
+}
+
+/// Placeholder substituted for a secret in `Debug` output.
+const REDACTED: &str = "<redacted>";
+
+impl std::fmt::Debug for PasswordRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // Never print the secret itself.
+            PasswordRef::Plaintext(_) => write!(f, "Plaintext({REDACTED})"),
+            // The variable name is not a secret and is useful when diagnosing
+            // a misconfigured profile.
+            PasswordRef::Env(var) => write!(f, "Env({var:?})"),
+            PasswordRef::Keychain { service, account } => write!(
+                f,
+                "Keychain {{ service: {service:?}, account: {account:?} }}"
+            ),
+        }
+    }
 }
 
 impl PasswordRef {
@@ -121,5 +147,97 @@ impl ConnectionStore {
 
     pub fn get(&self, name: &str) -> Option<&ConnectionProfile> {
         self.profiles.iter().find(|p| p.name == name)
+    }
+}
+
+#[cfg(test)]
+mod secret_tests {
+    use super::*;
+
+    const SECRET: &str = "hunter2-super-secret";
+
+    /// Spec 8.10: a plaintext password must never appear in `Debug` output,
+    /// because `Debug` is what lands in log lines and panic messages.
+    #[test]
+    fn plaintext_password_is_redacted_in_debug() {
+        let p = PasswordRef::Plaintext(SECRET.to_string());
+        let rendered = format!("{p:?}");
+        assert!(
+            !rendered.contains(SECRET),
+            "secret leaked via Debug: {rendered}"
+        );
+        assert!(rendered.contains("<redacted>"), "got: {rendered}");
+    }
+
+    #[test]
+    fn profile_debug_does_not_leak_a_plaintext_password() {
+        let profile = ConnectionProfile {
+            name: "prod".to_string(),
+            password: Some(PasswordRef::Plaintext(SECRET.to_string())),
+            ..Default::default()
+        };
+        let rendered = format!("{profile:?}");
+        assert!(
+            !rendered.contains(SECRET),
+            "secret leaked via profile Debug: {rendered}"
+        );
+    }
+
+    #[test]
+    fn connection_store_debug_does_not_leak() {
+        let store = ConnectionStore {
+            path: std::path::PathBuf::from("/tmp/connections.toml"),
+            profiles: vec![ConnectionProfile {
+                name: "prod".to_string(),
+                password: Some(PasswordRef::Plaintext(SECRET.to_string())),
+                ..Default::default()
+            }],
+        };
+        let rendered = format!("{store:?}");
+        assert!(
+            !rendered.contains(SECRET),
+            "secret leaked via store Debug: {rendered}"
+        );
+    }
+
+    /// Losing the env var name would make a misconfigured profile hard to
+    /// diagnose, and it is not a secret.
+    #[test]
+    fn env_password_reference_keeps_the_variable_name() {
+        let p = PasswordRef::Env("REDIS_PASSWORD".to_string());
+        assert_eq!(format!("{p:?}"), "Env(\"REDIS_PASSWORD\")");
+    }
+
+    #[test]
+    fn keychain_reference_keeps_service_and_account() {
+        let p = PasswordRef::Keychain {
+            service: "redis-tui".to_string(),
+            account: "prod".to_string(),
+        };
+        let rendered = format!("{p:?}");
+        assert!(rendered.contains("redis-tui"));
+        assert!(rendered.contains("prod"));
+    }
+
+    /// Redaction must not break equality or serde round-tripping.
+    #[test]
+    fn redaction_does_not_change_semantics() {
+        let a = PasswordRef::Plaintext("a".to_string());
+        let b = PasswordRef::Plaintext("a".to_string());
+        let c = PasswordRef::Plaintext("b".to_string());
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+
+        let toml = PasswordRef::Plaintext("x".to_string());
+        let encoded = toml::to_string(&toml).unwrap();
+        assert!(encoded.contains("x"), "Serialize must still emit the value");
+        let decoded: PasswordRef = toml::from_str(&encoded).unwrap();
+        assert_eq!(decoded, toml);
+    }
+
+    #[test]
+    fn resolve_still_returns_the_plaintext_value() {
+        let p = PasswordRef::Plaintext(SECRET.to_string());
+        assert_eq!(p.resolve().unwrap(), SECRET);
     }
 }

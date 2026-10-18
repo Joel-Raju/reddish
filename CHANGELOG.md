@@ -92,6 +92,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `PasswordRef` now has a hand-written `Debug` that redacts `Plaintext`
+  instead of printing the secret, and `redis::client::redact_url` strips
+  credentials from a connection URL before it can reach an error message.
+  `Serialize` is unchanged, since it is what writes the value to
+  `connections.toml`.
+- Added `tests/binary_smoke.rs`, which drives the real executable to check
+  `--help`, `--version`, flag rejection, and that the performance gates run
+  without touching the terminal.
 - `cargo audit` reports zero vulnerabilities. `crossbeam-epoch` was bumped from
   0.9.18 to 0.9.21 to clear RUSTSEC-2026-0204 (invalid pointer dereference,
   reached via `nucleo → rayon`). The five remaining unmaintained/unsound

@@ -11,7 +11,6 @@ repository = "https://github.com/Joel-Raju/reddish"
 homepage = "https://github.com/Joel-Raju/reddish"
 
 [dependencies]
-anyhow = "1.0.102"
 arboard = "3.6.1"
 base64 = "0.22.1"
 chrono = { version = "0.4.44", features = ["serde"] }
@@ -31,14 +30,15 @@ sysinfo = "0.38.4"
 tempfile = "3.27.0"
 thiserror = "2.0.18"
 tokio = { version = "1.52.1", features = ["full"] }
-openssh = { version = "0.11", features = ["native-mux"] }
 tokio-util = "0.7"
 toml = "1.1.2"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-tui-textarea = "0.7.0"
-xdg = "3.0.0"
+# `openssh`, `anyhow`, `tui-textarea` and `xdg` were removed: none were
+# referenced. `openssh` was the important one — it is Unix-only and was the
+# sole reason the crate would not compile on Windows at all, despite the CI
+# matrix claiming three-OS support.
 
 [dev-dependencies]
 clap_mangen = "0.2"

@@ -277,7 +277,7 @@ impl GlobalSearch {
     /// Install a scored result set, sorting by descending score and trimming to
     /// `MAX_MATCHES`. Ties keep their existing relative order.
     fn set_ranked(&mut self, mut pairs: Vec<(u32, String)>) {
-        pairs.sort_by(|a, b| b.0.cmp(&a.0));
+        pairs.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
         pairs.truncate(MAX_MATCHES);
         self.scores = pairs.iter().map(|(s, _)| *s).collect();
         self.filtered = pairs.into_iter().map(|(_, key)| key).collect();
@@ -295,7 +295,7 @@ impl GlobalSearch {
             .copied()
             .zip(self.filtered.iter().cloned())
             .collect();
-        pairs.sort_by(|a, b| b.0.cmp(&a.0));
+        pairs.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
         pairs.truncate(MAX_MATCHES);
         self.scores = pairs.iter().map(|(s, _)| *s).collect();
         self.filtered = pairs.into_iter().map(|(_, key)| key).collect();

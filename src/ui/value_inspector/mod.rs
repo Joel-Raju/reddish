@@ -922,15 +922,11 @@ impl ValueInspector {
         // List-specific key handling
         if let Some(RedisValue::List(ref items)) = self.value {
             match key.code {
-                KeyCode::Up | KeyCode::Char('k') => {
-                    if self.list_cursor > 0 {
-                        self.list_cursor -= 1;
-                    }
+                KeyCode::Up | KeyCode::Char('k') if self.list_cursor > 0 => {
+                    self.list_cursor -= 1;
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if self.list_cursor + 1 < items.len() {
-                        self.list_cursor += 1;
-                    }
+                KeyCode::Down | KeyCode::Char('j') if self.list_cursor + 1 < items.len() => {
+                    self.list_cursor += 1;
                 }
                 _ => {}
             }
@@ -979,10 +975,8 @@ impl ValueInspector {
                         self.hash_cursor -= 1;
                     }
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if self.hash_cursor + 1 < visible.len() {
-                        self.hash_cursor += 1;
-                    }
+                KeyCode::Down | KeyCode::Char('j') if self.hash_cursor + 1 < visible.len() => {
+                    self.hash_cursor += 1;
                 }
                 _ => {}
             }
@@ -1048,15 +1042,11 @@ impl ValueInspector {
         if let Some(RedisValue::Set(ref members)) = self.value {
             let items: Vec<&String> = members.iter().collect();
             match key.code {
-                KeyCode::Up | KeyCode::Char('k') => {
-                    if self.set_cursor > 0 {
-                        self.set_cursor -= 1;
-                    }
+                KeyCode::Up | KeyCode::Char('k') if self.set_cursor > 0 => {
+                    self.set_cursor -= 1;
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if self.set_cursor + 1 < items.len() {
-                        self.set_cursor += 1;
-                    }
+                KeyCode::Down | KeyCode::Char('j') if self.set_cursor + 1 < items.len() => {
+                    self.set_cursor += 1;
                 }
                 _ => {}
             }
@@ -1080,15 +1070,11 @@ impl ValueInspector {
         // ZSet-specific key handling
         if let Some(RedisValue::ZSet(ref entries)) = self.value {
             match key.code {
-                KeyCode::Up | KeyCode::Char('k') => {
-                    if self.zset_cursor > 0 {
-                        self.zset_cursor -= 1;
-                    }
+                KeyCode::Up | KeyCode::Char('k') if self.zset_cursor > 0 => {
+                    self.zset_cursor -= 1;
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if self.zset_cursor + 1 < entries.len() {
-                        self.zset_cursor += 1;
-                    }
+                KeyCode::Down | KeyCode::Char('j') if self.zset_cursor + 1 < entries.len() => {
+                    self.zset_cursor += 1;
                 }
                 _ => {}
             }
@@ -1133,15 +1119,11 @@ impl ValueInspector {
         // Stream-specific key handling
         if let Some(RedisValue::Stream(ref entries)) = self.value {
             match key.code {
-                KeyCode::Up | KeyCode::Char('k') => {
-                    if self.stream_cursor > 0 {
-                        self.stream_cursor -= 1;
-                    }
+                KeyCode::Up | KeyCode::Char('k') if self.stream_cursor > 0 => {
+                    self.stream_cursor -= 1;
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if self.stream_cursor + 1 < entries.len() {
-                        self.stream_cursor += 1;
-                    }
+                KeyCode::Down | KeyCode::Char('j') if self.stream_cursor + 1 < entries.len() => {
+                    self.stream_cursor += 1;
                 }
                 _ => {}
             }

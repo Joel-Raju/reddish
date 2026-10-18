@@ -34,9 +34,10 @@ cheaper. See `src/bench.rs`; run `reddish-tui --bench` and
 ### Remaining Gaps
 
 Every feature milestone (M0–M8) and every planned sub-milestone is
-implemented. What remains is **four small spec features and one deferred test
-row**. Counted honestly rather than claimed complete — see the tables above for
-the authoritative per-row status.
+implemented, and there are **no deviations from the spec**. What remains is
+**four small spec features and one deferred test row**. Counted honestly rather
+than claimed complete — see the tables above for the authoritative per-row
+status.
 
 **Missing test rows (1)** — deferred, not overlooked:
 
@@ -70,8 +71,8 @@ above, with the reason restated:
 
 **Deviation from spec**
 
-- `TextAreaEditor` renders inline in the value pane rather than as a full-screen
-  popup. The external `$EDITOR` path is unaffected.
+- None. Every milestone row is either implemented and tested, or explicitly
+  deferred with a stated reason.
 
 ### Corrected Since Last Audit (2026-05-27)
 
@@ -537,7 +538,7 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 | **D** | D1 — `execute_raw` / `execute_pipeline` | ✅ **Complete** | Both on `RedisClientHandle`; REPL refactored onto them via `execute_repl_stage`. Tests: raw GET/SET/DEL, pipeline round-trip | — |
 | **D** | D2 — Fuzzy REPL autocomplete | ✅ **Complete** | `ReplAutocomplete` with nucleo `fuzzy_match_greedy`, 100+ Redis commands, key cache, Tab cycling, Enter accepts, Esc closes. 10 tests | Subcommand/argument hints |
 | **E** | E1 — MONITOR mode | ✅ **Complete** | `--allow-monitor` flag, `client.monitor()` returns unbounded receiver, `Ctrl+M` toggles overlay, `drain_monitor_messages()` on tick, 1000-line cap. 3 tests | Unavailable in cluster mode (returns `None`) |
-| **E** | E2 — String editor + `$EDITOR` | ✅ **Complete** | `edit_in_external_editor` + TUI suspend/resume; built-in editor remains the fallback | The built-in editor is not a separate full-screen popup |
+| **E** | E2 — String editor + `$EDITOR` | ✅ **Complete** | `edit_in_external_editor` + TUI suspend/resume; built-in editor is a centred popup over the value pane | None |
 | **F** | F1 — CI & Audit | ✅ **Complete** | 6-job matrix; `cargo audit` clean after bumping crossbeam-epoch | — |
 | **F** | F2 — Documentation | ✅ **Complete** | README quick-start + keybindings, MANUAL_TESTING.md, CHANGELOG.md, `man/redis-tui.1` | — |
 
@@ -582,16 +583,17 @@ optional features below plus the residual M8 test rows.
    that exists but is weaker than the spec describes.
 5. **`test_ssh_tunnel_opens_and_closes`** (6.14) — correctly deferred; needs a
    live SSH daemon.
-6. **Full-screen editor popup** (E2) — `TextAreaEditor` renders inline in the value pane; the only remaining deviation from the spec.
 
 ### P3 — Nice to Have / Post-v1
 
-1. **REPL subcommand/argument hints** (M3 3.8) — `CONFIG <Tab>` suggests `GET`, `SET`, `REWRITE`.
-2. **Pub/Sub auto-scroll `f` toggle** (M5 5.5) — Follow-tail behavior for the message pane.
-3. **Key browser memory sort and column toggles** (4.2) — needs a decision on lazily-fetched `MEMORY USAGE`.
-4. **Inspector-side set operations, inline rename** (4.3) — both exist in the key browser.
-5. **SSH tunnel live integration test** (M6) — Correctly deferred; needs a real SSH daemon.
-6. **Nested REPL response indentation** (M3 3.11) — `redis_value_to_string` is flat; nested arrays would read better indented.
+1. **Key browser memory sort and column toggles** (4.2) — needs a decision on
+   lazily-fetched `MEMORY USAGE`.
+2. **Inspector-side set operations, inline rename** (4.3) — both exist in the
+   key browser.
+3. **Nested REPL response indentation** (M3 3.11) — `redis_value_to_string` is
+   flat; nested arrays would read better indented.
+4. **SSH tunnel live integration test** (M6) — correctly deferred; needs a real
+   SSH daemon.
 
 ---
 

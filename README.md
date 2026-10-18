@@ -318,7 +318,9 @@ never ambiguous which mode you are in.
   raw mode), the value is written to a temporary file, and your editor is opened
   on it. The file is deleted when the editor exits. The result is written back
   to Redis only if it actually changed, so `:q` without edits issues no `SET`.
-- **`$EDITOR` unset or blank** — the built-in editor opens in the value pane.
+- **`$EDITOR` unset or blank** — a built-in editor opens as a popup over the
+  value pane, so the value stays visible while you type. The title shows the key
+  being edited; `Ctrl+S` saves, `Ctrl+X` or `Esc` cancels.
 
 `$EDITOR` may include flags, e.g. `code --wait` or `emacsclient -nw`. An editor
 that exits non-zero is treated as a cancel, so a failed edit cannot silently

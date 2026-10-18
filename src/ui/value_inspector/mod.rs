@@ -1168,13 +1168,19 @@ impl ValueInspector {
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
+        self.render_value(frame, area);
+
+        // The editor draws as a centred popup over the value pane rather than
+        // replacing it, so the value being edited stays visible around the
+        // edges while typing.
         if self.edit_mode
             && let Some(ref editor) = self.text_editor
         {
-            editor.render(frame, area);
-            return;
+            editor.render_popup(frame, area, self.key.as_deref());
         }
+    }
 
+    fn render_value(&self, frame: &mut Frame, area: Rect) {
         // List-specific render
         if let Some(RedisValue::List(ref items)) = self.value {
             self.render_list(frame, area, items);

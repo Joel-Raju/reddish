@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The built-in string editor is now a popup.** Pressing `e` used to replace
+  the value pane with the editor, hiding the value you were editing. It now
+  draws a centred overlay, so the original stays visible around it. The popup
+  title carries the key being edited; `Ctrl+S` / `Ctrl+X` / `Esc` hints sit on
+  the bottom border so a long key name cannot clip them. Long lines scroll
+  horizontally and long values scroll vertically to keep the cursor on screen.
+
 - **Themes now work.** Five themes ship (`default`, `dracula`, `nord`,
   `solarized_dark`, `gruvbox_dark`) and `--theme` / `color_scheme` actually
   apply them. The theme module had been dead code: nothing imported it, so

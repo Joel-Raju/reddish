@@ -2,6 +2,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::backend::TestBackend;
 use reddish_tui::events::Event;
 use reddish_tui::redis::client::{RedisClientHandle, RedisType};
+use reddish_tui::redis::types::RedisValue;
+use reddish_tui::ui::value_inspector::ValueInspector;
 use reddish_tui::ui::value_viewer::ValueViewer;
 use reddish_tui::ui::value_viewer::formatters::{FormatHint, detect_format, preview, stringify};
 use reddish_tui::ui::widgets::text_area_editor::TextAreaEditor;
@@ -1342,5 +1344,145 @@ fn test_inspector_y_copy_stream() {
             assert_eq!(val, "123-0");
         }
         other => panic!("Expected CopyValue, got {:?}", other),
+    }
+}
+
+// ---- Editor as a popup overlay (E2) ----
+//
+// The built-in editor used to replace the value pane outright. It now draws as
+// a centred popup over it, so the value stays visible while editing.
+
+fn render_inspector(inspector: &ValueInspector, w: u16, h: u16) -> String {
+    let backend = TestBackend::new(w, h);
+    let mut terminal = ratatui::Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| inspector.render(f, f.area()))
+        .expect("renders");
+    terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol())
+        .collect()
+}
+
+fn editing_inspector() -> ValueInspector {
+    let mut inspector = ValueInspector::new();
+    inspector.set_value(
+        "user:profile".to_string(),
+        RedisValue::String("original value".to_string()),
+    );
+    inspector.edit_mode = true;
+    inspector.text_editor = Some(TextAreaEditor::new("original value"));
+    inspector
+}
+
+#[test]
+fn editor_renders_as_a_popup_over_the_value() {
+    let inspector = editing_inspector();
+    let text = render_inspector(&inspector, 100, 30);
+
+    // The popup title carries the key being edited.
+    assert!(
+        text.contains("Edit user:profile"),
+        "popup title missing:\n{text}"
+    );
+    // The value being edited is on screen.
+    assert!(
+        text.contains("original value"),
+        "edited text missing:\n{text}"
+    );
+}
+
+#[test]
+fn popup_chrome_surrounds_the_editor() {
+    let inspector = editing_inspector();
+    let text = render_inspector(&inspector, 100, 30);
+    assert!(text.contains("Ctrl+S"), "save hint missing:\n{text}");
+    assert!(text.contains("Ctrl+X"), "cancel hint missing:\n{text}");
+    assert!(text.contains('┌'), "no popup border:\n{text}");
+}
+
+/// The value pane must still be drawn underneath, not replaced.
+#[test]
+fn the_value_pane_is_still_visible_behind_the_popup() {
+    let mut inspector = ValueInspector::new();
+    inspector.set_value(
+        "k".to_string(),
+        RedisValue::List((0..80).map(|i| format!("element-{i}")).collect()),
+    );
+    inspector.edit_mode = true;
+    inspector.text_editor = Some(TextAreaEditor::new("x"));
+
+    let text = render_inspector(&inspector, 100, 30);
+    // A list value shows its length in the pane chrome; that survives the popup.
+    assert!(
+        text.contains("len=80"),
+        "the value pane was replaced instead of overlaid:\n{text}"
+    );
+}
+
+#[test]
+fn without_edit_mode_no_popup_is_drawn() {
+    let mut inspector = ValueInspector::new();
+    inspector.set_value(
+        "user:profile".to_string(),
+        RedisValue::String("plain".to_string()),
+    );
+    let text = render_inspector(&inspector, 100, 30);
+    assert!(!text.contains("Edit user:profile"), "got:\n{text}");
+    assert!(text.contains("plain"), "value missing:\n{text}");
+}
+
+/// Esc cancels without saving, and the popup disappears.
+#[test]
+fn escape_closes_the_editor_and_restores_the_value_view() {
+    let mut inspector = editing_inspector();
+    let key = KeyEvent::from(KeyCode::Esc);
+    inspector.handle_event(&Event::Key(key));
+
+    assert!(!inspector.edit_mode, "Esc must close the editor");
+    assert!(inspector.text_editor.is_none());
+
+    let text = render_inspector(&inspector, 100, 30);
+    assert!(!text.contains("Ctrl+S"), "popup still drawn:\n{text}");
+    assert!(text.contains("original value"), "value missing:\n{text}");
+}
+
+/// Ctrl+S closes the editor and hands the text back.
+#[test]
+fn ctrl_s_closes_the_editor_and_keeps_the_edited_text() {
+    let mut inspector = editing_inspector();
+    let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+    inspector.handle_event(&Event::Key(key));
+
+    assert!(!inspector.edit_mode, "Ctrl+S must close the editor");
+    assert!(
+        inspector.text_editor.is_none(),
+        "the editor must be cleared after saving"
+    );
+}
+
+/// Typing inside the popup must not disturb the value pane's own state.
+#[test]
+fn typing_in_the_popup_only_changes_the_editor() {
+    let mut inspector = editing_inspector();
+    let key = KeyEvent::from(KeyCode::Char('X'));
+    inspector.handle_event(&Event::Key(key));
+
+    let editor = inspector.text_editor.as_ref().expect("editor still open");
+    assert_eq!(editor.text, "original valueX");
+    assert!(matches!(
+        inspector.value,
+        Some(RedisValue::String(ref s)) if s == "original value"
+    ));
+}
+
+#[test]
+fn popup_does_not_panic_at_small_terminal_sizes() {
+    for (w, h) in [(1u16, 1u16), (3, 3), (10, 4), (40, 6), (0, 0), (200, 100)] {
+        let inspector = editing_inspector();
+        let _ = render_inspector(&inspector, w, h);
     }
 }

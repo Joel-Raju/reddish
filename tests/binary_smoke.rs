@@ -174,3 +174,64 @@ fn performance_gates_do_not_touch_the_terminal() {
         );
     }
 }
+
+// ---- Themes (the CLI help must not lie) ----
+
+/// Every theme named in `--help` must actually be selectable.
+///
+/// The per-theme acceptance is covered cheaply by `theme_application.rs` at the
+/// library level; driving it through the binary here would mean running the
+/// full render benchmark once per theme, which costs minutes.
+#[test]
+fn help_and_error_agree_on_theme_names() {
+    let help = String::from_utf8_lossy(&run(&["--help"]).stdout).to_string();
+    for name in [
+        "default",
+        "dracula",
+        "nord",
+        "solarized_dark",
+        "gruvbox_dark",
+    ] {
+        assert!(
+            help.contains(name),
+            "{name} is a valid theme but missing from --help:\n{help}"
+        );
+    }
+    // The short forms that do not exist must not be advertised. They were
+    // previously listed, so users could copy them straight into a script.
+    for bogus in ["solarized ", "gruvbox "] {
+        assert!(
+            !help.contains(bogus),
+            "--help advertises the non-existent theme {bogus:?}:\n{help}"
+        );
+    }
+}
+
+/// An unknown theme is an error listing the valid names, not a silent fallback.
+///
+/// Uses `--profile-memory`, which reaches theme validation (it runs before the
+/// performance gates) but is much cheaper than `--bench`. `--help` and
+/// `--version` short-circuit in clap and would never get that far.
+#[test]
+fn unknown_theme_is_rejected_with_the_valid_names() {
+    let out = Command::new(binary())
+        .args(["--theme", "definitely-not-a-theme", "--profile-memory"])
+        .output()
+        .expect("failed to launch the binary");
+    assert!(!out.status.success(), "an unknown theme must not exit 0");
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Unknown theme"),
+        "error should say what is wrong: {stderr}"
+    );
+    for name in [
+        "default",
+        "dracula",
+        "nord",
+        "solarized_dark",
+        "gruvbox_dark",
+    ] {
+        assert!(stderr.contains(name), "error should list {name}: {stderr}");
+    }
+}

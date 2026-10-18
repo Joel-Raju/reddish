@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Themes now work.** Five themes ship (`default`, `dracula`, `nord`,
+  `solarized_dark`, `gruvbox_dark`) and `--theme` / `color_scheme` actually
+  apply them. The theme module had been dead code: nothing imported it, so
+  `--theme nord` exited successfully and changed nothing. Theme colours now
+  cover panel borders and titles, the key-list selection, type colours, TTL and
+  memory metadata, severity ramps, prompts, JSON syntax highlighting, connection
+  states and gauges. The per-subscription Pub/Sub colour cycle is deliberately
+  left alone, since its job is to keep adjacent channels distinguishable.
 - **Search fuzzy ranking** — global search scores candidates with `nucleo`
   instead of a substring test. The query is split into alphanumeric atoms;
   every atom must match as a subsequence and scores are summed, so fuzzy
@@ -112,6 +120,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- An unknown `--theme` is now rejected with the list of valid names instead of
+  silently falling back to the default. `--help` previously advertised
+  `solarized` and `gruvbox`, which were never real theme names.
 - `PasswordRef` now has a hand-written `Debug` that redacts `Plaintext`
   instead of printing the secret, and `redis::client::redact_url` strips
   credentials from a connection URL before it can reach an error message.

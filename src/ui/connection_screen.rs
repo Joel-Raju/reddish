@@ -1,12 +1,13 @@
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::Style,
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 
 use crate::config::connections::{ConnectionProfile, ConnectionStore};
 use crate::events::Event;
+use crate::ui::theme;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConnectionScreenAction {
@@ -215,6 +216,8 @@ impl ConnectionForm {
     fn render(&self, frame: &mut Frame, area: Rect) {
         let block = Block::default()
             .borders(Borders::ALL)
+            .border_style(theme::border_style())
+            .title_style(theme::title_style())
             .title("Connection Profile (Tab: next, Enter: save, Esc: cancel)");
         let inner = block.inner(area);
 
@@ -362,8 +365,14 @@ impl ConnectionScreen {
                 self.render_list(frame, area);
                 let confirm_block = Block::default()
                     .borders(Borders::ALL)
+                    .border_style(theme::border_style())
+                    .title_style(theme::title_style())
                     .title("Confirm Delete")
-                    .style(Style::default().bg(Color::Black).fg(Color::White));
+                    .style(
+                        Style::default()
+                            .bg(theme::current().bg)
+                            .fg(theme::current().fg),
+                    );
                 let text = format!("Delete connection '{}'?\n\n[y]es / [n]o", name);
                 let paragraph = Paragraph::new(text).block(confirm_block);
                 let popup_area = centered_rect(50, 15, area);
@@ -381,6 +390,8 @@ impl ConnectionScreen {
 
         let block = Block::default()
             .borders(Borders::ALL)
+            .border_style(theme::border_style())
+            .title_style(theme::title_style())
             .title("Connections (n: new, e: edit, d: delete, Enter: connect, Esc: cancel)");
         let items: Vec<ListItem> = self
             .store
@@ -389,7 +400,9 @@ impl ConnectionScreen {
             .enumerate()
             .map(|(i, p)| {
                 let style = if i == self.cursor {
-                    Style::default().bg(Color::Blue).fg(Color::White)
+                    Style::default()
+                        .bg(theme::current().highlight_bg)
+                        .fg(theme::current().highlight_fg)
                 } else {
                     Style::default()
                 };
@@ -413,7 +426,7 @@ impl ConnectionScreen {
         // Quick-connect bar
         let qc_block = Block::default().borders(Borders::NONE).title("");
         let qc_text = Paragraph::new("Quick connect: press n to add a new profile")
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(theme::current().border))
             .block(qc_block);
         frame.render_widget(qc_text, chunks[1]);
     }

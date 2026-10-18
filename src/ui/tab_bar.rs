@@ -1,9 +1,6 @@
-use ratatui::{
-    Frame,
-    layout::Rect,
-    style::{Color, Style},
-    widgets::Paragraph,
-};
+use ratatui::{Frame, layout::Rect, style::Style, widgets::Paragraph};
+
+use crate::ui::theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -75,7 +72,8 @@ pub fn render_tab_bar(frame: &mut Frame, area: Rect, active: Tab) {
         .collect::<Vec<_>>()
         .join(TAB_SEPARATOR);
 
-    let style = Style::default().fg(Color::White).bg(Color::Black);
+    let t = theme::current();
+    let style = Style::default().fg(t.fg).bg(t.bg);
     let paragraph = Paragraph::new(text).style(style);
     frame.render_widget(paragraph, area);
 }

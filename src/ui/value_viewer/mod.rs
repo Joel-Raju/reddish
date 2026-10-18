@@ -1,5 +1,6 @@
 pub mod formatters;
 
+use crate::ui::theme;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -33,6 +34,8 @@ impl ValueViewer {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_style(theme::border_style())
+                    .title_style(theme::title_style())
                     .title(self.key.clone()),
             )
             .wrap(Wrap { trim: false });

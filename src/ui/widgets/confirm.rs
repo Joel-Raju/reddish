@@ -2,11 +2,12 @@ use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
 use crate::events::Event;
+use crate::ui::theme;
 
 pub struct ConfirmDialog {
     pub prompt: String,
@@ -35,7 +36,11 @@ impl ConfirmDialog {
         let block = Block::default()
             .borders(Borders::ALL)
             .title("Confirm")
-            .style(Style::default().bg(Color::Black).fg(Color::White));
+            .style(
+                Style::default()
+                    .bg(theme::current().bg)
+                    .fg(theme::current().fg),
+            );
         let text = format!("{}\n\n[y]es / [n]o", self.prompt);
         let paragraph = Paragraph::new(text).block(block);
         let popup_area = centered_rect(60, 20, area);

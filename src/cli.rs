@@ -27,7 +27,7 @@ pub struct Cli {
     #[arg(long, value_name = "LEVEL")]
     pub log_level: Option<String>,
 
-    /// Color theme: default, dracula, nord, solarized, gruvbox
+    /// Color theme: default, dracula, nord, solarized_dark, gruvbox_dark
     #[arg(long, value_name = "THEME")]
     pub theme: Option<String>,
 

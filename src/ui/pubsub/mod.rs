@@ -10,6 +10,7 @@ use ratatui::{
 
 pub use crate::redis::pubsub::PubSubKind;
 use crate::redis::pubsub::PubSubMessage;
+use crate::ui::theme;
 
 #[derive(Debug, Clone)]
 pub struct Subscription {
@@ -36,6 +37,14 @@ pub struct PubSubWidget {
     pub channel_scroll: u16,
 }
 
+/// Colours assigned to subscriptions in rotation.
+///
+/// Deliberately *not* themed: this is a categorical palette whose job is to
+/// make adjacent channels visually distinct at a glance. Mapping it onto theme
+/// fields would make some channels indistinguishable under a theme whose
+/// related colours are close together. These are also ANSI colors rather than
+/// truecolor, which keeps them legible on terminals that ignore the theme's
+/// background.
 const COLOR_CYCLE: &[Color] = &[
     Color::Cyan,
     Color::Magenta,
@@ -294,7 +303,7 @@ impl PubSubWidget {
         if self.subscriptions.is_empty() {
             lines.push(Line::from(Span::styled(
                 "  No subscriptions",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::current().border),
             )));
         } else {
             let max_visible = area.height.saturating_sub(6) as usize;
@@ -320,9 +329,9 @@ impl PubSubWidget {
                 let style = if is_active {
                     Style::default().fg(sub.color).add_modifier(Modifier::BOLD)
                 } else if abs_idx == self.channel_cursor {
-                    Style::default().fg(Color::Yellow)
+                    Style::default().fg(theme::current().prompt)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(theme::current().fg)
                 };
                 lines.push(Line::from(Span::styled(
                     format!("{} {}", prefix, label),
@@ -334,15 +343,20 @@ impl PubSubWidget {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             format!(" Mode: {}", mode_label),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme::current().border),
         )));
         lines.push(Line::from(Span::styled(
             format!(" > {}", self.input),
-            Style::default().fg(Color::Green),
+            Style::default().fg(theme::current().success),
         )));
 
-        let para =
-            Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" Channels "));
+        let para = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme::border_style())
+                .title_style(theme::title_style())
+                .title(" Channels "),
+        );
         frame.render_widget(para, area);
     }
 
@@ -361,21 +375,21 @@ impl PubSubWidget {
         let mut lines: Vec<Line> = Vec::new();
 
         let info_line = Line::from(vec![
-            Span::styled("Channel: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Channel: ", Style::default().fg(theme::current().border)),
             Span::styled(
                 active,
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(theme::current().title)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+            Span::styled(" | ", Style::default().fg(theme::current().border)),
             Span::styled(
                 format!("Tab: {}", mode_label),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::current().border),
             ),
             Span::styled(
                 format!(" [{} msgs]", self.messages.len()),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::current().border),
             ),
         ]);
         lines.push(info_line);
@@ -402,24 +416,26 @@ impl PubSubWidget {
                     s.kind.name() == msg.channel || msg.pattern.as_deref() == Some(s.kind.name())
                 })
                 .map(|s| s.color)
-                .unwrap_or(Color::Blue);
+                .unwrap_or_else(|| theme::current().type_zset);
             lines.push(Line::from(vec![
                 Span::styled(
                     format!(" {:<4}", msg.relative_time()),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(theme::current().border),
                 ),
                 Span::styled(
                     channel_tag,
                     Style::default().fg(tag_color).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(" ", Style::default().fg(Color::White)),
-                Span::styled(&msg.payload, Style::default().fg(Color::White)),
+                Span::styled(" ", Style::default().fg(theme::current().fg)),
+                Span::styled(&msg.payload, Style::default().fg(theme::current().fg)),
             ]));
         }
 
         let para = Paragraph::new(lines).block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_style(theme::border_style())
+                .title_style(theme::title_style())
                 .title(self.messages_title()),
         );
         frame.render_widget(para, area);

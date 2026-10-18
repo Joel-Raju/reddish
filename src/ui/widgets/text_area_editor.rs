@@ -1,3 +1,4 @@
+use crate::ui::theme;
 use crossterm::event::KeyModifiers;
 use ratatui::{
     Frame,
@@ -119,6 +120,8 @@ impl TextAreaEditor {
     pub fn render(&self, frame: &mut Frame, area: Rect) {
         let block = Block::default()
             .borders(Borders::ALL)
+            .border_style(theme::border_style())
+            .title_style(theme::title_style())
             .title("Edit (Ctrl+S save, Ctrl+X cancel)");
         let paragraph = Paragraph::new(self.text.clone())
             .block(block)

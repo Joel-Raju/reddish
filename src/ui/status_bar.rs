@@ -8,6 +8,8 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
+use crate::ui::theme;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConnectionState {
     Connected { host: String, port: u16, db: u8 },
@@ -18,9 +20,9 @@ pub enum ConnectionState {
 impl ConnectionState {
     pub fn color(&self) -> Color {
         match self {
-            ConnectionState::Connected { .. } => Color::Green,
-            ConnectionState::Reconnecting { .. } => Color::Yellow,
-            ConnectionState::Disconnected => Color::Red,
+            ConnectionState::Connected { .. } => theme::current().success,
+            ConnectionState::Reconnecting { .. } => theme::current().warning,
+            ConnectionState::Disconnected => theme::current().error,
         }
     }
 }
@@ -96,7 +98,7 @@ impl StatusBar {
         let conn_color = self.connection_state.color();
         let paragraph = Paragraph::new(text)
             .block(Block::default().borders(Borders::NONE))
-            .style(Style::default().fg(conn_color).bg(Color::Black));
+            .style(Style::default().fg(conn_color).bg(theme::current().bg));
         frame.render_widget(paragraph, area);
     }
 }

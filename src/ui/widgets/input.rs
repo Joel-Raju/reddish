@@ -1,3 +1,4 @@
+use crate::ui::theme;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
@@ -82,6 +83,8 @@ impl InputWidget {
     pub fn render(&self, frame: &mut Frame, area: Rect) {
         let block = Block::default()
             .borders(Borders::ALL)
+            .border_style(theme::border_style())
+            .title_style(theme::title_style())
             .title(self.label.clone());
 
         let cursor_indicator = "_";

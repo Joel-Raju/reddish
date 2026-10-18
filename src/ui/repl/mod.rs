@@ -4,12 +4,13 @@ use crossterm::event::KeyModifiers;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
 use crate::events::Event;
+use crate::ui::theme;
 
 pub mod autocomplete;
 pub mod history;
@@ -342,7 +343,11 @@ impl ReplWidget {
             ])
             .split(area);
 
-        let block = Block::default().borders(Borders::ALL).title("REPL");
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme::border_style())
+            .title_style(theme::title_style())
+            .title("REPL");
         let history_text: String = self
             .history
             .iter()
@@ -373,16 +378,20 @@ impl ReplWidget {
                 .map(|(i, sug)| {
                     let style = if i == self.ac_selected {
                         Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Cyan)
+                            .fg(theme::current().bg)
+                            .bg(theme::current().title)
                             .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(Color::White)
+                        Style::default().fg(theme::current().fg)
                     };
                     Line::from(Span::styled(format!("  {}  ", sug), style))
                 })
                 .collect();
-            let ac_block = Block::default().borders(Borders::ALL).title(" Suggest ");
+            let ac_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme::border_style())
+                .title_style(theme::title_style())
+                .title(" Suggest ");
             let ac_para = Paragraph::new(lines).block(ac_block);
             frame.render_widget(Clear, chunks[1]);
             frame.render_widget(ac_para, chunks[1]);
@@ -397,7 +406,11 @@ impl ReplWidget {
                 .cloned()
                 .collect::<Vec<_>>()
                 .join("\n");
-            let mon_block = Block::default().borders(Borders::ALL).title(" MONITOR ");
+            let mon_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme::border_style())
+                .title_style(theme::title_style())
+                .title(" MONITOR ");
             let mon_para = Paragraph::new(mon_text)
                 .block(mon_block)
                 .wrap(Wrap { trim: false })

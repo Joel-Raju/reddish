@@ -114,6 +114,32 @@ redis-tui [OPTIONS]
 --theme <THEME>      Override config theme
 ```
 
+### Themes
+
+Five themes ship with the app:
+
+| Theme | Background |
+|-------|------------|
+| `default` | Black (16-color) |
+| `dracula` | Truecolor `#282a36` |
+| `nord` | Truecolor `#2e3440` |
+| `solarized_dark` | Truecolor `#002b36` |
+| `gruvbox_dark` | Truecolor `#282828` |
+
+Select one with `--theme <name>` or `color_scheme = "<name>"` in `config.toml`;
+the CLI flag wins. Names are case-insensitive. An unknown name is an error
+listing the valid ones rather than a silent fallback, so a typo cannot leave you
+staring at the wrong colours wondering why.
+
+Theme colours cover panel borders and titles, the key list selection, type
+colours, TTL and memory metadata, TTL/slowlog severity ramps, prompts, JSON
+syntax highlighting, status-bar connection states and gauges.
+
+One deliberate exception: the per-subscription colour cycle in Pub/Sub is not
+themed. Its job is to make adjacent channels visually distinct, and mapping it
+onto theme fields would make some of them indistinguishable under a theme whose
+related colours are close together.
+
 ## Configuration
 
 ### App config

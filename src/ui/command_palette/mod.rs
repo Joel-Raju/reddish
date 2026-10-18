@@ -1,11 +1,12 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 
 use crate::events::Event;
+use crate::ui::theme;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PaletteAction {
@@ -78,6 +79,8 @@ impl CommandPalette {
 
         let block = Block::default()
             .borders(Borders::ALL)
+            .border_style(theme::border_style())
+            .title_style(theme::title_style())
             .title("Command Palette (Ctrl+P)");
         let inner = block.inner(popup_area);
         frame.render_widget(block, popup_area);
@@ -98,7 +101,9 @@ impl CommandPalette {
             .enumerate()
             .map(|(i, s)| {
                 let style = if i == self.cursor {
-                    Style::default().bg(Color::Blue).fg(Color::White)
+                    Style::default()
+                        .bg(theme::current().highlight_bg)
+                        .fg(theme::current().highlight_fg)
                 } else {
                     Style::default()
                 };

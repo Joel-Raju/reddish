@@ -4,11 +4,12 @@ use nucleo::{Config, Matcher, Utf32String};
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
 use crate::events::Event;
+use crate::ui::theme;
 
 /// Upper bound on retained matches. Protects render time and memory when a
 /// scan runs against a large keyspace.
@@ -463,18 +464,22 @@ impl GlobalSearch {
         let popup_area = centered_rect(80, 50, area);
         frame.render_widget(Clear, popup_area);
 
-        let block = Block::default().borders(Borders::ALL).title(self.title());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme::border_style())
+            .title_style(theme::title_style())
+            .title(self.title());
         let inner = block.inner(popup_area);
         frame.render_widget(block, popup_area);
 
         let query_widget = Paragraph::new(vec![ratatui::text::Line::from(vec![
-            ratatui::text::Span::styled("> ", Style::default().fg(Color::Green)),
+            ratatui::text::Span::styled("> ", Style::default().fg(theme::current().success)),
             ratatui::text::Span::styled(
                 self.query.clone(),
                 if self.regex_error.is_some() {
-                    Style::default().fg(Color::Red)
+                    Style::default().fg(theme::current().error)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(theme::current().fg)
                 },
             ),
         ])]);
@@ -503,11 +508,11 @@ impl GlobalSearch {
                 .map(|(idx, item)| {
                     let style = if idx == self.cursor {
                         Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Cyan)
+                            .fg(theme::current().bg)
+                            .bg(theme::current().title)
                             .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(Color::White)
+                        Style::default().fg(theme::current().fg)
                     };
                     ratatui::text::Line::from(ratatui::text::Span::styled(
                         format!("  {item}"),
@@ -517,8 +522,8 @@ impl GlobalSearch {
                 .collect::<Vec<_>>();
             frame.render_widget(Paragraph::new(preview), result_area);
         } else if !self.scanning && self.regex_error.is_none() {
-            let no_results =
-                Paragraph::new("No matches found").style(Style::default().fg(Color::DarkGray));
+            let no_results = Paragraph::new("No matches found")
+                .style(Style::default().fg(theme::current().border));
             frame.render_widget(no_results, result_area);
         }
     }

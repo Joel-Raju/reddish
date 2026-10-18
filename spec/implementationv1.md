@@ -34,9 +34,9 @@ cheaper. See `src/bench.rs`; run `reddish-tui --bench` and
 ### Remaining Gaps
 
 Every feature milestone (M0–M8) and every planned sub-milestone is
-implemented. What remains is **specified test rows that do not exist yet**,
-plus a handful of small spec features. Counted honestly rather than claimed
-complete — see the tables above for the authoritative per-row status.
+implemented. What remains is **four small spec features and one deferred test
+row**. Counted honestly rather than claimed complete — see the tables above for
+the authoritative per-row status.
 
 **Missing test rows (1)** — deferred, not overlooked:
 
@@ -48,11 +48,26 @@ complete — see the tables above for the authoritative per-row status.
 
 | Item | Ref | Nature |
 |------|-----|---------|
-| 
-| 
-| Show/hide TTL and memory columns | 4.2 | Column toggles |
-| Inline key rename in the inspector | 4.3 | `r` is rename in the key browser only |
-| Set operations panel in the inspector | 4.3 | Union/intersect/diff exist in the browser only |
+| Sort by memory usage | 4.2 | `MEMORY USAGE` is per-key and lazily fetched; sorting needs a design decision on when to pay that cost |
+| Show/hide TTL & memory columns | 4.2 | Column toggles |
+| Key name editable inline (`r`) | 4.3 | `r` renames in the key browser only, not in the value pane |
+| Set: operations panel in inspector | 4.3 | Union/intersect/diff exist in the key browser only |
+
+**Known weak spots in existing rows** (not missing — present but weaker than
+the spec describes):
+
+| Row | Nature |
+|-----|--------|
+| 0.9 | `test_restore_terminal_is_idempotent` only calls `disable_raw_mode` twice, not a real round trip |
+| 0.11 | `test_app_quits_on_q` sets `should_quit` directly rather than driving the event loop |
+| 1.18 | `test_scanner_never_uses_keys_command` is a structural check, not a mock-based one |
+| 2.34 | Per-type render tests exist; there is no single loop over every `RedisValue` variant |
+| 3.11 / 4.29 | `redis_value_to_string` covers every `redis::Value` variant but does not indent nested replies |
+| 2.12 | Quick-connect bar is a label; it does not parse and connect a pasted URL |
+| 2.13 | Status bar shows latency but refreshes it only on reconnect, not on a periodic ping |
+| 4.4 | In-browser filter (`/`) is the global search overlay; there is no separate list filter |
+| 4.7 | `y` yank copies the raw value, not JSON-serialized for complex types |
+| 4.14 | `confirm_deletes` is parsed and exposed but the confirmation prompt is unconditional |
 
 **Deviation from spec**
 
@@ -130,7 +145,7 @@ The original audit predated Phases A–E. The following were reported as
 | 1.21 | `test_confirm_dialog_keyboard` | ✅ Done | |
 | 1.22 | `test_redis_client_ping` | ✅ Done | |
 | 1.23 | `test_redis_client_delete` | ✅ Done | |
-| 1.24 | `test_redis_client_ttl` | ⚠️ Partial | Exists but marked `#[ignore]` (flaky in CI) |
+| 1.24 | `test_redis_client_ttl` | ✅ Done | Un-ignored; the FLUSHDB interference that broke it is fixed |
 | 1.25 | `test_key_browser_renders_without_panic` | ✅ Done | |
 | 1.26 | `test_scan_batch_updates_browser` | ✅ Done | |
 | 1.27 | Connection screen (list / new / edit / delete) | ✅ Done | `connection_screen.rs` |
@@ -496,7 +511,7 @@ The original audit predated Phases A–E. The following were reported as
 | `scan_count` | ✅ Done | |
 | `max_keys_in_memory` | ✅ Done | |
 | `refresh_interval_ms` | ✅ Done | |
-| `color_scheme` | ⚠️ Partial | Parsed but not dynamically applied to all widgets |
+| `color_scheme` | ✅ Done | Installed at startup and read by every render site via `theme::current()` |
 | `mouse_enabled` | ✅ Done | |
 | `confirm_deletes` | ⚠️ Partial | Field exists but confirmation logic is hardcoded |
 | `editor` | ✅ Done | Overrides `$EDITOR`; blank falls through to it |
@@ -558,13 +573,21 @@ optional features below plus the residual M8 test rows.
 
 ### P2 — Should Have for v1
 
-1. **Key browser memory sort and column toggles** (4.2) — needs a decision on
+1. **`confirm_deletes` is never read** (4.14) — the same class of bug as the
+   `editor` and `color_scheme` keys that were documented and silently ignored:
+   setting `confirm_deletes = false` changes nothing, because the prompt is
+   unconditional.
+2. **Periodic latency ping** (2.13) — the status bar shows latency but only
+   refreshes it on reconnect, so the number goes stale while connected.
+3. **Key browser memory sort and column toggles** (4.2) — needs a decision on
    lazily-fetched `MEMORY USAGE` before it can be implemented honestly.
-2. **Inspector-side set operations and inline rename** (4.3) — both exist in the
+4. **Inspector-side set operations and inline rename** (4.3) — both exist in the
    key browser; these would extend them to the value pane.
-3. **`test_ssh_tunnel_opens_and_closes`** (6.14) — correctly deferred; needs a
+5. **Quick-connect URL bar** (2.12) — the bar is a label; it does not parse a
+   pasted `redis://` URL and connect.
+6. **`test_ssh_tunnel_opens_and_closes`** (6.14) — correctly deferred; needs a
    live SSH daemon.
-4. **Full-screen editor popup** (E2) — `TextAreaEditor` renders inline in the value pane; the only remaining deviation from the spec.
+7. **Full-screen editor popup** (E2) — `TextAreaEditor` renders inline in the value pane; the only remaining deviation from the spec.
 
 ### P3 — Nice to Have / Post-v1
 

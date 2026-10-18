@@ -9,6 +9,7 @@ use ratatui::{
 use crate::events::Event;
 use crate::ui::slowlog_panel::{SlowLogAction, SlowLogPanel};
 use crate::ui::stats::sparkline::SparklineBuffer;
+use crate::ui::theme;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SystemStats {
@@ -329,7 +330,7 @@ impl InfoDashboard {
             "Memory",
             &format!("{}{}", mem_val, mem_delta),
             &self.buf_memory,
-            Color::Green,
+            theme::current().success,
         );
 
         let clients_val = self
@@ -343,7 +344,7 @@ impl InfoDashboard {
             "Clients",
             &format!("{}{}", clients_val, clients_delta),
             &self.buf_clients,
-            Color::Cyan,
+            theme::current().title,
         );
 
         let ops_val = self
@@ -357,7 +358,7 @@ impl InfoDashboard {
             "Ops/sec",
             &format!("{}{}", ops_val, ops_delta),
             &self.buf_ops,
-            Color::Yellow,
+            theme::current().warning,
         );
 
         // Row 2: Hit Rate sparkline, Keyspace bars, Replication + CPU + Persistence
@@ -374,7 +375,7 @@ impl InfoDashboard {
             "Hit Rate",
             &format!("{}{}", hit_ratio, hits_delta),
             &self.buf_hits,
-            Color::Magenta,
+            theme::current().type_hash,
         );
 
         self.render_keyspace_cell(frame, bot[1]);
@@ -383,7 +384,11 @@ impl InfoDashboard {
 
     /// Keyspace breakdown as proportional bars, one row per database.
     fn render_keyspace_cell(&self, frame: &mut Frame, area: Rect) {
-        let block = Block::default().borders(Borders::ALL).title(" Keyspace ");
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme::border_style())
+            .title_style(theme::title_style())
+            .title(" Keyspace ");
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
@@ -406,19 +411,19 @@ impl InfoDashboard {
             lines.push(Line::from(vec![
                 Span::styled(
                     format!("{} ", entry.db),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(theme::current().border),
                 ),
-                Span::styled(bar, Style::default().fg(Color::Blue)),
+                Span::styled(bar, Style::default().fg(theme::current().type_zset)),
                 Span::styled(
                     format!(" {}", entry.keys),
-                    Style::default().fg(Color::White),
+                    Style::default().fg(theme::current().fg),
                 ),
             ]));
         }
         let total = self.stats.total_keys().unwrap_or(0);
         lines.push(Line::from(Span::styled(
             format!("total {total} keys"),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme::current().border),
         )));
 
         frame.render_widget(Paragraph::new(lines), inner);
@@ -428,6 +433,8 @@ impl InfoDashboard {
     fn render_replication_cell(&self, frame: &mut Frame, area: Rect) {
         let block = Block::default()
             .borders(Borders::ALL)
+            .border_style(theme::border_style())
+            .title_style(theme::title_style())
             .title(" Replication ");
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -443,21 +450,24 @@ impl InfoDashboard {
         lines.push(Line::from(vec![
             Span::styled(
                 format!("redis {version}"),
-                Style::default().fg(Color::White),
+                Style::default().fg(theme::current().fg),
             ),
             Span::styled(
                 format!("  up {uptime}"),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::current().border),
             ),
         ]));
 
         let role = self.stats.role.as_deref().unwrap_or("unknown");
         let role_color = match role {
-            "master" => Color::Yellow,
-            "slave" => Color::Cyan,
-            _ => Color::DarkGray,
+            "master" => theme::current().warning,
+            "slave" => theme::current().title,
+            _ => theme::current().border,
         };
-        let mut repl = vec![Span::styled("role ", Style::default().fg(Color::DarkGray))];
+        let mut repl = vec![Span::styled(
+            "role ",
+            Style::default().fg(theme::current().border),
+        )];
         repl.push(Span::styled(
             role.to_string(),
             Style::default().fg(role_color).add_modifier(Modifier::BOLD),
@@ -465,20 +475,27 @@ impl InfoDashboard {
         if let Some(slaves) = self.stats.connected_slaves {
             repl.push(Span::styled(
                 format!("  replicas {slaves}"),
-                Style::default().fg(Color::White),
+                Style::default().fg(theme::current().fg),
             ));
         }
         if let Some(up) = self.stats.master_link_up {
             repl.push(Span::styled(
                 format!("  link {}", if up { "up" } else { "down" }),
-                Style::default().fg(if up { Color::Green } else { Color::Red }),
+                Style::default().fg(if up {
+                    theme::current().success
+                } else {
+                    theme::current().error
+                }),
             ));
         }
         lines.push(Line::from(repl));
 
         // The cell is only four rows tall, so CPU and the remaining metadata
         // share lines rather than each claiming its own.
-        let mut cpu_spans = vec![Span::styled("cpu ", Style::default().fg(Color::DarkGray))];
+        let mut cpu_spans = vec![Span::styled(
+            "cpu ",
+            Style::default().fg(theme::current().border),
+        )];
         let mut cpu_count = 0usize;
         for (label, value) in [
             ("sys", self.stats.used_cpu_sys),
@@ -494,35 +511,35 @@ impl InfoDashboard {
         lines.push(Line::from(cpu_spans));
 
         let mut flags = vec![
-            Span::styled("rdb ", Style::default().fg(Color::DarkGray)),
+            Span::styled("rdb ", Style::default().fg(theme::current().border)),
             match self.stats.rdb_last_bgsave_ok {
-                Some(true) => Span::styled("ok", Style::default().fg(Color::Green)),
-                Some(false) => Span::styled("err", Style::default().fg(Color::Red)),
-                None => Span::styled("-", Style::default().fg(Color::DarkGray)),
+                Some(true) => Span::styled("ok", Style::default().fg(theme::current().success)),
+                Some(false) => Span::styled("err", Style::default().fg(theme::current().error)),
+                None => Span::styled("-", Style::default().fg(theme::current().border)),
             },
-            Span::styled("  aof ", Style::default().fg(Color::DarkGray)),
+            Span::styled("  aof ", Style::default().fg(theme::current().border)),
             match self.stats.aof_enabled {
-                Some(true) => Span::styled("on", Style::default().fg(Color::Green)),
-                Some(false) => Span::styled("off", Style::default().fg(Color::DarkGray)),
-                None => Span::styled("-", Style::default().fg(Color::DarkGray)),
+                Some(true) => Span::styled("on", Style::default().fg(theme::current().success)),
+                Some(false) => Span::styled("off", Style::default().fg(theme::current().border)),
+                None => Span::styled("-", Style::default().fg(theme::current().border)),
             },
         ];
         if self.stats.aof_rewrite_in_progress == Some(true) {
             flags.push(Span::styled(
                 " rewriting",
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(theme::current().warning),
             ));
         }
         if let Some(changes) = self.stats.rdb_changes_since_last_save {
             flags.push(Span::styled(
                 format!(" +{changes}"),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::current().border),
             ));
         }
         if let Some(offset) = self.stats.master_repl_offset {
             flags.push(Span::styled(
                 format!(" off {offset}"),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::current().border),
             ));
         }
         lines.push(Line::from(flags));
@@ -536,19 +553,25 @@ impl InfoDashboard {
         let clamped = percent.clamp(0.0, 100.0);
         let filled = (((clamped / 100.0) * WIDTH as f64).round() as usize).min(WIDTH);
         let color = if clamped >= 90.0 {
-            Color::Red
+            theme::current().ttl_crit
         } else if clamped >= 70.0 {
-            Color::Yellow
+            theme::current().ttl_warn
         } else {
-            Color::Green
+            theme::current().ttl_ok
         };
         Line::from(vec![
-            Span::styled(format!("{label} "), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{label} "),
+                Style::default().fg(theme::current().border),
+            ),
             Span::styled(
                 format!("{}{}", "█".repeat(filled), "·".repeat(WIDTH - filled)),
                 Style::default().fg(color),
             ),
-            Span::styled(format!("{clamped:.0}%"), Style::default().fg(Color::White)),
+            Span::styled(
+                format!("{clamped:.0}%"),
+                Style::default().fg(theme::current().fg),
+            ),
         ])
     }
 
@@ -563,6 +586,8 @@ impl InfoDashboard {
     ) {
         let block = Block::default()
             .borders(Borders::ALL)
+            .border_style(theme::border_style())
+            .title_style(theme::title_style())
             .title(format!(" {} ", title));
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -767,9 +792,10 @@ mod tests {
 
     #[test]
     fn gauge_line_colors_escalate_with_load() {
-        assert_eq!(bar_color(10.0), Some(Color::Green));
-        assert_eq!(bar_color(75.0), Some(Color::Yellow));
-        assert_eq!(bar_color(95.0), Some(Color::Red));
+        let t = theme::current();
+        assert_eq!(bar_color(10.0), Some(t.ttl_ok));
+        assert_eq!(bar_color(75.0), Some(t.ttl_warn));
+        assert_eq!(bar_color(95.0), Some(t.ttl_crit));
     }
 
     fn rendered(stats: &SystemStats, w: u16, h: u16) -> String {

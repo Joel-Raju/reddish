@@ -4,7 +4,7 @@ pub mod tree;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     widgets::{Block, Borders, List, ListItem, ListState},
 };
 
@@ -12,6 +12,7 @@ use crate::config::keybindings::Keymap;
 use crate::events::Event;
 use crate::redis::client::{RedisType, SetOpType};
 use crate::ui::key_browser::tree::{KeyEntry, NamespaceTree, TreeRow};
+use crate::ui::theme;
 use crate::ui::widgets::input::InputWidget;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -509,7 +510,8 @@ impl KeyBrowser {
                 .join(" > ");
             format!(" > {}", path)
         };
-        let breadcrumb_style = Style::default().fg(Color::Cyan).bg(Color::Black);
+        let t = theme::current();
+        let breadcrumb_style = Style::default().fg(t.title).bg(t.bg);
         let breadcrumb = ratatui::widgets::Paragraph::new(breadcrumb_text).style(breadcrumb_style);
         frame.render_widget(breadcrumb, chunks[0]);
 
@@ -529,11 +531,11 @@ impl KeyBrowser {
                 };
                 let text = format!("{}{}{}", indent, sel, row.label);
                 let style = if i == self.cursor {
-                    Style::default().bg(Color::Blue).fg(Color::White)
+                    Style::default().bg(t.highlight_bg).fg(t.highlight_fg)
                 } else if let Some(ref key) = row.key
                     && self.selected.contains(&key.full_name)
                 {
-                    Style::default().bg(Color::DarkGray).fg(Color::White)
+                    Style::default().bg(t.border).fg(t.fg)
                 } else {
                     Style::default()
                 };
@@ -544,11 +546,15 @@ impl KeyBrowser {
         let mut state = ListState::default();
         state.select(Some(self.cursor));
 
-        let block = Block::default().borders(Borders::ALL).title(format!(
-            "Keys ({}) [sort: {}] ",
-            self.tree.total_keys(),
-            self.sort_mode.label()
-        ));
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme::border_style())
+            .title_style(theme::title_style())
+            .title(format!(
+                "Keys ({}) [sort: {}] ",
+                self.tree.total_keys(),
+                self.sort_mode.label()
+            ));
         let list_area = chunks[1];
         let list = List::new(items).block(block);
         frame.render_stateful_widget(list, list_area, &mut state);
@@ -584,7 +590,7 @@ impl KeyBrowser {
                 }
             );
             let overlay = ratatui::widgets::Paragraph::new(prompt_text)
-                .style(Style::default().fg(Color::White).bg(Color::Black));
+                .style(Style::default().fg(t.fg).bg(t.bg));
             frame.render_widget(overlay, chunks[1]);
         }
 

@@ -24,6 +24,14 @@ fn main() -> Result<()> {
 
     logging::init_logging(&config)?;
 
+    // Install the theme before anything renders. An unknown name is an error
+    // rather than a silent fallback: the user asked for something specific, and
+    // quietly showing a different theme is worse than refusing to start.
+    let theme_name = config.color_scheme();
+    let selected =
+        reddish_tui::ui::theme::resolve(theme_name).map_err(|e| color_eyre::eyre::eyre!(e))?;
+    reddish_tui::ui::theme::set_current(selected);
+
     // Hidden performance gates. These run before any terminal setup so they
     // never touch raw mode or the alternate screen, making them safe in CI.
     // A budget violation exits with code 1 so the gates can fail a build.

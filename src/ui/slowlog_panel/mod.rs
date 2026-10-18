@@ -3,13 +3,14 @@ use std::io::Write;
 use ratatui::{
     Frame,
     layout::{Constraint, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Row, Table},
 };
 
 use crate::events::Event;
 use crate::redis::server::SlowLogEntry;
+use crate::ui::theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlowLogAction {
@@ -152,8 +153,13 @@ impl SlowLogPanel {
         }
 
         if filtered.is_empty() {
-            let para = ratatui::widgets::Paragraph::new("No slow log entries")
-                .block(Block::default().borders(Borders::ALL).title(title));
+            let para = ratatui::widgets::Paragraph::new("No slow log entries").block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(theme::border_style())
+                    .title_style(theme::title_style())
+                    .title(title),
+            );
             frame.render_widget(para, area);
             return;
         }
@@ -180,8 +186,13 @@ impl SlowLogPanel {
                     )))
                 })
                 .collect();
-            let para = ratatui::widgets::Paragraph::new(lines)
-                .block(Block::default().borders(Borders::ALL).title(title));
+            let para = ratatui::widgets::Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(theme::border_style())
+                    .title_style(theme::title_style())
+                    .title(title),
+            );
             frame.render_widget(para, area);
         } else {
             let header = Row::new(vec!["ID", "Time", "Duration", "Command"])
@@ -221,19 +232,26 @@ impl SlowLogPanel {
                 ],
             )
             .header(header)
-            .block(Block::default().borders(Borders::ALL).title(title));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(theme::border_style())
+                    .title_style(theme::title_style())
+                    .title(title),
+            );
 
             frame.render_widget(table, area);
         }
     }
 
     fn duration_style(duration_us: u64) -> Style {
+        let t = theme::current();
         let color = if duration_us < 1_000 {
-            Color::Green
+            t.ttl_ok
         } else if duration_us < 10_000 {
-            Color::Yellow
+            t.ttl_warn
         } else {
-            Color::Red
+            t.ttl_crit
         };
         Style::default().fg(color)
     }
@@ -243,12 +261,13 @@ impl SlowLogPanel {
         let filled = (ratio * width as f64).round() as usize;
         let empty = width.saturating_sub(filled);
         let bar = "█".repeat(filled) + &"░".repeat(empty);
+        let t = theme::current();
         let color = if duration_us < 1_000 {
-            Color::Green
+            t.ttl_ok
         } else if duration_us < 10_000 {
-            Color::Yellow
+            t.ttl_warn
         } else {
-            Color::Red
+            t.ttl_crit
         };
         Span::styled(bar, Style::default().fg(color))
     }

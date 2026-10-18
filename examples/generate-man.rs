@@ -39,7 +39,8 @@ const FILES_SECTION: &str = r#"
 .TP
 .I ~/.config/redis\-tui/config.toml
 Application settings: namespace separator, scan count, refresh interval,
-theme, and per\-action keybinding overrides.
+color scheme, editor, max value display bytes, and per\-action keybinding
+overrides.
 .TP
 .I ~/.config/redis\-tui/connections.toml
 Saved connection profiles, including password references (plaintext,

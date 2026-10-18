@@ -9,6 +9,7 @@ use ratatui::{
 use crate::events::Event;
 use crate::redis::client::Ttl;
 use crate::redis::types::{RedisValue, StreamEntry, StreamGroup, ZSetEntry};
+use crate::ui::theme;
 use crate::ui::widgets::input::InputWidget;
 use crate::ui::widgets::text_area_editor::TextAreaEditor;
 
@@ -81,11 +82,26 @@ impl StringViewMode {
 }
 
 /// Colors used for JSON syntax highlighting.
-const JSON_KEY_COLOR: Color = Color::Yellow;
-const JSON_STRING_COLOR: Color = Color::Green;
-const JSON_NUMBER_COLOR: Color = Color::Cyan;
-const JSON_LITERAL_COLOR: Color = Color::Magenta;
-const JSON_PUNCT_COLOR: Color = Color::DarkGray;
+///
+/// These are functions rather than constants because the theme is resolved at
+/// render time. Each maps to the theme field whose default value matches the
+/// colour that used to be hardcoded, so the default appearance is unchanged
+/// while every other theme now applies.
+fn json_key_color() -> Color {
+    theme::current().warning
+}
+fn json_string_color() -> Color {
+    theme::current().type_string
+}
+fn json_number_color() -> Color {
+    theme::current().title
+}
+fn json_literal_color() -> Color {
+    theme::current().type_hash
+}
+fn json_punct_color() -> Color {
+    theme::current().border
+}
 
 fn styled(text: impl Into<String>, color: Color) -> Span<'static> {
     Span::styled(text.into(), Style::default().fg(color))
@@ -121,15 +137,15 @@ fn json_scalar_spans(value: &serde_json::Value) -> Vec<Span<'static>> {
     match value {
         serde_json::Value::String(s) => vec![styled(
             serde_json::to_string(s).unwrap_or_default(),
-            JSON_STRING_COLOR,
+            json_string_color(),
         )],
-        serde_json::Value::Number(n) => vec![styled(n.to_string(), JSON_NUMBER_COLOR)],
+        serde_json::Value::Number(n) => vec![styled(n.to_string(), json_number_color())],
         serde_json::Value::Bool(_) | serde_json::Value::Null => {
-            vec![styled(value.to_string(), JSON_LITERAL_COLOR)]
+            vec![styled(value.to_string(), json_literal_color())]
         }
         _ => vec![
-            styled(json_open_token(value), JSON_PUNCT_COLOR),
-            styled(json_close_token(value), JSON_PUNCT_COLOR),
+            styled(json_open_token(value), json_punct_color()),
+            styled(json_close_token(value), json_punct_color()),
         ],
     }
 }
@@ -147,12 +163,12 @@ fn highlight_json(value: &serde_json::Value) -> Vec<Line<'static>> {
     if json_is_expanded(value) {
         out.push(Line::from(vec![styled(
             json_open_token(value),
-            JSON_PUNCT_COLOR,
+            json_punct_color(),
         )]));
         write_json_entries(&mut out, value, 1);
         out.push(Line::from(vec![styled(
             json_close_token(value),
-            JSON_PUNCT_COLOR,
+            json_punct_color(),
         )]));
     } else {
         out.push(Line::from(json_scalar_spans(value)));
@@ -187,17 +203,17 @@ fn write_json_entry(
     let pad = "  ".repeat(indent);
     let mut spans = vec![Span::raw(pad.clone())];
     if let Some(k) = key {
-        spans.push(styled(format!("\"{k}\""), JSON_KEY_COLOR));
+        spans.push(styled(format!("\"{k}\""), json_key_color()));
         spans.push(Span::raw(": ".to_string()));
     }
 
     if json_is_expanded(value) {
-        spans.push(styled(json_open_token(value), JSON_PUNCT_COLOR));
+        spans.push(styled(json_open_token(value), json_punct_color()));
         out.push(Line::from(spans));
         write_json_entries(out, value, indent + 1);
         out.push(Line::from(vec![
             Span::raw("  ".repeat(indent.saturating_sub(1))),
-            styled(json_close_token(value), JSON_PUNCT_COLOR),
+            styled(json_close_token(value), json_punct_color()),
         ]));
     } else {
         spans.extend(json_scalar_spans(value));
@@ -1218,17 +1234,17 @@ impl ValueInspector {
         if let Some(ref enc) = self.encoding {
             meta_parts.push(Span::styled(
                 format!(" encoding:{} ", enc),
-                Style::default().fg(Color::Cyan),
+                Style::default().fg(theme::current().title),
             ));
         }
         if let Some(ref ttl) = self.ttl {
             let ttl_str = ttl.display();
             if !ttl_str.is_empty() {
                 let ttl_color = match ttl {
-                    Ttl::NoExpiry => Color::Green,
-                    Ttl::Expires(d) if d.as_secs() < 60 => Color::Red,
-                    Ttl::Expires(d) if d.as_secs() < 600 => Color::Yellow,
-                    _ => Color::Green,
+                    Ttl::NoExpiry => theme::current().ttl_ok,
+                    Ttl::Expires(d) if d.as_secs() < 60 => theme::current().ttl_crit,
+                    Ttl::Expires(d) if d.as_secs() < 600 => theme::current().ttl_warn,
+                    _ => theme::current().ttl_ok,
                 };
                 meta_parts.push(Span::styled(
                     format!(" ttl:{} ", ttl_str),
@@ -1246,7 +1262,7 @@ impl ValueInspector {
             };
             meta_parts.push(Span::styled(
                 format!(" mem:{} ", mem_str),
-                Style::default().fg(Color::Magenta),
+                Style::default().fg(theme::current().memory),
             ));
         }
 
@@ -1265,7 +1281,7 @@ impl ValueInspector {
             // highlighting rather than a flat pretty-print.
             let label = Span::styled(
                 format!("[{}]", self.string_view.label()),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::current().border),
             );
             lines.push(Line::from(vec![label, Span::raw(" ")]));
             // Truncate before rendering. Building a styled line per source line
@@ -1292,7 +1308,7 @@ impl ValueInspector {
                         budget,
                         s.len()
                     ),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(theme::current().border),
                 )));
             }
         } else if let Some(value) = &self.value {
@@ -1306,7 +1322,13 @@ impl ValueInspector {
         }
 
         let widget = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title(title))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(theme::border_style())
+                    .title_style(theme::title_style())
+                    .title(title),
+            )
             .wrap(Wrap { trim: false });
         frame.render_widget(widget, area);
     }
@@ -1326,7 +1348,7 @@ impl ValueInspector {
                 } else {
                     "No items match the filter"
                 },
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::current().border),
             )));
         }
         for (i, item) in items.iter().enumerate() {
@@ -1362,11 +1384,15 @@ impl ValueInspector {
             };
             lines.push(Line::from(Span::styled(
                 format!("{label}{}", prompt_display(prompt)),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(theme::current().prompt),
             )));
         }
 
-        let block = Block::default().borders(Borders::ALL).title(title);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme::border_style())
+            .title_style(theme::title_style())
+            .title(title);
         frame.render_widget(
             Paragraph::new(lines)
                 .block(block)
@@ -1429,7 +1455,7 @@ impl ValueInspector {
                 } else {
                     "No fields"
                 },
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::current().border),
             )));
         }
         for (i, field) in visible.iter().enumerate() {
@@ -1461,11 +1487,15 @@ impl ValueInspector {
             };
             lines.push(Line::from(Span::styled(
                 format!("{label}{}", prompt_display(prompt)),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(theme::current().prompt),
             )));
         }
 
-        let block = Block::default().borders(Borders::ALL).title(title);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme::border_style())
+            .title_style(theme::title_style())
+            .title(title);
         frame.render_widget(
             Paragraph::new(lines)
                 .block(block)
@@ -1494,7 +1524,7 @@ impl ValueInspector {
                 } else {
                     "No members match the filter"
                 },
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme::current().border),
             )));
         }
         for (i, member) in members.iter().enumerate() {
@@ -1518,11 +1548,15 @@ impl ValueInspector {
             };
             lines.push(Line::from(Span::styled(
                 format!("{label}{}", prompt_display(prompt)),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(theme::current().prompt),
             )));
         }
 
-        let block = Block::default().borders(Borders::ALL).title(title);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme::border_style())
+            .title_style(theme::title_style())
+            .title(title);
         frame.render_widget(
             Paragraph::new(lines)
                 .block(block)
@@ -1624,7 +1658,11 @@ impl ValueInspector {
             ));
         }
 
-        let block = Block::default().borders(Borders::ALL).title(title);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme::border_style())
+            .title_style(theme::title_style())
+            .title(title);
         let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
         frame.render_widget(paragraph, area);
     }
@@ -1681,7 +1719,11 @@ impl ValueInspector {
                 };
                 text.push_str(&format!("\n{} {}", prompt_label, prompt_display(prompt)));
             }
-            let block = Block::default().borders(Borders::ALL).title(title_left);
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme::border_style())
+                .title_style(theme::title_style())
+                .title(title_left);
             let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
             frame.render_widget(paragraph, left);
 
@@ -1694,7 +1736,7 @@ impl ValueInspector {
                     Cell::from("Pending"),
                     Cell::from("Last ID"),
                 ])
-                .style(Style::default().fg(Color::Yellow));
+                .style(Style::default().fg(theme::current().warning));
                 let rows: Vec<TableRow> = groups
                     .iter()
                     .map(|g| {
@@ -1716,10 +1758,20 @@ impl ValueInspector {
                     ],
                 )
                 .header(header)
-                .block(Block::default().borders(Borders::ALL).title(title_right));
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(theme::border_style())
+                        .title_style(theme::title_style())
+                        .title(title_right),
+                );
                 frame.render_widget(table, right);
             } else {
-                let block = Block::default().borders(Borders::ALL).title(title_right);
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(theme::border_style())
+                    .title_style(theme::title_style())
+                    .title(title_right);
                 let paragraph = Paragraph::new("Loading groups...").block(block);
                 frame.render_widget(paragraph, right);
             }
@@ -1758,7 +1810,11 @@ impl ValueInspector {
                 text.push_str(&format!("\n{} {}", prompt_label, prompt_display(prompt)));
             }
 
-            let block = Block::default().borders(Borders::ALL).title(title);
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme::border_style())
+                .title_style(theme::title_style())
+                .title(title);
             let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
             frame.render_widget(paragraph, area);
         }
@@ -2726,9 +2782,9 @@ mod tests {
                 .find(|s| s.content.as_ref() == needle)
                 .unwrap_or_else(|| panic!("{needle} span in {joined}"))
         };
-        assert_eq!(find("\"name\"").style.fg, Some(JSON_KEY_COLOR));
-        assert_eq!(find("\"ada\"").style.fg, Some(JSON_STRING_COLOR));
-        assert_eq!(find("36").style.fg, Some(JSON_NUMBER_COLOR));
+        assert_eq!(find("\"name\"").style.fg, Some(json_key_color()));
+        assert_eq!(find("\"ada\"").style.fg, Some(json_string_color()));
+        assert_eq!(find("36").style.fg, Some(json_number_color()));
     }
 
     #[test]
@@ -2741,7 +2797,7 @@ mod tests {
                 .iter()
                 .find(|s| s.content.as_ref() == literal)
                 .unwrap_or_else(|| panic!("{literal} span"));
-            assert_eq!(span.style.fg, Some(JSON_LITERAL_COLOR));
+            assert_eq!(span.style.fg, Some(json_literal_color()));
         }
     }
 

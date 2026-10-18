@@ -1,3 +1,4 @@
+use crate::ui::theme;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -32,7 +33,11 @@ impl HelpOverlay {
         frame.render_widget(Clear, popup_area);
 
         let title = format!("Keybindings — {:?}", self.context);
-        let block = Block::default().borders(Borders::ALL).title(title);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme::border_style())
+            .title_style(theme::title_style())
+            .title(title);
         let inner = block.inner(popup_area);
         frame.render_widget(block, popup_area);
 

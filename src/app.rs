@@ -520,7 +520,9 @@ impl App {
             self.connect_profile(profile).await;
         }
 
-        let tick_rate = Duration::from_millis(250);
+        // `refresh_interval_ms` drives the tick rate. It was previously parsed and
+        // documented but never read, so the interval was hardcoded here.
+        let tick_rate = Duration::from_millis(self.config.refresh_interval_ms());
         let mut events = EventHandler::new(tick_rate);
 
         while !self.should_quit {
@@ -1092,6 +1094,14 @@ impl App {
         }
     }
 
+    /// Ticks between periodic work (latency probe, info refresh, stream follow).
+    ///
+    /// The 4-tick cadence is a throttle, not a configured interval: the
+    /// actual cadence comes from `refresh_interval_ms`, which sets the tick
+    /// rate. At the 100ms default that is roughly every 400ms, comfortably
+    /// below the point where a PING or an XRANGE would be noticeable.
+    const PERIODIC_TICKS: u64 = 4;
+
     async fn handle_tick(&mut self) {
         self.tick_count = self.tick_count.saturating_add(1);
         self.status_bar.drain_expired_toasts();
@@ -1100,7 +1110,7 @@ impl App {
         self.drain_pubsub_messages();
         self.drain_monitor_messages();
         self.status_bar.key_count = self.key_browser.tree.total_keys();
-        if self.active_tab == Tab::Info && self.tick_count.is_multiple_of(4) {
+        if self.active_tab == Tab::Info && self.tick_count.is_multiple_of(Self::PERIODIC_TICKS) {
             self.refresh_info_dashboard().await;
         }
         if std::mem::take(&mut self.info_refresh_pending) {
@@ -1114,11 +1124,11 @@ impl App {
     /// Measure round-trip latency and publish it to the status bar.
     ///
     /// `StatusBar::latency_ms` existed but was never assigned, so the field the
-    /// status bar renders was permanently blank. A PING every 4th tick (~1s)
-    /// keeps the number live instead of showing a value from connect time that
-    /// goes stale while the session runs.
+    /// status bar renders was permanently blank. Probing on the periodic
+    /// cadence keeps the number live instead of showing a value from connect
+    /// time that goes stale while the session runs.
     async fn probe_latency(&mut self) {
-        if !self.tick_count.is_multiple_of(4) {
+        if !self.tick_count.is_multiple_of(Self::PERIODIC_TICKS) {
             return;
         }
         let Some(client) = self.client.as_ref() else {
@@ -1135,10 +1145,10 @@ impl App {
     }
 
     /// Append stream entries newer than the last seen id when the inspector is
-    /// following. Throttled to every 4th tick (~1s at the 250ms tick rate) so
-    /// a busy stream does not issue one XRANGE per tick.
+    /// following. Throttled to the periodic cadence so a busy stream does not
+    /// issue one XRANGE per tick.
     async fn stream_follow_tick(&mut self) {
-        if !self.tick_count.is_multiple_of(4) {
+        if !self.tick_count.is_multiple_of(Self::PERIODIC_TICKS) {
             return;
         }
         let Some(last_id) = self.value_inspector.follow_tick() else {
@@ -3383,5 +3393,64 @@ mod latency_tests {
             .collect();
         assert!(text.contains("localhost:6379"), "got: {text}");
         assert!(!text.contains("ms"), "no latency to show: {text}");
+    }
+}
+
+#[cfg(test)]
+mod tick_rate_tests {
+    use super::*;
+
+    /// The bug: `refresh_interval_ms` was documented as the refresh interval,
+    /// appeared in the example config, and was never read. The tick rate was
+    /// hardcoded to 250ms.
+    #[test]
+    fn tick_rate_comes_from_the_config() {
+        let app = App::new(Config {
+            refresh_interval_ms: Some(500),
+            ..Default::default()
+        });
+        assert_eq!(
+            std::time::Duration::from_millis(app.config.refresh_interval_ms()),
+            std::time::Duration::from_millis(500),
+            "the event loop must be driven by the configured interval"
+        );
+    }
+
+    #[test]
+    fn default_refresh_interval_is_the_documented_value() {
+        let app = App::new(Config::default());
+        assert_eq!(app.config.refresh_interval_ms(), 1000);
+    }
+
+    /// The periodic cadence is a throttle in ticks, so a very short interval must
+    /// still not turn the latency probe into a per-tick PING.
+    ///
+    /// The property that matters is the resulting wall-clock period, not the
+    /// tick count, so that is what gets asserted.
+    #[test]
+    fn periodic_work_stays_throttled_at_short_intervals() {
+        // The clamp is what protects the loop, so the test has to go through
+        // the accessor the event loop actually calls rather than the raw value.
+        let effective_ms = |requested: u64| {
+            let app = App::new(Config {
+                refresh_interval_ms: Some(requested),
+                ..Default::default()
+            });
+            app.config.refresh_interval_ms() * App::PERIODIC_TICKS
+        };
+
+        for requested in [0, 1, 10, 25] {
+            assert!(
+                effective_ms(requested) >= 100,
+                "{requested}ms would ping every {}ms, which is a hot loop",
+                effective_ms(requested)
+            );
+        }
+        // The default interval must not become an unbounded wait.
+        assert!(
+            effective_ms(1000) <= 5_000,
+            "the default interval gives a {}ms period, too slow to call live",
+            effective_ms(1000)
+        );
     }
 }

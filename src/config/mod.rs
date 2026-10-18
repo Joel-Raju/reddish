@@ -5,6 +5,13 @@ use color_eyre::Result;
 use serde::Deserialize;
 use std::path::PathBuf;
 
+/// Event-loop tick interval when the config does not say.
+const DEFAULT_REFRESH_INTERVAL_MS: u64 = 1000;
+/// Floor for the tick interval. See [`Config::refresh_interval_ms`].
+const MIN_REFRESH_INTERVAL_MS: u64 = 50;
+/// Ceiling for the tick interval. See [`Config::refresh_interval_ms`].
+const MAX_REFRESH_INTERVAL_MS: u64 = 60_000;
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Config {
     pub namespace_separator: Option<String>,
@@ -45,7 +52,15 @@ impl Config {
     }
 
     pub fn refresh_interval_ms(&self) -> u64 {
-        self.refresh_interval_ms.unwrap_or(1000)
+        // Clamped rather than passed through. This drives the event loop's tick
+        // rate, and the periodic tasks (latency probe, info refresh, stream
+        // follow) run every few ticks, so a value of 1 would mean a PING every
+        // few milliseconds against the server. A very large value would make
+        // the UI feel wedged, so that is clamped too.
+        let requested = self
+            .refresh_interval_ms
+            .unwrap_or(DEFAULT_REFRESH_INTERVAL_MS);
+        requested.clamp(MIN_REFRESH_INTERVAL_MS, MAX_REFRESH_INTERVAL_MS)
     }
 
     pub fn log_level(&self) -> &str {
@@ -106,7 +121,7 @@ fn config_path() -> Result<PathBuf> {
 mod tests {
     use super::*;
 
-    fn parse(toml: &str) -> Config {
+    pub(super) fn parse(toml: &str) -> Config {
         toml::from_str(toml).expect("valid TOML")
     }
 
@@ -195,5 +210,76 @@ mod tests {
         assert_eq!(c.scan_count(), 10);
         assert_eq!(c.editor(), None);
         assert_eq!(c.max_value_display_bytes(), 1024 * 1024);
+    }
+}
+
+#[cfg(test)]
+mod reachability_tests {
+    use super::tests::parse;
+    use super::*;
+
+    /// A config key that nothing reads is a lie in the documentation: the
+    /// value parses, appears in the example file, and does nothing. Five such
+    /// keys turned up during this work (editor, max_value_display_bytes,
+    /// color_scheme, confirm_deletes, refresh_interval_ms), so the accessor
+    /// list is pinned here.
+    ///
+    /// This test cannot see whether a reader exists, only that each key has an
+    /// accessor with the right name — which is the part that silently drifts
+    /// when a key is added.
+    #[test]
+    fn every_config_key_has_an_accessor() {
+        let c = Config::default();
+        // Compile-time proof that each accessor exists and returns its type.
+        let _: &str = c.namespace_separator();
+        let _: u32 = c.scan_count();
+        let _: u64 = c.refresh_interval_ms();
+        let _: &str = c.log_level();
+        let _: &str = c.color_scheme();
+        let _: bool = c.mouse_enabled();
+        let _: bool = c.confirm_deletes();
+        let _: usize = c.max_keys_in_memory();
+        let _: Option<&str> = c.editor();
+        let _: usize = c.max_value_display_bytes();
+    }
+
+    /// The refresh interval is the tick rate, so a zero or absurd value would
+    /// either busy-loop or effectively disable the UI.
+    #[test]
+    fn refresh_interval_has_a_usable_default() {
+        let default = Config::default().refresh_interval_ms();
+        assert!(
+            (MIN_REFRESH_INTERVAL_MS..=MAX_REFRESH_INTERVAL_MS).contains(&default),
+            "default refresh interval of {default}ms is outside a usable range"
+        );
+    }
+
+    /// Too fast would spin the event loop and hammer the server with the
+    /// periodic tasks; too slow would make the UI feel wedged.
+    #[test]
+    fn refresh_interval_is_clamped_to_a_usable_range() {
+        for too_fast in ["0", "1", "10"] {
+            assert_eq!(
+                parse(&format!("refresh_interval_ms = {too_fast}")).refresh_interval_ms(),
+                MIN_REFRESH_INTERVAL_MS,
+                "{too_fast}ms was not clamped up"
+            );
+        }
+        assert_eq!(
+            parse("refresh_interval_ms = 99999999").refresh_interval_ms(),
+            MAX_REFRESH_INTERVAL_MS
+        );
+        // A value inside the range is passed through untouched.
+        assert_eq!(
+            parse("refresh_interval_ms = 500").refresh_interval_ms(),
+            500
+        );
+        assert_eq!(parse("refresh_interval_ms = 50").refresh_interval_ms(), 50);
+    }
+
+    #[test]
+    fn refresh_interval_is_read_from_config() {
+        let c: Config = toml::from_str("refresh_interval_ms = 500").expect("valid TOML");
+        assert_eq!(c.refresh_interval_ms(), 500);
     }
 }

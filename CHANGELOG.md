@@ -127,6 +127,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every ~1s now fills it in; a failed probe keeps the previous reading rather
   than blanking the field.
 
+- **`refresh_interval_ms` is now honoured.** It was documented as the refresh
+  interval and appeared in the example config, but nothing read it — the event
+  loop's tick rate was hardcoded to 250ms. It now drives the tick rate, and is
+  clamped to 50–60000ms so a too-small value cannot turn the periodic tasks into
+  a PING loop.
+
 ### Changed
 
 - An unknown `--theme` is now rejected with the list of valid names instead of

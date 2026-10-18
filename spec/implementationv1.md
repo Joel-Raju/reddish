@@ -509,7 +509,7 @@ The original audit predated Phases A–E. The following were reported as
 | `namespace_separator` | ✅ Done | |
 | `scan_count` | ✅ Done | |
 | `max_keys_in_memory` | ✅ Done | |
-| `refresh_interval_ms` | ✅ Done | |
+| `refresh_interval_ms` | ✅ Done | Drives the event-loop tick rate; clamped to 50–60000ms |
 | `color_scheme` | ✅ Done | Installed at startup and read by every render site via `theme::current()` |
 | `mouse_enabled` | ✅ Done | |
 | `confirm_deletes` | ✅ Done | `false` skips the prompt; read-only mode still applies |

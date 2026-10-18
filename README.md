@@ -154,6 +154,10 @@ Example:
 namespace_separator = ":"
 scan_count = 200
 refresh_interval_ms = 1000
+
+# Event-loop tick interval, clamped to 50..60000ms. It sets the cadence of the
+# status-bar latency probe, the Info dashboard refresh and stream follow-mode.
+# refresh_interval_ms = 1000
 log_level = "info"
 color_scheme = "default"
 mouse_enabled = true

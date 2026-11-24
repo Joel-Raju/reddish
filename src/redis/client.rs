@@ -442,6 +442,75 @@ impl RedisClientHandle {
         }
     }
 
+    /// TYPE and TTL for a whole batch of keys, in one pipelined round-trip.
+    ///
+    /// The scan task used to insert every key with `redis_type: None` and
+    /// nothing ever hydrated it — the browser showed no type badges, the
+    /// TTL sort had nothing to sort, and `Enter` passed `Unknown` to the
+    /// value loader, which failed inspection ("Cannot load value for
+    /// unknown redis type") for every key against a live server. This is
+    /// the batch call that fills both in per SCAN batch.
+    pub async fn key_types_and_ttls(
+        &self,
+        keys: &[String],
+    ) -> Result<Vec<(RedisType, Option<Ttl>)>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        match &self.client {
+            RedisClient::Standalone(conn) => {
+                let mut c = conn.clone();
+                let mut pipe = redis::pipe();
+                for k in keys {
+                    pipe.cmd("TYPE").arg(k);
+                    pipe.cmd("TTL").arg(k);
+                }
+                let values: Vec<redis::Value> =
+                    tokio::time::timeout(Duration::from_secs(10), pipe.query_async(&mut c))
+                        .await
+                        .map_err(|_| color_eyre::eyre::eyre!("TYPE/TTL pipeline timeout"))?
+                        .map_err(|e| color_eyre::eyre::eyre!("TYPE/TTL pipeline failed: {e}"))?;
+                let mut out = Vec::with_capacity(keys.len());
+                for pair in values.chunks(2) {
+                    let r_type = match pair.first() {
+                        // RESP2 TYPE replies arrive as a simple string;
+                        // be tolerant of a bulk string too.
+                        Some(redis::Value::SimpleString(s)) => RedisType::from(s.as_str()),
+                        Some(redis::Value::BulkString(d)) => {
+                            RedisType::from(String::from_utf8_lossy(d).as_ref())
+                        }
+                        _ => RedisType::Unknown,
+                    };
+                    let ttl = match pair.get(1) {
+                        Some(redis::Value::Int(v)) => {
+                            if *v == -2 {
+                                Some(Ttl::KeyNotFound)
+                            } else if *v == -1 {
+                                Some(Ttl::NoExpiry)
+                            } else {
+                                Some(Ttl::Expires(Duration::from_secs((*v).max(0) as u64)))
+                            }
+                        }
+                        _ => None,
+                    };
+                    out.push((r_type, ttl));
+                }
+                Ok(out)
+            }
+            // A pipeline is routed to one node in cluster mode, which would
+            // send half the commands to the wrong shard. Per-key is correct.
+            RedisClient::Cluster(_) => {
+                let mut out = Vec::with_capacity(keys.len());
+                for k in keys {
+                    let r_type = self.key_type(k).await.unwrap_or(RedisType::Unknown);
+                    let ttl = self.ttl(k).await.ok();
+                    out.push((r_type, ttl));
+                }
+                Ok(out)
+            }
+        }
+    }
+
     pub async fn delete(&self, key: &str) -> Result<()> {
         match &self.client {
             RedisClient::Standalone(conn) => {

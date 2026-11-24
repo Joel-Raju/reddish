@@ -1396,6 +1396,16 @@ impl App {
             BrowserAction::SelectKey(name, r_type) => {
                 self.value_inspector.set_loading(name.clone());
                 if let Some(client) = &self.client {
+                    // The tree's type is a cache, and caches lie: the scan
+                    // never used to hydrate it at all (every inspection
+                    // failed with "unknown redis type"), and even hydrated
+                    // it goes stale the moment a key is converted to another
+                    // type. TYPE is one round-trip; fetch it fresh and keep
+                    // the cached value only as a fallback if even that fails.
+                    let r_type = match client.key_type(&name).await {
+                        Ok(fresh) => fresh,
+                        Err(_) => r_type,
+                    };
                     let value_fut = client.get_value(&name, r_type);
                     let ttl_fut = client.ttl(&name);
                     let encoding_fut = client.object_encoding(&name);

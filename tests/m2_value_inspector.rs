@@ -1530,3 +1530,101 @@ fn popup_does_not_panic_at_small_terminal_sizes() {
         let _ = render_inspector(&inspector, w, h);
     }
 }
+
+/// The exact bug a manual test run found: the scan task used to insert
+/// every key with no type, and `Enter` then failed with "Cannot load value
+/// for unknown redis type" — inspection, the app's headline feature, was
+/// broken against every live scan. The app now re-fetches TYPE at
+/// inspection time, so neither an unhydrated entry nor a stale one can
+/// break loading.
+#[tokio::test]
+async fn test_inspecting_an_unhydrated_key_still_loads() {
+    let profile = reddish_tui::config::connections::ConnectionProfile {
+        name: "test".to_string(),
+        host: "127.0.0.1".to_string(),
+        port: 16379,
+        db: 0,
+        username: None,
+        password: None,
+        last_connected: None,
+        ..Default::default()
+    };
+    let Some(client) = helpers::connect_or_skip(&profile).await else {
+        return;
+    };
+    let mut c = match &client.client {
+        reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
+        _ => unreachable!("test always uses standalone"),
+    };
+    let _: () = redis::cmd("SET")
+        .arg("inspectstr")
+        .arg("hello")
+        .query_async(&mut c)
+        .await
+        .unwrap();
+    let _: () = redis::cmd("HSET")
+        .arg("inspecthash")
+        .arg("field")
+        .arg("value")
+        .query_async(&mut c)
+        .await
+        .unwrap();
+
+    let mut app = reddish_tui::app::App::new(reddish_tui::config::Config::default());
+    app.client = Some(client);
+
+    // The entry arrives exactly the way the old scan task produced it:
+    // no type at all. (No namespace separator: a colon would make the
+    // cursor land on a collapsed folder row, where Enter expands.)
+    app.key_browser
+        .tree
+        .insert(reddish_tui::ui::key_browser::tree::KeyEntry {
+            full_name: "inspectstr".to_string(),
+            redis_type: None,
+            ttl: None,
+        });
+    reddish_tui::app::handle_key_event_for_test(
+        &mut app,
+        crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Enter),
+    )
+    .await;
+    assert_eq!(
+        app.value_inspector.value,
+        Some(RedisValue::String("hello".to_string())),
+        "Enter on an unhydrated key must load the value via a fresh TYPE"
+    );
+    assert!(
+        app.value_inspector.error.is_none(),
+        "no load error expected, got {:?}",
+        app.value_inspector.error
+    );
+
+    // The stale case: the cached type says String but the key is a hash.
+    app.key_browser.cursor = 1;
+    app.key_browser
+        .tree
+        .insert(reddish_tui::ui::key_browser::tree::KeyEntry {
+            full_name: "inspecthash".to_string(),
+            redis_type: Some(RedisType::String),
+            ttl: None,
+        });
+    reddish_tui::app::handle_key_event_for_test(
+        &mut app,
+        crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Enter),
+    )
+    .await;
+    assert!(
+        matches!(&app.value_inspector.value, Some(RedisValue::Hash(map)) if map.len() == 1),
+        "a stale cached type must not break inspection either, got {:?}",
+        app.value_inspector.value
+    );
+
+    let _ = redis::cmd("DEL")
+        .arg("inspectstr")
+        .query_async::<()>(&mut c)
+        .await;
+    let _ = redis::cmd("DEL")
+        .arg("inspecthash")
+        .query_async::<()>(&mut c)
+        .await;
+}

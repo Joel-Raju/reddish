@@ -1971,3 +1971,107 @@ async fn test_execute_pipeline_error_does_not_stop_later_writes() {
         .await
         .unwrap();
 }
+
+/// The composition test the shipped bug evaded: the scan task used to
+/// insert every key with `redis_type: None` and nothing ever hydrated it,
+/// so the browser showed no badges, the TTL sort had no data, and `Enter`
+/// failed with "Cannot load value for unknown redis type" for every key.
+/// Widget-level tests never caught it because they always fed pre-typed
+/// entries. This drives the real pipeline: SCAN task → channel → entries.
+#[tokio::test]
+async fn test_scan_task_hydrates_types_and_ttls_end_to_end() {
+    let profile = ConnectionProfile {
+        name: "test".to_string(),
+        host: "127.0.0.1".to_string(),
+        port: 16379,
+        db: 0,
+        username: None,
+        password: None,
+        last_connected: None,
+        ..Default::default()
+    };
+    let Some(scan_client) = helpers::connect_or_skip(&profile).await else {
+        return;
+    };
+    let mut c = match &scan_client.client {
+        reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
+        _ => unreachable!("test always uses standalone"),
+    };
+    // Clean our own keys so other tests' leftovers cannot mask failures.
+    for k in ["hydrate:str", "hydrate:hash", "hydrate:zset", "hydrate:ttl"] {
+        let _ = redis::cmd("DEL").arg(k).query_async::<()>(&mut c).await;
+    }
+    let _: () = redis::cmd("SET")
+        .arg("hydrate:str")
+        .arg("v")
+        .query_async(&mut c)
+        .await
+        .unwrap();
+    let _: () = redis::cmd("HSET")
+        .arg("hydrate:hash")
+        .arg("f")
+        .arg("v")
+        .query_async(&mut c)
+        .await
+        .unwrap();
+    let _: () = redis::cmd("ZADD")
+        .arg("hydrate:zset")
+        .arg(1)
+        .arg("m")
+        .query_async(&mut c)
+        .await
+        .unwrap();
+    let _: () = redis::cmd("SET")
+        .arg("hydrate:ttl")
+        .arg("v")
+        .arg("EX")
+        .arg(120)
+        .query_async(&mut c)
+        .await
+        .unwrap();
+
+    // Small batches so multiple round-trips happen, like a real large DB.
+    let config = reddish_tui::config::Config {
+        scan_count: Some(10),
+        ..Default::default()
+    };
+    let (mut rx, cancel) =
+        reddish_tui::ui::key_browser::scanner_task::start_scan(scan_client, &config);
+
+    let mut entries: Vec<KeyEntry> = Vec::new();
+    while let Some(batch) = rx.recv().await {
+        entries.extend(batch);
+    }
+    cancel.cancel();
+
+    let get = |name: &str| entries.iter().find(|e| e.full_name == name).cloned();
+    let str_entry = get("hydrate:str").expect("hydrate:str must be scanned");
+    assert_eq!(
+        str_entry.redis_type,
+        Some(RedisType::String),
+        "the scan must hydrate types — badges and inspection depend on it"
+    );
+    assert_eq!(
+        get("hydrate:hash").and_then(|e| e.redis_type),
+        Some(RedisType::Hash)
+    );
+    assert_eq!(
+        get("hydrate:zset").and_then(|e| e.redis_type),
+        Some(RedisType::ZSet)
+    );
+    let ttl_entry = get("hydrate:ttl").expect("hydrate:ttl must be scanned");
+    match ttl_entry.ttl {
+        Some(Ttl::Expires(d)) => {
+            assert!(
+                d.as_secs() >= 60 && d.as_secs() <= 120,
+                "TTL hydration should read back ~120s, got {}s",
+                d.as_secs()
+            );
+        }
+        other => panic!("hydrate:ttl must arrive with a live expiry, got {other:?}"),
+    }
+
+    for k in ["hydrate:str", "hydrate:hash", "hydrate:zset", "hydrate:ttl"] {
+        let _ = redis::cmd("DEL").arg(k).query_async::<()>(&mut c).await;
+    }
+}

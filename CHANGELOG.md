@@ -213,6 +213,14 @@ every write, and the REPL refuses `FLUSHDB`, `FLUSHALL` and `KEYS *`.
   `TESTING_PLAN.md`, which now covers the full matrix: every startup
   path and its failure modes, per-type editing for all six Redis types,
   keybinding overrides, and the troubleshooting table.
+- **Value inspection works against a live scan.** The scan task inserted
+  every key with no type and nothing ever hydrated it, so `Enter` failed
+  with "Cannot load value for unknown redis type" for every key — the
+  headline feature, broken end-to-end, invisible to a suite whose tests
+  all fed pre-typed entries. Types and TTLs now hydrate in one pipelined
+  TYPE/TTL round-trip per SCAN batch (badges and the TTL sort get real
+  data), and inspection re-fetches TYPE on Enter, so even an unhydrated
+  or stale-cached type can never break loading again.
 
 - **Key list rendering is windowed.** With every namespace expanded the browser
   allocated a `ListItem` — a `String` and a `Style` — for all 10,001 rows on

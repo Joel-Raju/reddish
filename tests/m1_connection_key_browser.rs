@@ -376,7 +376,15 @@ fn test_key_browser_delete_returns_action() {
         ttl: None,
     }]);
 
-    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+    // A real terminal delivers Shift+D as `Char('D')` with SHIFT
+    // (crossterm decorates uppercase input), which is what the keymap
+    // binding now matches. The old test pressed a bare `Char('D')` — an
+    // event no terminal sends — which only worked because of the
+    // modifier-blind fallback arm that has been removed.
+    let action = browser.handle_event(&Event::Key(KeyEvent::new(
+        KeyCode::Char('D'),
+        crossterm::event::KeyModifiers::SHIFT,
+    )));
     assert!(matches!(action, Some(BrowserAction::DeleteKey(ref name)) if name == "testkey"));
 }
 
@@ -385,7 +393,11 @@ fn test_key_browser_delete_on_empty_cursor_does_nothing() {
     use reddish_tui::events::Event;
 
     let mut browser = KeyBrowser::new(':', 500_000);
-    let action = browser.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+    // The real event for the vim delete binding (uppercase ⇒ SHIFT).
+    let action = browser.handle_event(&Event::Key(KeyEvent::new(
+        KeyCode::Char('D'),
+        crossterm::event::KeyModifiers::SHIFT,
+    )));
     assert!(action.is_none(), "Delete on empty tree should return None");
 }
 

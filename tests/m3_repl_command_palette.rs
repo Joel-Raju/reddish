@@ -65,11 +65,14 @@ fn test_repl_widget_renders_without_panic() {
 
 #[test]
 fn test_palette_filters_items() {
-    let mut palette = CommandPalette::new(vec![
-        "Apple".to_string(),
-        "Banana".to_string(),
-        "Cherry".to_string(),
-    ]);
+    let mut palette = CommandPalette::new(
+        vec![
+            "Apple".to_string(),
+            "Banana".to_string(),
+            "Cherry".to_string(),
+        ],
+        "Ctrl+P".to_string(),
+    );
     palette.query.push('a');
     palette.filter();
     assert_eq!(palette.filtered.len(), 2); // Apple, Banana
@@ -82,14 +85,17 @@ fn test_palette_filters_items() {
 
 #[test]
 fn test_palette_selects_item_on_enter() {
-    let mut palette = CommandPalette::new(vec!["Connect".to_string(), "Disconnect".to_string()]);
+    let mut palette = CommandPalette::new(
+        vec!["Connect".to_string(), "Disconnect".to_string()],
+        "Ctrl+P".to_string(),
+    );
     let action = palette.handle_event(&Event::Key(KeyEvent::from(KeyCode::Enter)));
     assert!(matches!(action, Some(PaletteAction::Execute(ref s)) if s == "Connect"));
 }
 
 #[test]
 fn test_palette_closes_on_esc() {
-    let mut palette = CommandPalette::new(vec!["Quit".to_string()]);
+    let mut palette = CommandPalette::new(vec!["Quit".to_string()], "Ctrl+P".to_string());
     let action = palette.handle_event(&Event::Key(KeyEvent::from(KeyCode::Esc)));
     assert!(matches!(action, Some(PaletteAction::Close)));
 }
@@ -98,7 +104,10 @@ fn test_palette_closes_on_esc() {
 fn test_palette_renders_without_panic() {
     let backend = TestBackend::new(80, 24);
     let mut terminal = ratatui::Terminal::new(backend).unwrap();
-    let palette = CommandPalette::new(vec!["Cmd1".to_string(), "Cmd2".to_string()]);
+    let palette = CommandPalette::new(
+        vec!["Cmd1".to_string(), "Cmd2".to_string()],
+        "Ctrl+P".to_string(),
+    );
     let _ = terminal.draw(|f| palette.render(f, f.area()));
 }
 

@@ -304,7 +304,12 @@ impl KeyBrowser {
                     ));
                 }
             } else if keymap.matches("nav_right", key)
-                || matches!(key.code, KeyCode::Right | KeyCode::Char('l'))
+                // The letter fallbacks must be modifier-blind-proof: without
+                // the empty-modifiers guard, Ctrl+L (emacs refresh) expanded
+                // a node instead, and any CONTROL/ALT chord ending in that
+                // letter was captured here.
+                || (key.modifiers.is_empty()
+                    && matches!(key.code, KeyCode::Right | KeyCode::Char('l')))
             {
                 let rows = self.sorted_rows();
                 if let Some(row) = rows.get(self.cursor)
@@ -314,7 +319,8 @@ impl KeyBrowser {
                     self.tree.expand(&path);
                 }
             } else if keymap.matches("nav_left", key)
-                || matches!(key.code, KeyCode::Left | KeyCode::Char('h'))
+                || (key.modifiers.is_empty()
+                    && matches!(key.code, KeyCode::Left | KeyCode::Char('h')))
             {
                 let rows = self.sorted_rows();
                 if let Some(row) = rows.get(self.cursor)
@@ -328,12 +334,17 @@ impl KeyBrowser {
                     self.current_path.pop();
                     self.cursor = 0;
                 }
-            } else if key.code == KeyCode::Char('g') {
+            } else if key.modifiers.is_empty() && key.code == KeyCode::Char('g') {
                 if !self.current_path.is_empty() {
                     self.current_path.clear();
                     self.cursor = 0;
                 }
-            } else if keymap.matches("delete", key) || matches!(key.code, KeyCode::Char('D')) {
+            // No `Char('D')` code-only fallback: it fired on Ctrl+D and any
+            // other decorated variant of the letter (the inspector's
+            // delete-selected binding is Ctrl+D, and in the browser that
+            // chord must reach nothing). The keymap binding covers every
+            // preset since uppercase spellings now parse with SHIFT.
+            } else if keymap.matches("delete", key) {
                 let rows = self.sorted_rows();
                 if let Some(row) = rows.get(self.cursor)
                     && let Some(ref key) = row.key

@@ -919,13 +919,26 @@ impl ValueInspector {
             return Some(InspectorAction::CopyValue(s.clone()));
         }
 
+        // Navigation honors the active preset. The hardcoded k/j/Up/Down
+        // previously ignored the keymap entirely: emacs ctrl+n/ctrl+p fell
+        // through the inspector and moved the key browser's cursor *behind*
+        // the open value — a mode leak, not just a missing binding.
+        let nav_up_pressed = keymap.matches("nav_up", key);
+        let nav_down_pressed = keymap.matches("nav_down", key);
+
         // List-specific key handling
         if let Some(RedisValue::List(ref items)) = self.value {
             match key.code {
-                KeyCode::Up | KeyCode::Char('k') if self.list_cursor > 0 => {
+                code if (code == KeyCode::Up || code == KeyCode::Char('k') || nav_up_pressed)
+                    && self.list_cursor > 0 =>
+                {
                     self.list_cursor -= 1;
                 }
-                KeyCode::Down | KeyCode::Char('j') if self.list_cursor + 1 < items.len() => {
+                code if (code == KeyCode::Down
+                    || code == KeyCode::Char('j')
+                    || nav_down_pressed)
+                    && self.list_cursor + 1 < items.len() =>
+                {
                     self.list_cursor += 1;
                 }
                 _ => {}
@@ -970,12 +983,16 @@ impl ValueInspector {
             // filter, so the cursor cannot point at a hidden row.
             let visible: Vec<String> = self.visible_hash_fields().into_iter().cloned().collect();
             match key.code {
-                KeyCode::Up | KeyCode::Char('k') => {
+                code if code == KeyCode::Up || code == KeyCode::Char('k') || nav_up_pressed => {
                     if self.hash_cursor > 0 {
                         self.hash_cursor -= 1;
                     }
                 }
-                KeyCode::Down | KeyCode::Char('j') if self.hash_cursor + 1 < visible.len() => {
+                code if (code == KeyCode::Down
+                    || code == KeyCode::Char('j')
+                    || nav_down_pressed)
+                    && self.hash_cursor + 1 < visible.len() =>
+                {
                     self.hash_cursor += 1;
                 }
                 _ => {}
@@ -1042,10 +1059,16 @@ impl ValueInspector {
         if let Some(RedisValue::Set(ref members)) = self.value {
             let items: Vec<&String> = members.iter().collect();
             match key.code {
-                KeyCode::Up | KeyCode::Char('k') if self.set_cursor > 0 => {
+                code if (code == KeyCode::Up || code == KeyCode::Char('k') || nav_up_pressed)
+                    && self.set_cursor > 0 =>
+                {
                     self.set_cursor -= 1;
                 }
-                KeyCode::Down | KeyCode::Char('j') if self.set_cursor + 1 < items.len() => {
+                code if (code == KeyCode::Down
+                    || code == KeyCode::Char('j')
+                    || nav_down_pressed)
+                    && self.set_cursor + 1 < items.len() =>
+                {
                     self.set_cursor += 1;
                 }
                 _ => {}
@@ -1070,10 +1093,16 @@ impl ValueInspector {
         // ZSet-specific key handling
         if let Some(RedisValue::ZSet(ref entries)) = self.value {
             match key.code {
-                KeyCode::Up | KeyCode::Char('k') if self.zset_cursor > 0 => {
+                code if (code == KeyCode::Up || code == KeyCode::Char('k') || nav_up_pressed)
+                    && self.zset_cursor > 0 =>
+                {
                     self.zset_cursor -= 1;
                 }
-                KeyCode::Down | KeyCode::Char('j') if self.zset_cursor + 1 < entries.len() => {
+                code if (code == KeyCode::Down
+                    || code == KeyCode::Char('j')
+                    || nav_down_pressed)
+                    && self.zset_cursor + 1 < entries.len() =>
+                {
                     self.zset_cursor += 1;
                 }
                 _ => {}
@@ -1119,10 +1148,16 @@ impl ValueInspector {
         // Stream-specific key handling
         if let Some(RedisValue::Stream(ref entries)) = self.value {
             match key.code {
-                KeyCode::Up | KeyCode::Char('k') if self.stream_cursor > 0 => {
+                code if (code == KeyCode::Up || code == KeyCode::Char('k') || nav_up_pressed)
+                    && self.stream_cursor > 0 =>
+                {
                     self.stream_cursor -= 1;
                 }
-                KeyCode::Down | KeyCode::Char('j') if self.stream_cursor + 1 < entries.len() => {
+                code if (code == KeyCode::Down
+                    || code == KeyCode::Char('j')
+                    || nav_down_pressed)
+                    && self.stream_cursor + 1 < entries.len() =>
+                {
                     self.stream_cursor += 1;
                 }
                 _ => {}
@@ -1884,11 +1919,11 @@ mod tests {
 
     // ---- Value member search (5.14) ----
 
-    fn ctrl_shift_f() -> Event {
-        Event::Key(KeyEvent::new(
-            KeyCode::Char('f'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        ))
+    /// The vim preset's value-search binding is `alt+/`: ESC + '/' arrives
+    /// as Char('/') + ALT. The previous binding, ctrl+shift+f, could never
+    /// fire — legacy terminals encode it as plain 0x06 (Ctrl+F).
+    fn alt_slash() -> Event {
+        Event::Key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::ALT))
     }
 
     #[test]
@@ -1909,14 +1944,14 @@ mod tests {
     #[test]
     fn value_search_opens_prompt() {
         let mut inspector = list_inspector();
-        inspector.handle_event(&ctrl_shift_f());
+        inspector.handle_event(&alt_slash());
         assert_eq!(inspector.prompt_mode, Some(PromptMode::ValueFilter));
     }
 
     #[test]
     fn value_search_applies_on_submit() {
         let mut inspector = list_inspector();
-        inspector.handle_event(&ctrl_shift_f());
+        inspector.handle_event(&alt_slash());
         inspector.list_prompt.as_mut().unwrap().value = "b".to_string();
         inspector.handle_event(&press(KeyCode::Enter));
         assert_eq!(inspector.value_filter, "b");
@@ -1927,13 +1962,13 @@ mod tests {
         let mut inspector = list_inspector();
         inspector.value_filter = "b".to_string();
         // Pressing the binding with an active filter clears it in one step.
-        inspector.handle_event(&ctrl_shift_f());
+        inspector.handle_event(&alt_slash());
         assert_eq!(inspector.prompt_mode, None);
         assert!(inspector.value_filter.is_empty());
 
         // With no filter active it opens the prompt, and an empty submission
         // leaves the filter cleared.
-        inspector.handle_event(&ctrl_shift_f());
+        inspector.handle_event(&alt_slash());
         assert_eq!(inspector.prompt_mode, Some(PromptMode::ValueFilter));
         inspector.handle_event(&press(KeyCode::Enter));
         assert!(inspector.value_filter.is_empty());
@@ -1943,7 +1978,7 @@ mod tests {
     fn value_search_twice_toggles_filter_off() {
         let mut inspector = list_inspector();
         inspector.value_filter = "b".to_string();
-        inspector.handle_event(&ctrl_shift_f());
+        inspector.handle_event(&alt_slash());
         assert!(inspector.value_filter.is_empty());
     }
 
@@ -1951,7 +1986,7 @@ mod tests {
     fn value_search_esc_clears_filter() {
         let mut inspector = list_inspector();
         inspector.value_filter = "b".to_string();
-        inspector.handle_event(&ctrl_shift_f());
+        inspector.handle_event(&alt_slash());
         inspector.handle_event(&press(KeyCode::Esc));
         assert!(inspector.value_filter.is_empty());
     }
@@ -2068,7 +2103,7 @@ mod tests {
             let mut terminal = Terminal::new(backend).unwrap();
             let mut inspector = ValueInspector::new();
             inspector.set_value("k".to_string(), value);
-            inspector.handle_event(&ctrl_shift_f());
+            inspector.handle_event(&alt_slash());
             terminal.draw(|f| inspector.render(f, f.area())).unwrap();
         }
     }
@@ -2102,7 +2137,7 @@ mod tests {
     #[test]
     fn follow_key_toggles_and_requests_refresh() {
         let mut inspector = stream_inspector();
-        let action = inspector.handle_event(&press(KeyCode::Char('F')));
+        let action = inspector.handle_event(&shift_press(KeyCode::Char('F')));
         assert!(inspector.stream_follow);
         assert_eq!(action, Some(InspectorAction::StreamRefresh));
     }
@@ -2110,15 +2145,18 @@ mod tests {
     #[test]
     fn follow_key_off_does_not_request_refresh() {
         let mut inspector = stream_inspector();
-        inspector.handle_event(&press(KeyCode::Char('F')));
-        assert_eq!(inspector.handle_event(&press(KeyCode::Char('F'))), None);
+        inspector.handle_event(&shift_press(KeyCode::Char('F')));
+        assert_eq!(
+            inspector.handle_event(&shift_press(KeyCode::Char('F'))),
+            None
+        );
         assert!(!inspector.stream_follow);
     }
 
     #[test]
     fn follow_jumps_cursor_to_tail_when_enabled() {
         let mut inspector = stream_inspector();
-        inspector.handle_event(&press(KeyCode::Char('F')));
+        inspector.handle_event(&shift_press(KeyCode::Char('F')));
         assert_eq!(inspector.stream_cursor, 1);
     }
 
@@ -2290,7 +2328,7 @@ mod tests {
     #[test]
     fn list_insert_opens_position_prompt_on_cursor_item() {
         let mut inspector = list_inspector();
-        inspector.handle_event(&press(KeyCode::Char('I')));
+        inspector.handle_event(&shift_press(KeyCode::Char('I')));
         assert_eq!(
             inspector.prompt_mode,
             Some(PromptMode::ListInsertPosition("a".to_string()))
@@ -2300,7 +2338,7 @@ mod tests {
     #[test]
     fn list_insert_position_b_then_value_emits_before_action() {
         let mut inspector = list_inspector();
-        inspector.handle_event(&press(KeyCode::Char('I')));
+        inspector.handle_event(&shift_press(KeyCode::Char('I')));
         inspector.handle_event(&press(KeyCode::Char('b')));
         // Submit the position, then supply the value.
         inspector.handle_event(&press(KeyCode::Enter));
@@ -2331,7 +2369,7 @@ mod tests {
     #[test]
     fn list_insert_position_a_then_value_emits_after_action() {
         let mut inspector = list_inspector();
-        inspector.handle_event(&press(KeyCode::Char('I')));
+        inspector.handle_event(&shift_press(KeyCode::Char('I')));
         inspector.handle_event(&press(KeyCode::Char('a')));
         inspector.handle_event(&press(KeyCode::Enter));
         inspector.list_prompt.as_mut().unwrap().value = "y".to_string();
@@ -2347,7 +2385,7 @@ mod tests {
     #[test]
     fn list_insert_unrecognized_position_defaults_to_after() {
         let mut inspector = list_inspector();
-        inspector.handle_event(&press(KeyCode::Char('I')));
+        inspector.handle_event(&shift_press(KeyCode::Char('I')));
         inspector.handle_event(&press(KeyCode::Char('z')));
         inspector.handle_event(&press(KeyCode::Enter));
         inspector.list_prompt.as_mut().unwrap().value = "y".to_string();
@@ -2361,7 +2399,7 @@ mod tests {
     fn list_insert_targets_second_element_after_navigation() {
         let mut inspector = list_inspector();
         inspector.handle_event(&press(KeyCode::Char('j')));
-        inspector.handle_event(&press(KeyCode::Char('I')));
+        inspector.handle_event(&shift_press(KeyCode::Char('I')));
         assert_eq!(
             inspector.prompt_mode,
             Some(PromptMode::ListInsertPosition("b".to_string()))
@@ -2372,7 +2410,7 @@ mod tests {
     fn list_insert_on_empty_list_does_nothing() {
         let mut inspector = ValueInspector::new();
         inspector.set_value("l".to_string(), RedisValue::List(vec![]));
-        inspector.handle_event(&press(KeyCode::Char('I')));
+        inspector.handle_event(&shift_press(KeyCode::Char('I')));
         assert_eq!(inspector.prompt_mode, None);
     }
 
@@ -2470,7 +2508,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut inspector = list_inspector();
-        inspector.handle_event(&press(KeyCode::Char('I')));
+        inspector.handle_event(&shift_press(KeyCode::Char('I')));
         terminal.draw(|f| inspector.render(f, f.area())).unwrap();
     }
 
@@ -2488,6 +2526,14 @@ mod tests {
 
     fn press(code: KeyCode) -> Event {
         Event::Key(KeyEvent::from(code))
+    }
+
+    /// The event a terminal actually delivers for an uppercase letter:
+    /// crossterm decorates it with SHIFT (`char_code_to_event`). The old
+    /// tests pressed bare `Char('D')`-style events no terminal sends, which
+    /// stayed green while the bindings were dead on every real machine.
+    fn shift_press(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::new(code, KeyModifiers::SHIFT))
     }
 
     fn ctrl(c: char) -> Event {
@@ -2634,7 +2680,7 @@ mod tests {
         inspector.handle_event(&press(KeyCode::Char(' ')));
         inspector.handle_event(&press(KeyCode::Char('j')));
         inspector.handle_event(&press(KeyCode::Char(' ')));
-        match inspector.handle_event(&press(KeyCode::Char('D'))) {
+        match inspector.handle_event(&shift_press(KeyCode::Char('D'))) {
             Some(InspectorAction::HashDelMany { fields, .. }) => assert_eq!(fields.len(), 2),
             other => panic!("expected HashDelMany, got {other:?}"),
         }
@@ -2643,7 +2689,7 @@ mod tests {
     #[test]
     fn delete_without_selection_removes_single_field() {
         let mut inspector = hash_inspector();
-        match inspector.handle_event(&press(KeyCode::Char('D'))) {
+        match inspector.handle_event(&shift_press(KeyCode::Char('D'))) {
             Some(InspectorAction::HashDel { key, field }) => {
                 assert_eq!(key, "h");
                 assert_eq!(field, "user:name");

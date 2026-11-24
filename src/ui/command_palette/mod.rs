@@ -19,16 +19,20 @@ pub struct CommandPalette {
     pub items: Vec<String>,
     pub filtered: Vec<String>,
     pub cursor: usize,
+    /// How the palette was opened, per the loaded keymap — hardcoded
+    /// "(Ctrl+P)" was wrong for any preset that rebinds `palette`.
+    pub open_hint: String,
 }
 
 impl CommandPalette {
-    pub fn new(items: Vec<String>) -> Self {
+    pub fn new(items: Vec<String>, open_hint: String) -> Self {
         let filtered = items.clone();
         Self {
             query: String::new(),
             items,
             filtered,
             cursor: 0,
+            open_hint,
         }
     }
 
@@ -81,7 +85,7 @@ impl CommandPalette {
             .borders(Borders::ALL)
             .border_style(theme::border_style())
             .title_style(theme::title_style())
-            .title("Command Palette (Ctrl+P)");
+            .title(format!("Command Palette ({})", self.open_hint));
         let inner = block.inner(popup_area);
         frame.render_widget(block, popup_area);
 

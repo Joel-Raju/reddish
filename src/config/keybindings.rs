@@ -233,7 +233,10 @@ impl Keymap {
                 key: "ctrl+f".to_string(),
             },
             inspector_value_search: KeyDef {
-                key: "ctrl+shift+f".to_string(),
+                // `ctrl+shift+f` could never fire: legacy terminals encode
+                // Ctrl+Shift+F as plain 0x06, i.e. `Char('f')`+CONTROL with
+                // no SHIFT bit. Mirrors the emacs preset's working binding.
+                key: "alt+/".to_string(),
             },
             delete_selected: KeyDef {
                 key: "ctrl+d".to_string(),
@@ -352,7 +355,10 @@ impl Keymap {
                 key: "n".to_string(),
             },
             rename_key: KeyDef {
-                key: "ctrl+r".to_string(),
+                // `ctrl+r` was unreachable: the global reconnect arm in
+                // `App::handle_key_event` claims that chord before any tab
+                // handler runs.
+                key: "alt+r".to_string(),
             },
             set_ttl: KeyDef {
                 key: "ctrl+t".to_string(),
@@ -370,7 +376,10 @@ impl Keymap {
                 key: "ctrl+o".to_string(),
             },
             go_up: KeyDef {
-                key: "ctrl+b".to_string(),
+                // Was `ctrl+b`, which `nav_left` claims first in the
+                // browser's dispatch chain — the alias never fired. Aligns
+                // with the vim preset and the hardcoded Backspace fallback.
+                key: "Backspace".to_string(),
             },
             repl_overlay: KeyDef {
                 key: "alt+;".to_string(),
@@ -384,17 +393,24 @@ impl Keymap {
             confirm_no: KeyDef {
                 key: "n".to_string(),
             },
+            // The inspector bindings previously used `ctrl+shift+<letter>`
+            // chords that no legacy terminal can deliver — Ctrl+Shift+X is
+            // byte-identical to Ctrl+X, which the global bindings own. The
+            // emacs preset now mirrors the vim preset's contextual letters:
+            // the inspector is a modal context that swallows them before
+            // the browser sees them, and the emacs globals are all
+            // ctrl/alt chords, so nothing collides.
             inspector_list_push: KeyDef {
-                key: "ctrl+shift+a".to_string(),
+                key: "a".to_string(),
             },
             inspector_list_prepend: KeyDef {
-                key: "ctrl+shift+p".to_string(),
+                key: "p".to_string(),
             },
             inspector_list_insert: KeyDef {
-                key: "ctrl+shift+i".to_string(),
+                key: "I".to_string(),
             },
             inspector_hash_add: KeyDef {
-                key: "ctrl+shift+h".to_string(),
+                key: "a".to_string(),
             },
             inspector_hash_filter: KeyDef {
                 key: "alt+f".to_string(),
@@ -403,43 +419,48 @@ impl Keymap {
                 key: "alt+/".to_string(),
             },
             delete_selected: KeyDef {
-                key: "ctrl+shift+d".to_string(),
+                key: "ctrl+d".to_string(),
             },
             inspector_set_add: KeyDef {
-                key: "ctrl+shift+s".to_string(),
+                key: "a".to_string(),
             },
             inspector_zset_add: KeyDef {
-                key: "ctrl+shift+z".to_string(),
+                key: "a".to_string(),
             },
             inspector_zset_range_query: KeyDef {
-                key: "ctrl+shift+q".to_string(),
+                key: "Q".to_string(),
             },
             inspector_stream_add: KeyDef {
-                key: "ctrl+shift+x".to_string(),
+                key: "a".to_string(),
             },
             inspector_stream_groups: KeyDef {
-                key: "ctrl+shift+m".to_string(),
+                key: "G".to_string(),
             },
             inspector_stream_trim: KeyDef {
-                key: "ctrl+shift+t".to_string(),
+                key: "ctrl+t".to_string(),
             },
             inspector_stream_follow: KeyDef {
-                key: "ctrl+shift+v".to_string(),
+                key: "F".to_string(),
             },
             inspector_toggle_view: KeyDef {
-                key: "ctrl+shift+f".to_string(),
+                key: "f".to_string(),
             },
             inspector_goto_end: KeyDef {
-                key: "ctrl+shift+g".to_string(),
+                key: "g".to_string(),
             },
             set_union: KeyDef {
                 key: "ctrl+u".to_string(),
             },
             set_inter: KeyDef {
-                key: "ctrl+i".to_string(),
+                // `ctrl+i` decodes to `Tab` (byte 0x09): no terminal
+                // delivers it as a char event.
+                key: "alt+i".to_string(),
             },
             set_diff: KeyDef {
-                key: "ctrl+d".to_string(),
+                // `ctrl+d` was claimed by the whole-key `delete` binding
+                // earlier in the browser's dispatch chain, so the alias
+                // never fired.
+                key: "alt+x".to_string(),
             },
             search_execute: KeyDef {
                 key: "Enter".to_string(),
@@ -539,34 +560,259 @@ impl Keymap {
     }
 }
 
+/// Every action name the keymap can resolve. Public so validation and tests
+/// can walk the whole surface instead of a hand-picked subset.
+pub const ACTIONS: &[&str] = &[
+    "nav_up",
+    "nav_down",
+    "nav_left",
+    "nav_right",
+    "confirm",
+    "cancel",
+    "delete",
+    "refresh",
+    "filter",
+    "edit",
+    "quit",
+    "copy",
+    "help",
+    "palette",
+    "tab_keys",
+    "tab_repl",
+    "tab_info",
+    "tab_pubsub",
+    "new_key",
+    "rename_key",
+    "set_ttl",
+    "expire",
+    "select_all",
+    "toggle_select",
+    "cycle_sort",
+    "go_up",
+    "repl_overlay",
+    "duplicate_key",
+    "confirm_yes",
+    "confirm_no",
+    "inspector_list_push",
+    "inspector_list_prepend",
+    "inspector_list_insert",
+    "inspector_hash_add",
+    "inspector_hash_filter",
+    "inspector_value_search",
+    "delete_selected",
+    "inspector_set_add",
+    "inspector_zset_add",
+    "inspector_zset_range_query",
+    "inspector_stream_add",
+    "inspector_stream_groups",
+    "inspector_stream_trim",
+    "inspector_stream_follow",
+    "inspector_toggle_view",
+    "inspector_goto_end",
+    "set_union",
+    "set_inter",
+    "set_diff",
+    "search_execute",
+    "search_close",
+    "search_toggle_mode",
+    "search_history_prev",
+    "search_history_next",
+];
+
+/// Parse a key spelling into the exact `KeyEvent` a terminal must deliver
+/// for `matches()` to fire.
+///
+/// The result deliberately mirrors what crossterm 0.29 actually produces in
+/// legacy input mode (the app never pushes kitty keyboard-protocol flags),
+/// because a binding that can never be delivered is indistinguishable from
+/// a missing one: `Ctrl+\` shipped dead for months because it was matched
+/// as `Char('\\')`+CONTROL while every real terminal delivered
+/// `Char('4')`+CONTROL (byte `0x1C`).
+///
+/// Normalizations, each tied to the decode table in `is_deliverable_legacy`:
+/// - A bare uppercase letter implies SHIFT: crossterm decorates uppercase
+///   input with `KeyModifiers::SHIFT` (`char_code_to_event`, parse.rs
+///   128-135), and the old spelling `"D"` produced modifiers that no
+///   terminal ever sends — the whole vim uppercase family was dead.
+/// - `shift+x` is normalized to `X`+SHIFT for the same reason.
+/// - `ctrl+\`, `ctrl+]`, `ctrl+^`, `ctrl+_` translate to the digits those
+///   bytes decode to (`0x1C..=0x1F` → `Char('4'..='7')`+CONTROL).
+/// - `shift+Tab` parses to `BackTab`: legacy terminals send `ESC[Z`.
+/// - An unrecognized modifier (`meta+`, `super+`, a typo like `ctra+`)
+///   yields `KeyCode::Null` so the binding cannot fire, instead of the old
+///   behaviour of silently rebinding the bare key.
 fn parse_keydef(key: &str) -> (KeyCode, KeyModifiers) {
     let parts: Vec<&str> = key.split('+').collect();
     let mut modifiers = KeyModifiers::empty();
     let code_str = parts.last().unwrap();
     for part in &parts[..parts.len().saturating_sub(1)] {
-        match *part {
-            "ctrl" => modifiers |= KeyModifiers::CONTROL,
+        match part.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => modifiers |= KeyModifiers::CONTROL,
             "alt" => modifiers |= KeyModifiers::ALT,
             "shift" => modifiers |= KeyModifiers::SHIFT,
-            _ => {}
+            // Never degrade to the bare key: "meta+x" must not rebind `x`.
+            _ => return (KeyCode::Null, KeyModifiers::empty()),
         }
     }
-    let code = match *code_str {
-        "Enter" => KeyCode::Enter,
-        "Esc" => KeyCode::Esc,
-        "Space" => KeyCode::Char(' '),
-        "Up" => KeyCode::Up,
-        "Down" => KeyCode::Down,
-        "Left" => KeyCode::Left,
-        "Right" => KeyCode::Right,
-        "Home" => KeyCode::Home,
-        "End" => KeyCode::End,
-        "Backspace" => KeyCode::Backspace,
-        "Tab" => KeyCode::Tab,
-        s if s.len() == 1 => KeyCode::Char(s.chars().next().unwrap()),
-        _ => KeyCode::Null,
+    let code = if code_str.len() == 1 {
+        let mut c = code_str.chars().next().unwrap();
+        // The case of the spelling decides the SHIFT bit, exactly as the
+        // terminal delivers it. Applies under `alt` too: ESC + 'D' arrives
+        // as ALT|SHIFT.
+        if c.is_uppercase() {
+            modifiers |= KeyModifiers::SHIFT;
+        }
+        // An explicit `shift+d` must expect what the wire carries: the
+        // uppercase byte 'D' (crossterm decorates it with SHIFT). Without
+        // this normalization the binding could never fire.
+        if c.is_ascii_lowercase() && modifiers.contains(KeyModifiers::SHIFT) {
+            c = c.to_ascii_uppercase();
+        }
+        KeyCode::Char(c)
+    } else {
+        match code_str.to_ascii_lowercase().as_str() {
+            "enter" => KeyCode::Enter,
+            "esc" => KeyCode::Esc,
+            "space" => KeyCode::Char(' '),
+            "up" => KeyCode::Up,
+            "down" => KeyCode::Down,
+            "left" => KeyCode::Left,
+            "right" => KeyCode::Right,
+            "home" => KeyCode::Home,
+            "end" => KeyCode::End,
+            "backspace" => KeyCode::Backspace,
+            "tab" => KeyCode::Tab,
+            "backtab" => KeyCode::BackTab,
+            "delete" => KeyCode::Delete,
+            "insert" => KeyCode::Insert,
+            "pageup" => KeyCode::PageUp,
+            "pagedown" => KeyCode::PageDown,
+            other => match other.strip_prefix('f') {
+                Some(num) => match num.parse::<u8>() {
+                    Ok(n) if (1..=12).contains(&n) => KeyCode::F(n),
+                    _ => KeyCode::Null,
+                },
+                None => KeyCode::Null,
+            },
+        }
+    };
+    // Byte-level aliases: what the terminal actually transmits.
+    let (code, modifiers) = match (code, modifiers) {
+        (KeyCode::Char('\\'), m) if m.contains(KeyModifiers::CONTROL) => (KeyCode::Char('4'), m),
+        (KeyCode::Char(']'), m) if m.contains(KeyModifiers::CONTROL) => (KeyCode::Char('5'), m),
+        (KeyCode::Char('^'), m) if m.contains(KeyModifiers::CONTROL) => (KeyCode::Char('6'), m),
+        (KeyCode::Char('_'), m) if m.contains(KeyModifiers::CONTROL) => (KeyCode::Char('7'), m),
+        // Shift+Tab arrives as ESC[Z, never as Tab with SHIFT set.
+        (KeyCode::Tab, m) if m.contains(KeyModifiers::SHIFT) => {
+            (KeyCode::BackTab, m & !KeyModifiers::SHIFT)
+        }
+        other => other,
     };
     (code, modifiers)
+}
+
+/// Whether a terminal can deliver this exact `KeyEvent` in legacy input
+/// mode. Mirrors crossterm 0.29's unix decode table
+/// (`event::sys::unix::parse::parse_event`), which is the reality for this
+/// app: `init_terminal` never pushes kitty keyboard-enhancement flags.
+///
+/// - `0x00` → `Char(' ')`+CONTROL (parse.rs 114-117)
+/// - `0x01..=0x1A` → `Char('a'..='z')`+CONTROL (parse.rs 106-109), except
+///   the bytes with dedicated arms: `0x09` → `Tab` (parse.rs 102),
+///   `0x0D` → `Enter` (parse.rs 92) — so `ctrl+i` and `ctrl+m` never arrive
+/// - `0x1C..=0x1F` → `Char('4'..='7')`+CONTROL (parse.rs 110-113)
+/// - `0x7F` → `Backspace` (parse.rs 103-105)
+/// - uppercase chars arrive SHIFT-decorated (`char_code_to_event`,
+///   parse.rs 128-135); ESC-prefixed input ORs in ALT (parse.rs 78-88)
+/// - Shift+Tab arrives as `BackTab` via `ESC[Z` (parse.rs 163-167)
+/// - CSI sequences carry SHIFT/ALT/CONTROL modifiers on arrows, Home/End,
+///   Delete/Insert/PageUp/PageDown and F-keys (`CSI 1;5C` etc.)
+pub fn is_deliverable_legacy(code: KeyCode, mods: KeyModifiers) -> bool {
+    let ctrl = mods.contains(KeyModifiers::CONTROL);
+    let alt = mods.contains(KeyModifiers::ALT);
+    let shift = mods.contains(KeyModifiers::SHIFT);
+    match code {
+        KeyCode::Null => false,
+        // Raw bytes with fixed decodes; no modifier reaches them.
+        KeyCode::Enter | KeyCode::Esc | KeyCode::Tab | KeyCode::Backspace => {
+            !ctrl && !alt && !shift
+        }
+        // ESC[Z: the shift is implied by the sequence itself.
+        KeyCode::BackTab => !ctrl && !alt,
+        KeyCode::Char(c) => match (ctrl, alt, shift) {
+            (true, false, false) => {
+                c == ' '
+                    || ('4'..='7').contains(&c)
+                    // 0x09 (ctrl+i) and 0x0D (ctrl+m) decode as Tab/Enter.
+                    || (c.is_ascii_lowercase() && c != 'i' && c != 'm')
+            }
+            (true, true, false) => c.is_ascii_lowercase() && c != 'i' && c != 'm',
+            // ESC + printable char: uppercase additionally carries SHIFT.
+            (false, true, false) => !c.is_uppercase() && !c.is_control(),
+            (false, true, true) => c.is_uppercase(),
+            (false, false, true) => c.is_uppercase(),
+            (false, false, false) => !c.is_uppercase() && !c.is_control(),
+            // CONTROL|SHIFT on a letter is byte-identical to CONTROL alone:
+            // no legacy terminal can express it.
+            _ => false,
+        },
+        // CSI-delivered keys carry their modifiers in the sequence.
+        KeyCode::Up
+        | KeyCode::Down
+        | KeyCode::Left
+        | KeyCode::Right
+        | KeyCode::Home
+        | KeyCode::End
+        | KeyCode::Delete
+        | KeyCode::Insert
+        | KeyCode::PageUp
+        | KeyCode::PageDown
+        | KeyCode::F(_) => {
+            mods <= (KeyModifiers::SHIFT | KeyModifiers::ALT | KeyModifiers::CONTROL)
+        }
+        KeyCode::Media(_)
+        | KeyCode::Modifier(_)
+        | KeyCode::CapsLock
+        | KeyCode::ScrollLock
+        | KeyCode::NumLock
+        | KeyCode::PrintScreen
+        | KeyCode::Pause
+        | KeyCode::Menu
+        | KeyCode::KeypadBegin => false,
+    }
+}
+
+/// A human-readable reason a config binding can never fire as spelled, if
+/// any. Printed at startup so a bad `[keybindings]` entry announces itself
+/// instead of silently doing nothing.
+pub fn keydef_problem(key: &str) -> Option<String> {
+    let (code, mods) = parse_keydef(key);
+    if code == KeyCode::Null {
+        return Some(format!(
+            "'{key}' does not parse to a key (unknown name or modifier)"
+        ));
+    }
+    if !is_deliverable_legacy(code, mods) {
+        return Some(format!(
+            "'{key}' parses to {code:?}+{mods:?}, which no terminal \
+             delivers in legacy input mode"
+        ));
+    }
+    None
+}
+
+impl Keymap {
+    /// Startup warnings for every binding that cannot fire. Empty means the
+    /// whole keymap is deliverable.
+    pub fn validation_warnings(&self) -> Vec<String> {
+        ACTIONS
+            .iter()
+            .filter_map(|action| {
+                let key = self.binding(action)?;
+                keydef_problem(key).map(|problem| format!("{action}: {problem}"))
+            })
+            .collect()
+    }
 }
 
 fn default_nav_up() -> KeyDef {
@@ -746,7 +992,7 @@ fn default_inspector_hash_filter() -> KeyDef {
 }
 fn default_inspector_value_search() -> KeyDef {
     KeyDef {
-        key: "ctrl+shift+f".to_string(),
+        key: "alt+/".to_string(),
     }
 }
 fn default_search_history_prev() -> KeyDef {
@@ -845,63 +1091,10 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    /// Every action name `matches()` knows about.
-    const ALL_ACTIONS: &[&str] = &[
-        "nav_up",
-        "nav_down",
-        "nav_left",
-        "nav_right",
-        "confirm",
-        "cancel",
-        "delete",
-        "refresh",
-        "filter",
-        "edit",
-        "quit",
-        "copy",
-        "help",
-        "palette",
-        "tab_keys",
-        "tab_repl",
-        "tab_info",
-        "tab_pubsub",
-        "new_key",
-        "rename_key",
-        "set_ttl",
-        "expire",
-        "select_all",
-        "toggle_select",
-        "cycle_sort",
-        "go_up",
-        "repl_overlay",
-        "duplicate_key",
-        "confirm_yes",
-        "confirm_no",
-        "inspector_list_push",
-        "inspector_list_prepend",
-        "inspector_list_insert",
-        "inspector_hash_add",
-        "inspector_hash_filter",
-        "inspector_value_search",
-        "delete_selected",
-        "inspector_set_add",
-        "inspector_zset_add",
-        "inspector_zset_range_query",
-        "inspector_stream_add",
-        "inspector_stream_groups",
-        "inspector_stream_trim",
-        "inspector_stream_follow",
-        "inspector_toggle_view",
-        "inspector_goto_end",
-        "set_union",
-        "set_inter",
-        "set_diff",
-        "search_execute",
-        "search_close",
-        "search_toggle_mode",
-        "search_history_prev",
-        "search_history_next",
-    ];
+    /// Every action name `matches()` knows about. The single source of truth
+    /// is the module-level `ACTIONS`; a private copy could drift and hide
+    /// an untested action.
+    const ALL_ACTIONS: &[&str] = ACTIONS;
 
     /// Pairs that legitimately share a key because they are dispatched in
     /// different modes or value types. Any overlap NOT listed here is a bug.
@@ -930,14 +1123,17 @@ mod tests {
         ("delete_selected", "set_inter"),
         ("select_all", "delete_selected"),
         // Esc cancels in every mode; 'y'/'n' answer a confirm dialog but
-        // copy/open elsewhere. Emacs aliases go_up to ctrl+b.
+        // copy/open elsewhere.
         ("cancel", "search_close"),
         ("confirm_yes", "copy"),
-        ("go_up", "nav_left"),
         ("confirm", "search_execute"),
         ("confirm_no", "new_key"),
-        // Emacs set_diff is ctrl+d, aliasing the generic delete binding.
-        ("delete", "set_diff"),
+        // Emacs: whole-key delete is ctrl+d in the browser while
+        // delete-selected is ctrl+d in the inspector's modal context.
+        ("delete", "delete_selected"),
+        // Emacs: set_ttl is ctrl+t in the browser while stream trim is
+        // ctrl+t in the inspector's modal context.
+        ("inspector_stream_trim", "set_ttl"),
     ];
 
     fn action_key<'a>(km: &'a Keymap, action: &str) -> &'a str {
@@ -1047,6 +1243,164 @@ mod tests {
                     "{name}: {action} has an unparseable key string"
                 );
             }
+        }
+    }
+
+    /// The guard the shipped bugs evaded: every preset binding must be an
+    /// event a terminal can actually deliver. `ctrl+shift+f`, `ctrl+i`,
+    /// `ctrl+m`, `ctrl+\" and the un-shifted uppercase spellings all parse
+    /// fine — and none of them ever arrive. Parsing is not enough; the
+    /// decoded event has to be reachable on the wire.
+    #[test]
+    fn every_binding_in_every_preset_is_deliverable() {
+        for (name, km) in [("vim", Keymap::vim()), ("emacs", Keymap::emacs())] {
+            for &action in ALL_ACTIONS {
+                let (code, mods) = parse_keydef(action_key(&km, action));
+                assert!(
+                    is_deliverable_legacy(code, mods),
+                    "{name}: {action} is bound to {code:?}+{mods:?}, which no \
+                     terminal delivers in legacy input mode"
+                );
+            }
+        }
+    }
+
+    /// `validation_warnings` must be empty for both shipped presets: it is
+    /// printed at startup, and a preset that warns about itself on every
+    /// launch would train users to ignore the warnings.
+    #[test]
+    fn shipped_presets_produce_no_validation_warnings() {
+        assert!(Keymap::vim().validation_warnings().is_empty());
+        assert!(Keymap::emacs().validation_warnings().is_empty());
+    }
+
+    /// The spelling→event normalization, pinned case by case. Each row
+    /// documents why: terminals, not this repo, define the right-hand side
+    /// (crossterm 0.29 unix parse.rs).
+    #[test]
+    fn parse_keydef_mirrors_what_terminals_deliver() {
+        use crossterm::event::{KeyCode, KeyModifiers as M};
+
+        // Uppercase letters arrive SHIFT-decorated; the old parser dropped
+        // the bit, which is what killed the vim `D`/`R`/`Q`/`G`/`F`/`I`
+        // bindings for months.
+        assert_eq!(
+            parse_keydef("D"),
+            (KeyCode::Char('D'), M::SHIFT),
+            "crossterm char_code_to_event: uppercase implies SHIFT"
+        );
+        assert_eq!(parse_keydef("shift+d"), (KeyCode::Char('D'), M::SHIFT));
+        assert_eq!(parse_keydef("shift+D"), (KeyCode::Char('D'), M::SHIFT));
+        // The backslash family arrives as digits (0x1C..=0x1F).
+        assert_eq!(parse_keydef("ctrl+\\"), (KeyCode::Char('4'), M::CONTROL));
+        assert_eq!(parse_keydef("ctrl+4"), (KeyCode::Char('4'), M::CONTROL));
+        assert_eq!(parse_keydef("ctrl+]"), (KeyCode::Char('5'), M::CONTROL));
+        assert_eq!(parse_keydef("ctrl+^"), (KeyCode::Char('6'), M::CONTROL));
+        assert_eq!(parse_keydef("ctrl+_"), (KeyCode::Char('7'), M::CONTROL));
+        // 0x00 decodes as Char(' ')+CONTROL; both spellings must work.
+        assert_eq!(parse_keydef("ctrl+Space"), (KeyCode::Char(' '), M::CONTROL));
+        assert_eq!(parse_keydef("ctrl+space"), (KeyCode::Char(' '), M::CONTROL));
+        // Shift+Tab arrives as BackTab via ESC[Z, never Tab+SHIFT.
+        assert_eq!(parse_keydef("shift+Tab"), (KeyCode::BackTab, M::empty()));
+        // Named keys are case-insensitive; single letters are not, because
+        // case carries the SHIFT bit.
+        assert_eq!(parse_keydef("enter"), (KeyCode::Enter, M::empty()));
+        assert_eq!(parse_keydef("ENTER"), (KeyCode::Enter, M::empty()));
+        assert_eq!(parse_keydef("backtab"), (KeyCode::BackTab, M::empty()));
+        assert_eq!(parse_keydef("pageup"), (KeyCode::PageUp, M::empty()));
+        assert_eq!(parse_keydef("f5"), (KeyCode::F(5), M::empty()));
+        assert_ne!(parse_keydef("d"), parse_keydef("D"));
+        // Alt + uppercase carries ALT|SHIFT (ESC + 'D').
+        assert_eq!(
+            parse_keydef("alt+D"),
+            (KeyCode::Char('D'), M::ALT | M::SHIFT)
+        );
+    }
+
+    /// A config typo must never silently rebind the bare key, and an
+    /// undeliverable combo must be reported rather than look configured.
+    #[test]
+    fn undeliverable_and_unknown_spellings_are_flagged() {
+        // Unknown modifier: must parse to Null (cannot fire) AND report.
+        assert_eq!(
+            parse_keydef("meta+x"),
+            (KeyCode::Null, KeyModifiers::empty())
+        );
+        assert_eq!(
+            parse_keydef("ctra+x"),
+            (KeyCode::Null, KeyModifiers::empty())
+        );
+        assert!(keydef_problem("meta+x").is_some());
+        assert!(keydef_problem("no-such-key").is_some());
+        // Parses fine, but no terminal sends CONTROL|SHIFT on a letter,
+        // ctrl+i, or ctrl+m: the exact class that shipped dead.
+        assert!(keydef_problem("ctrl+shift+x").is_some());
+        assert!(keydef_problem("ctrl+i").is_some());
+        assert!(keydef_problem("ctrl+m").is_some());
+        assert!(
+            keydef_problem("ctrl+j").is_none(),
+            "ctrl+j is 0x0A and is delivered"
+        );
+        // Healthy spellings report nothing.
+        assert!(keydef_problem("D").is_none());
+        assert!(keydef_problem("ctrl+\\").is_none());
+        assert!(keydef_problem("alt+Up").is_none());
+        assert!(keydef_problem("Backspace").is_none());
+    }
+
+    /// The deliverability table itself, pinned to the crossterm 0.29
+    /// decode facts with the byte that produces each event.
+    #[test]
+    fn the_legacy_deliverability_table_is_correct() {
+        use crossterm::event::{KeyCode, KeyModifiers as M};
+
+        let yes = [
+            (KeyCode::Char('a'), M::CONTROL),          // 0x01
+            (KeyCode::Char('z'), M::CONTROL),          // 0x1A
+            (KeyCode::Char('j'), M::CONTROL),          // 0x0A
+            (KeyCode::Char(' '), M::CONTROL),          // 0x00
+            (KeyCode::Char('4'), M::CONTROL),          // 0x1C
+            (KeyCode::Char('7'), M::CONTROL),          // 0x1F
+            (KeyCode::Char('D'), M::SHIFT),            // 'D'
+            (KeyCode::Char('d'), M::empty()),          // 'd'
+            (KeyCode::Char('/'), M::empty()),          // '/'
+            (KeyCode::Char('1'), M::ALT),              // ESC '1'
+            (KeyCode::Char('/'), M::ALT),              // ESC '/'
+            (KeyCode::Char('D'), M::ALT | M::SHIFT),   // ESC 'D'
+            (KeyCode::Char('r'), M::CONTROL | M::ALT), // ESC 0x12
+            (KeyCode::Enter, M::empty()),              // 0x0D
+            (KeyCode::Esc, M::empty()),                // 0x1B
+            (KeyCode::Tab, M::empty()),                // 0x09
+            (KeyCode::Backspace, M::empty()),          // 0x7F
+            (KeyCode::BackTab, M::empty()),            // ESC [ Z
+            (KeyCode::Up, M::CONTROL),                 // CSI 1;5A
+            (KeyCode::Down, M::ALT),                   // CSI 1;3B
+            (KeyCode::PageDown, M::empty()),           // CSI 6~
+            (KeyCode::F(3), M::empty()),               // CSI/SS3
+        ];
+        for (code, mods) in yes {
+            assert!(
+                is_deliverable_legacy(code, mods),
+                "{code:?}+{mods:?} should be deliverable"
+            );
+        }
+
+        let no = [
+            (KeyCode::Char('i'), M::CONTROL), // 0x09 is Tab, not ctrl+i
+            (KeyCode::Char('m'), M::CONTROL), // 0x0D is Enter, not ctrl+m
+            (KeyCode::Char('f'), M::CONTROL | M::SHIFT), // byte-identical to ctrl+f
+            (KeyCode::Char('\\'), M::CONTROL), // 0x1C arrives as Char('4')
+            (KeyCode::Char('x'), M::SHIFT),   // lowercase never carries SHIFT
+            (KeyCode::Char('D'), M::empty()), // uppercase always carries SHIFT
+            (KeyCode::Tab, M::SHIFT),         // Shift+Tab arrives as BackTab
+            (KeyCode::Enter, M::CONTROL),     // 0x0D has no modifier form
+            (KeyCode::Null, M::empty()),      // unparseable
+        ];
+        for (code, mods) in no {
+            assert!(
+                !is_deliverable_legacy(code, mods),
+                "{code:?}+{mods:?} should NOT be deliverable"
+            );
         }
     }
 

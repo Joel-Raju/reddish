@@ -335,7 +335,11 @@ fn test_list_editor_d_remove() {
     );
 
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
-    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+    // The real event for the vim element-delete binding: uppercase ⇒ SHIFT.
+    let action = inspector.handle_event(&Event::Key(KeyEvent::new(
+        KeyCode::Char('D'),
+        crossterm::event::KeyModifiers::SHIFT,
+    )));
 
     match action {
         Some(InspectorAction::ListRemove { key, value }) => {
@@ -459,7 +463,11 @@ fn test_set_editor_d_remove() {
     inspector.set_value("myset".to_string(), RedisValue::Set(members));
 
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
-    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+    // The real event for the vim element-delete binding: uppercase ⇒ SHIFT.
+    let action = inspector.handle_event(&Event::Key(KeyEvent::new(
+        KeyCode::Char('D'),
+        crossterm::event::KeyModifiers::SHIFT,
+    )));
 
     match action {
         Some(InspectorAction::SetRem { key, member }) => {
@@ -616,7 +624,11 @@ fn test_zset_editor_d_remove() {
     );
 
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
-    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+    // The real event for the vim element-delete binding: uppercase ⇒ SHIFT.
+    let action = inspector.handle_event(&Event::Key(KeyEvent::new(
+        KeyCode::Char('D'),
+        crossterm::event::KeyModifiers::SHIFT,
+    )));
 
     match action {
         Some(InspectorAction::ZRem { key, member }) => {
@@ -756,7 +768,11 @@ fn test_stream_editor_d_remove() {
     );
 
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
-    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+    // The real event for the vim element-delete binding: uppercase ⇒ SHIFT.
+    let action = inspector.handle_event(&Event::Key(KeyEvent::new(
+        KeyCode::Char('D'),
+        crossterm::event::KeyModifiers::SHIFT,
+    )));
 
     match action {
         Some(InspectorAction::StreamRem { key, entry_id }) => {
@@ -938,7 +954,11 @@ fn test_hash_editor_d_delete() {
     inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('j'))));
 
     // D to delete
-    let action = inspector.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('D'))));
+    // The real event for the vim element-delete binding: uppercase ⇒ SHIFT.
+    let action = inspector.handle_event(&Event::Key(KeyEvent::new(
+        KeyCode::Char('D'),
+        crossterm::event::KeyModifiers::SHIFT,
+    )));
 
     match action {
         Some(InspectorAction::HashDel { key, field }) => {

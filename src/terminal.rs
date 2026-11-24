@@ -12,10 +12,17 @@ use ratatui::{
 };
 
 /// Initialize the terminal: enable raw mode and enter alternate screen.
-pub fn init_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
+///
+/// `mouse_enabled` honours the `mouse_enabled` config key, which was parsed
+/// but never read before — the app captured the mouse unconditionally.
+pub fn init_terminal(mouse_enabled: bool) -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    if mouse_enabled {
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    } else {
+        execute!(stdout, EnterAlternateScreen)?;
+    }
     let backend = CrosstermBackend::new(stdout);
     Terminal::new(backend)
 }

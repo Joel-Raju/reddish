@@ -24,6 +24,15 @@ fn main() -> Result<()> {
 
     logging::init_logging(&config)?;
 
+    // A keybinding that no terminal can deliver is indistinguishable from a
+    // missing one, and one bad `[keybindings]` entry used to fail silently.
+    // Say it before the TUI takes over the screen. (All of this fires only
+    // for user-written TOML: both shipped presets validate clean, which the
+    // keybindings tests enforce.)
+    for warning in config.keybindings.validation_warnings() {
+        eprintln!("warning: keybinding {warning}");
+    }
+
     // Install the theme before anything renders. An unknown name is an error
     // rather than a silent fallback: the user asked for something specific, and
     // quietly showing a different theme is worse than refusing to start.
@@ -42,7 +51,7 @@ fn main() -> Result<()> {
         std::process::exit(i32::from(!bench::run_profile_memory(config)));
     }
 
-    let mut term = terminal::init_terminal()?;
+    let mut term = terminal::init_terminal(config.mouse_enabled())?;
 
     let panic_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {

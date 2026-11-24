@@ -331,10 +331,32 @@ pub struct App {
     pub pending_external_edit: Option<ExternalEdit>,
 }
 
+/// The command palette's advertised commands. Single source of truth: the
+/// app builds the palette from this list, and a test executes every item
+/// through the app to prove none of them is advertised-but-unwired.
+pub(crate) const PALETTE_ITEMS: &[&str] = &[
+    "Connect…",
+    "Quit",
+    "Switch:Keys",
+    "Switch:REPL",
+    "Switch:Info",
+    "Switch:PubSub",
+];
+
 impl App {
     pub fn new(config: Config) -> Self {
         let sep = config.namespace_separator().chars().next().unwrap_or(':');
         let max_keys = config.max_keys_in_memory();
+        // The keymap comes from the config's `[keybindings]` table (default:
+        // the vim preset) rather than a hardcoded `Keymap::default()`, which
+        // silently ignored every user override.
+        let keymap = config.keybindings.clone();
+        // Wired at construction rather than in `run()`, where no test could
+        // reach it: a unit test previously performed this assignment itself
+        // and asserted its own wiring — it stayed green when the real line
+        // was deleted.
+        let mut value_inspector = ValueInspector::new();
+        value_inspector.max_value_display_bytes = config.max_value_display_bytes();
         Self {
             should_quit: false,
             config,
@@ -342,7 +364,7 @@ impl App {
             mode_stack: vec![AppMode::Normal],
             key_browser: KeyBrowser::new(sep, max_keys),
             status_bar: StatusBar::default(),
-            value_inspector: ValueInspector::new(),
+            value_inspector,
             info_dashboard: InfoDashboard::new(),
             pubsub_widget: PubSubWidget::new(),
             search: GlobalSearch::new(),
@@ -353,7 +375,7 @@ impl App {
             allow_monitor: false,
             error_message: None,
             client: None,
-            keymap: Keymap::default(),
+            keymap,
             startup_profile: None,
             last_profile: None,
             scan_rx: None,
@@ -387,36 +409,36 @@ impl App {
             PubSubAction::Subscribe(channel) => {
                 match self.start_pubsub_subscription(PubSubKind::Channel(channel.clone())) {
                     Ok(()) => {
-                        self.error_message = Some(format!("Subscribed to channel '{channel}'"));
+                        self.set_error(format!("Subscribed to channel '{channel}'"));
                     }
                     Err(err) => {
-                        self.error_message = Some(format!("Subscribe failed: {err}"));
+                        self.set_error(format!("Subscribe failed: {err}"));
                     }
                 }
             }
             PubSubAction::PSubscribe(pattern) => {
                 match self.start_pubsub_subscription(PubSubKind::Pattern(pattern.clone())) {
                     Ok(()) => {
-                        self.error_message = Some(format!("Subscribed to pattern '{pattern}'"));
+                        self.set_error(format!("Subscribed to pattern '{pattern}'"));
                     }
                     Err(err) => {
-                        self.error_message = Some(format!("PSubscribe failed: {err}"));
+                        self.set_error(format!("PSubscribe failed: {err}"));
                     }
                 }
             }
             PubSubAction::Unsubscribe(channel) => {
                 self.pubsub_rx = None;
-                self.error_message = Some(format!("Unsubscribed from '{channel}'"));
+                self.set_error(format!("Unsubscribed from '{channel}'"));
             }
             PubSubAction::PUnsubscribe(pattern) => {
                 self.pubsub_rx = None;
-                self.error_message = Some(format!("Unsubscribed from pattern '{pattern}'"));
+                self.set_error(format!("Unsubscribed from pattern '{pattern}'"));
             }
             PubSubAction::Publish { channel, message } => {
                 if self.readonly {
                     let msg = "Read-only mode: publish blocked".to_string();
                     self.status_bar.push_error(msg.clone());
-                    self.error_message = Some(msg);
+                    self.set_error(msg);
                     return;
                 }
                 if let Some(client) = &self.client {
@@ -433,13 +455,13 @@ impl App {
                         Err(err) => {
                             let msg = format!("Publish failed: {err}");
                             self.status_bar.push_error(msg.clone());
-                            self.error_message = Some(msg);
+                            self.set_error(msg);
                         }
                     }
                 } else {
                     let msg = "Not connected".to_string();
                     self.status_bar.push_error(msg.clone());
-                    self.error_message = Some(msg);
+                    self.set_error(msg);
                 }
             }
         }
@@ -454,24 +476,36 @@ impl App {
             self.repl
                 .add_result(&input, err.clone(), ReplLineStatus::Error(err.clone()));
             self.status_bar.push_error(err.clone());
-            self.error_message = Some(err);
+            self.set_error(err);
             return;
         }
 
         let mut last_output: Option<String> = None;
+        let mut errors: Vec<String> = Vec::new();
         for stage in stages {
             match self.execute_repl_stage(&stage, last_output.clone()).await {
                 Ok(output) => {
                     last_output = Some(output);
                 }
                 Err(err) => {
-                    self.repl
-                        .add_result(&input, err.clone(), ReplLineStatus::Error(err.clone()));
-                    self.status_bar.push_error(err.clone());
-                    self.error_message = Some(err);
-                    return;
+                    // A failing stage records its own error and the
+                    // remaining stages still run, as the CHANGELOG
+                    // promises. The pipe is broken — there is no output
+                    // to forward — but execution is not.
+                    errors.push(err);
+                    last_output = None;
                 }
             }
+        }
+
+        if !errors.is_empty() {
+            let all = errors.join("\n");
+            let status = errors[0].clone();
+            self.repl
+                .add_result(&input, all.clone(), ReplLineStatus::Error(status.clone()));
+            self.status_bar.push_error(all.clone());
+            self.set_error(all);
+            return;
         }
 
         let output = last_output.unwrap_or_default();
@@ -514,7 +548,6 @@ impl App {
         // A configured editor takes over string editing; otherwise the built-in
         // editor is always used.
         self.value_inspector.prefer_external_editor = resolved_editor(&self.config).is_some();
-        self.value_inspector.max_value_display_bytes = self.config.max_value_display_bytes();
 
         if let Some(profile) = self.startup_profile.take() {
             self.connect_profile(profile).await;
@@ -555,7 +588,7 @@ impl App {
         let original = edit.value.clone();
 
         if suspend_tui(terminal).is_err() {
-            self.error_message = Some("Could not suspend the terminal".to_string());
+            self.set_error("Could not suspend the terminal".to_string());
             return;
         }
         // `block_in_place` keeps the tokio runtime alive while this thread is
@@ -573,8 +606,7 @@ impl App {
         match outcome {
             Ok(Some(new_value)) if new_value != original => {
                 if self.readonly {
-                    self.error_message =
-                        Some("Read-only mode: edit blocked (press Esc)".to_string());
+                    self.set_error("Read-only mode: edit blocked (press Esc)".to_string());
                 } else {
                     self.handle_inspector_action(InspectorAction::WriteString {
                         key: edit.key.clone(),
@@ -587,7 +619,7 @@ impl App {
             // alone without reporting an error.
             Ok(_) => {}
             Err(err) => {
-                self.error_message = Some(format!("External editor failed: {err}"));
+                self.set_error(format!("External editor failed: {err}"));
             }
         }
     }
@@ -603,6 +635,14 @@ impl App {
 
     fn handle_mouse_event(&mut self, mouse: crossterm::event::MouseEvent) {
         use crossterm::event::{MouseButton, MouseEventKind};
+
+        // Overlays own the whole screen: while one is open, mouse events
+        // must not reach the panes behind it. Tab clicks and the scroll
+        // wheel previously kept driving the key browser behind the search,
+        // help and connection-screen overlays.
+        if self.mode() != &AppMode::Normal {
+            return;
+        }
 
         match mouse.kind {
             MouseEventKind::ScrollDown => {
@@ -668,10 +708,10 @@ impl App {
         match &self.client {
             Some(client) => {
                 if let Err(err) = client.delete(&name).await {
-                    self.error_message = Some(format!("Failed to delete key '{name}': {err}"));
+                    self.set_error(format!("Failed to delete key '{name}': {err}"));
                 }
             }
-            None => self.error_message = Some("Not connected".to_string()),
+            None => self.set_error("Not connected".to_string()),
         }
     }
 
@@ -782,8 +822,15 @@ impl App {
             return;
         }
 
-        if self.mode() == &AppMode::Help && key.code == KeyCode::Esc {
-            self.mode_stack.pop();
+        // The help overlay is modal like every other overlay: it swallows
+        // every key. It previously consumed only Esc, so anything else fell
+        // through to the app underneath — `q` quit the app from behind the
+        // overlay and `?` stacked a second help screen that needed two
+        // Escapes to dismiss.
+        if self.mode() == &AppMode::Help {
+            if key.code == KeyCode::Esc {
+                self.mode_stack.pop();
+            }
             return;
         }
 
@@ -826,12 +873,29 @@ impl App {
                         // would never guess.
                         "Connect…" => self.open_connection_screen(),
                         other => {
-                            self.error_message = Some(format!("Palette item not wired: {other}"));
+                            self.set_error(format!("Palette item not wired: {other}"));
                         }
                     },
                     PaletteAction::Close => {}
                 }
                 self.command_palette = None;
+            }
+            return;
+        }
+
+        // The built-in string editor is modal: while it is open, every key
+        // belongs to it. The global bindings below run before tab
+        // dispatch, so without this check the editor's advertised Ctrl+S
+        // save opened the global search overlay and Ctrl+X opened the
+        // command palette — the editor's own hints were false in the emacs
+        // preset, and any user rebinding of `filter`/`palette` would have
+        // broken them in vim too.
+        if self.value_inspector.edit_mode {
+            let action = self
+                .value_inspector
+                .handle_event_with_keymap(&Event::Key(key), &self.keymap);
+            if let Some(action) = action {
+                self.handle_inspector_action(action).await;
             }
             return;
         }
@@ -857,14 +921,15 @@ impl App {
         }
 
         if self.keymap.matches("palette", &key) {
-            self.command_palette = Some(CommandPalette::new(vec![
-                "Connect…".to_string(),
-                "Quit".to_string(),
-                "Switch:Keys".to_string(),
-                "Switch:REPL".to_string(),
-                "Switch:Info".to_string(),
-                "Switch:PubSub".to_string(),
-            ]));
+            let open_hint = self
+                .keymap
+                .binding("palette")
+                .map(Self::display_key)
+                .unwrap_or_else(|| "Ctrl+P".to_string());
+            self.command_palette = Some(CommandPalette::new(
+                PALETTE_ITEMS.iter().map(|s| s.to_string()).collect(),
+                open_hint,
+            ));
             return;
         }
 
@@ -968,10 +1033,10 @@ impl App {
                     Some(InfoAction::ExportCsv) => {
                         match self.info_dashboard.slowlog_panel.export_csv() {
                             Ok(path) => {
-                                self.error_message = Some(format!("Exported slowlog to {path}"));
+                                self.set_error(format!("Exported slowlog to {path}"));
                             }
                             Err(err) => {
-                                self.error_message = Some(format!("Failed to export CSV: {err}"));
+                                self.set_error(format!("Failed to export CSV: {err}"));
                             }
                         }
                     }
@@ -1043,7 +1108,7 @@ impl App {
                 self.status_bar.connection_state = ConnectionState::Reconnecting {
                     attempt: self.reconnect_attempt,
                 };
-                self.error_message = Some(format!("Reconnect failed: {err}"));
+                self.set_error(format!("Reconnect failed: {err}"));
             }
         }
     }
@@ -1052,9 +1117,20 @@ impl App {
         dirs::config_dir().map(|d| d.join("redis-tui").join("connections.toml"))
     }
 
+    /// Report an error or notice so the user can actually see it.
+    ///
+    /// `App::error_message` was written in ~60 places and rendered by
+    /// nothing — every "the app shows a message" claim in the docs was
+    /// hollow. This setter keeps the field (tests and internal state read
+    /// it) and finally mirrors each write into the status-bar toast queue.
+    fn set_error(&mut self, msg: String) {
+        self.error_message = Some(msg.clone());
+        self.status_bar.push_error(msg);
+    }
+
     fn open_connection_screen(&mut self) {
         let Some(path) = Self::connections_file_path() else {
-            self.error_message = Some("Could not determine config directory".to_string());
+            self.set_error("Could not determine config directory".to_string());
             return;
         };
 
@@ -1064,7 +1140,7 @@ impl App {
                 self.mode_stack.push(AppMode::ConnectionScreen);
             }
             Err(err) => {
-                self.error_message = Some(format!("Failed to load connections: {err}"));
+                self.set_error(format!("Failed to load connections: {err}"));
             }
         }
     }
@@ -1093,7 +1169,7 @@ impl App {
                 self.scan_cancel = Some(cancel);
             }
             Err(err) => {
-                self.error_message = Some(format!("Connected, but scan setup failed: {err}"));
+                self.set_error(format!("Connected, but scan setup failed: {err}"));
             }
         }
     }
@@ -1115,7 +1191,7 @@ impl App {
             Err(err) => {
                 self.client = None;
                 self.status_bar.connection_state = ConnectionState::Disconnected;
-                self.error_message = Some(format!("Connection failed: {err}"));
+                self.set_error(format!("Connection failed: {err}"));
             }
         }
     }
@@ -1124,8 +1200,9 @@ impl App {
     ///
     /// The 4-tick cadence is a throttle, not a configured interval: the
     /// actual cadence comes from `refresh_interval_ms`, which sets the tick
-    /// rate. At the 100ms default that is roughly every 400ms, comfortably
-    /// below the point where a PING or an XRANGE would be noticeable.
+    /// rate. At the 1000ms default that is roughly every 4s — not the ~1s
+    /// the CHANGELOG once claimed — comfortably below the point where a
+    /// PING or an XRANGE would be noticeable.
     const PERIODIC_TICKS: u64 = 4;
 
     async fn handle_tick(&mut self) {
@@ -1216,12 +1293,11 @@ impl App {
 
     async fn start_monitor(&mut self) {
         if !self.allow_monitor {
-            self.error_message =
-                Some("MONITOR disabled. Use --allow-monitor to enable.".to_string());
+            self.set_error("MONITOR disabled. Use --allow-monitor to enable.".to_string());
             return;
         }
         let Some(ref client) = self.client else {
-            self.error_message = Some("Not connected".to_string());
+            self.set_error("Not connected".to_string());
             return;
         };
         match client.monitor().await {
@@ -1230,10 +1306,10 @@ impl App {
                 self.repl.monitor_visible = true;
             }
             Ok(None) => {
-                self.error_message = Some("MONITOR not supported in cluster mode".to_string());
+                self.set_error("MONITOR not supported in cluster mode".to_string());
             }
             Err(err) => {
-                self.error_message = Some(format!("Failed to start MONITOR: {err}"));
+                self.set_error(format!("Failed to start MONITOR: {err}"));
             }
         }
     }
@@ -1252,7 +1328,10 @@ impl App {
     }
 
     async fn refresh_info_dashboard(&mut self) {
-        let Some(client) = self.client.as_ref() else {
+        // Cloned (not borrowed) so error paths below can mutate `self` —
+        // `set_error` pushes a toast, which the old write-only assignment
+        // never needed.
+        let Some(client) = self.client.clone() else {
             return;
         };
 
@@ -1262,36 +1341,36 @@ impl App {
                 self.info_dashboard.update_stats(stats);
             }
             Err(err) => {
-                self.error_message = Some(format!("Failed to refresh INFO: {err}"));
+                self.set_error(format!("Failed to refresh INFO: {err}"));
             }
         }
 
-        match slowlog_get(client, 100).await {
+        match slowlog_get(&client, 100).await {
             Ok(entries) => {
                 self.info_dashboard.slowlog_panel.set_entries(entries);
             }
             Err(err) => {
-                self.error_message = Some(format!("Failed to refresh SLOWLOG: {err}"));
+                self.set_error(format!("Failed to refresh SLOWLOG: {err}"));
             }
         }
         // The server's count can exceed what we loaded; show it in the header.
-        self.info_dashboard.slowlog_panel.server_len = slowlog_len(client).await.ok();
+        self.info_dashboard.slowlog_panel.server_len = slowlog_len(&client).await.ok();
     }
 
     /// Clear the server's slow log and drop the loaded entries.
     async fn reset_slowlog(&mut self) {
         let Some(client) = self.client.as_ref() else {
-            self.error_message = Some("Not connected".to_string());
+            self.set_error("Not connected".to_string());
             return;
         };
         match slowlog_reset(client).await {
             Ok(()) => {
                 self.info_dashboard.slowlog_panel.set_entries(Vec::new());
                 self.info_dashboard.slowlog_panel.server_len = Some(0);
-                self.error_message = Some("Slow log reset".to_string());
+                self.set_error("Slow log reset".to_string());
             }
             Err(err) => {
-                self.error_message = Some(format!("Failed to reset SLOWLOG: {err}"));
+                self.set_error(format!("Failed to reset SLOWLOG: {err}"));
             }
         }
     }
@@ -1330,8 +1409,7 @@ impl App {
             }
             BrowserAction::DeleteKey(name) => {
                 if self.readonly {
-                    self.error_message =
-                        Some("Read-only mode: delete blocked (press Esc)".to_string());
+                    self.set_error("Read-only mode: delete blocked (press Esc)".to_string());
                     return;
                 }
                 self.pending_delete_key = Some(name.clone());
@@ -1349,13 +1427,12 @@ impl App {
                 if let Some(ref profile) = self.last_profile {
                     self.start_scan_for_profile(&profile.clone()).await;
                 } else {
-                    self.error_message = Some("No connection to refresh".to_string());
+                    self.set_error("No connection to refresh".to_string());
                 }
             }
             BrowserAction::NewKey { name, key_type } => {
                 if self.readonly {
-                    self.error_message =
-                        Some("Read-only mode: write blocked (press Esc)".to_string());
+                    self.set_error("Read-only mode: write blocked (press Esc)".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
@@ -1367,49 +1444,46 @@ impl App {
                         RedisType::ZSet => client.zadd(&name, 0.0, "").await,
                         RedisType::Stream => client.xadd(&name, "*", &[]).await.map(|_| ()),
                         RedisType::Unknown => {
-                            self.error_message = Some("Unknown key type".to_string());
+                            self.set_error("Unknown key type".to_string());
                             return;
                         }
                     };
                     if let Err(err) = result {
-                        self.error_message = Some(format!("Failed to create key: {err}"));
+                        self.set_error(format!("Failed to create key: {err}"));
                     }
                 }
             }
             BrowserAction::RenameKey { old_name, new_name } => {
                 if self.readonly {
-                    self.error_message =
-                        Some("Read-only mode: write blocked (press Esc)".to_string());
+                    self.set_error("Read-only mode: write blocked (press Esc)".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client
                     && let Err(err) = client.rename(&old_name, &new_name).await
                 {
-                    self.error_message = Some(format!("Failed to rename key: {err}"));
+                    self.set_error(format!("Failed to rename key: {err}"));
                 }
             }
             BrowserAction::ExpireKey(name) => {
                 if self.readonly {
-                    self.error_message =
-                        Some("Read-only mode: write blocked (press Esc)".to_string());
+                    self.set_error("Read-only mode: write blocked (press Esc)".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client
                     && let Err(err) = client.set_ttl(&name, 1).await
                 {
-                    self.error_message = Some(format!("Failed to expire key: {err}"));
+                    self.set_error(format!("Failed to expire key: {err}"));
                 }
             }
             BrowserAction::SetTtl { key, seconds } => {
                 if self.readonly {
-                    self.error_message =
-                        Some("Read-only mode: write blocked (press Esc)".to_string());
+                    self.set_error("Read-only mode: write blocked (press Esc)".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client
                     && let Err(err) = client.set_ttl(&key, seconds).await
                 {
-                    self.error_message = Some(format!("Failed to set TTL: {err}"));
+                    self.set_error(format!("Failed to set TTL: {err}"));
                 }
             }
             BrowserAction::CopyKeyName(name) => {
@@ -1417,29 +1491,26 @@ impl App {
                 if let Ok(mut clipboard) = arboard::Clipboard::new() {
                     let _ = clipboard.set_text(name.clone());
                 }
-                self.error_message = Some(format!("Copied: {}", name));
+                self.set_error(format!("Copied: {}", name));
             }
             BrowserAction::DuplicateKey { old_name, new_name } => {
                 if self.readonly {
-                    self.error_message =
-                        Some("Read-only mode: write blocked (press Esc)".to_string());
+                    self.set_error("Read-only mode: write blocked (press Esc)".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
                     match client.dump(&old_name).await {
                         Ok(data) => {
                             if let Err(err) = client.restore(&new_name, 0, &data).await {
-                                self.error_message =
-                                    Some(format!("Failed to duplicate key: {err}"));
+                                self.set_error(format!("Failed to duplicate key: {err}"));
                             }
                         }
                         Err(err) => {
-                            self.error_message =
-                                Some(format!("Failed to dump key '{old_name}': {err}"));
+                            self.set_error(format!("Failed to dump key '{old_name}': {err}"));
                         }
                     }
                 } else {
-                    self.error_message = Some("Not connected".to_string());
+                    self.set_error("Not connected".to_string());
                 }
             }
             BrowserAction::SetOp {
@@ -1448,17 +1519,16 @@ impl App {
                 dest,
             } => {
                 if self.readonly {
-                    self.error_message =
-                        Some("Read-only mode: write blocked (press Esc)".to_string());
+                    self.set_error("Read-only mode: write blocked (press Esc)".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
                     let sources: Vec<&str> = source_keys.iter().map(|s| s.as_str()).collect();
                     if let Err(err) = client.set_store(op, &dest, &sources).await {
-                        self.error_message = Some(format!("Failed to {}: {err}", op.cmd_str()));
+                        self.set_error(format!("Failed to {}: {err}", op.cmd_str()));
                     }
                 } else {
-                    self.error_message = Some("Not connected".to_string());
+                    self.set_error("Not connected".to_string());
                 }
             }
         }
@@ -1475,39 +1545,38 @@ impl App {
         match action {
             InspectorAction::WriteString { key, value } => {
                 if self.readonly {
-                    self.error_message =
-                        Some("Read-only mode: write blocked (press Esc)".to_string());
+                    self.set_error("Read-only mode: write blocked (press Esc)".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
                     if let Err(err) = client.set_string(&key, &value).await {
-                        self.error_message = Some(format!("Failed to write: {err}"));
+                        self.set_error(format!("Failed to write: {err}"));
                         return;
                     }
                     self.reload_inspector_value(&key).await;
                 } else {
-                    self.error_message = Some("Not connected".to_string());
+                    self.set_error("Not connected".to_string());
                 }
             }
             InspectorAction::SetTtl { key, seconds } => {
                 if let Some(ref client) = self.client {
                     if let Err(err) = client.set_ttl(&key, seconds).await {
-                        self.error_message = Some(format!("Failed to set TTL: {err}"));
+                        self.set_error(format!("Failed to set TTL: {err}"));
                         return;
                     }
                     self.reload_inspector_value(&key).await;
                 } else {
-                    self.error_message = Some("Not connected".to_string());
+                    self.set_error("Not connected".to_string());
                 }
             }
             InspectorAction::ListPush { key, value, head } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    self.set_error("Read-only mode: write blocked".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
                     if let Err(err) = client.list_push(&key, &value, head).await {
-                        self.error_message = Some(format!("Failed to push: {err}"));
+                        self.set_error(format!("Failed to push: {err}"));
                         return;
                     }
                     self.reload_inspector_value(&key).await;
@@ -1515,12 +1584,12 @@ impl App {
             }
             InspectorAction::ListSet { key, index, value } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    self.set_error("Read-only mode: write blocked".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
                     if let Err(err) = client.list_set(&key, index, &value).await {
-                        self.error_message = Some(format!("Failed to set: {err}"));
+                        self.set_error(format!("Failed to set: {err}"));
                         return;
                     }
                     self.reload_inspector_value(&key).await;
@@ -1528,12 +1597,12 @@ impl App {
             }
             InspectorAction::ListRemove { key, value } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    self.set_error("Read-only mode: write blocked".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
                     if let Err(err) = client.list_remove(&key, &value).await {
-                        self.error_message = Some(format!("Failed to remove: {err}"));
+                        self.set_error(format!("Failed to remove: {err}"));
                         return;
                     }
                     self.reload_inspector_value(&key).await;
@@ -1546,14 +1615,13 @@ impl App {
                 before,
             } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    self.set_error("Read-only mode: write blocked".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
                     if let Err(err) = client.list_insert(&key, before, &pivot, &value).await {
                         let msg = if before { "BEFORE" } else { "AFTER" };
-                        self.error_message =
-                            Some(format!("Failed to insert {msg} '{pivot}': {err}"));
+                        self.set_error(format!("Failed to insert {msg} '{pivot}': {err}"));
                         return;
                     }
                     self.reload_inspector_value(&key).await;
@@ -1561,12 +1629,12 @@ impl App {
             }
             InspectorAction::HashSet { key, field, value } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    self.set_error("Read-only mode: write blocked".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
                     if let Err(err) = client.hash_set(&key, &field, &value).await {
-                        self.error_message = Some(format!("Failed to set hash field: {err}"));
+                        self.set_error(format!("Failed to set hash field: {err}"));
                         return;
                     }
                     self.reload_inspector_value(&key).await;
@@ -1574,12 +1642,12 @@ impl App {
             }
             InspectorAction::HashDel { key, field } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    self.set_error("Read-only mode: write blocked".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
                     if let Err(err) = client.hash_del(&key, &[&field]).await {
-                        self.error_message = Some(format!("Failed to delete hash field: {err}"));
+                        self.set_error(format!("Failed to delete hash field: {err}"));
                         return;
                     }
                     self.reload_inspector_value(&key).await;
@@ -1587,7 +1655,7 @@ impl App {
             }
             InspectorAction::HashDelMany { key, fields } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    self.set_error("Read-only mode: write blocked".to_string());
                     return;
                 }
                 if fields.is_empty() {
@@ -1596,7 +1664,7 @@ impl App {
                 if let Some(ref client) = self.client {
                     let refs: Vec<&str> = fields.iter().map(String::as_str).collect();
                     if let Err(err) = client.hash_del(&key, &refs).await {
-                        self.error_message = Some(format!(
+                        self.set_error(format!(
                             "Failed to delete {} hash fields: {err}",
                             refs.len()
                         ));
@@ -1607,12 +1675,12 @@ impl App {
             }
             InspectorAction::SetAdd { key, member } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    self.set_error("Read-only mode: write blocked".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
                     if let Err(err) = client.set_add(&key, &member).await {
-                        self.error_message = Some(format!("Failed to add set member: {err}"));
+                        self.set_error(format!("Failed to add set member: {err}"));
                         return;
                     }
                     self.reload_inspector_value(&key).await;
@@ -1620,12 +1688,12 @@ impl App {
             }
             InspectorAction::SetRem { key, member } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    self.set_error("Read-only mode: write blocked".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
                     if let Err(err) = client.set_rem(&key, &member).await {
-                        self.error_message = Some(format!("Failed to remove set member: {err}"));
+                        self.set_error(format!("Failed to remove set member: {err}"));
                         return;
                     }
                     self.reload_inspector_value(&key).await;
@@ -1633,12 +1701,12 @@ impl App {
             }
             InspectorAction::ZAdd { key, score, member } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    self.set_error("Read-only mode: write blocked".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
                     if let Err(err) = client.zadd(&key, score, &member).await {
-                        self.error_message = Some(format!("Failed to add zset member: {err}"));
+                        self.set_error(format!("Failed to add zset member: {err}"));
                         return;
                     }
                     self.reload_inspector_value(&key).await;
@@ -1646,12 +1714,12 @@ impl App {
             }
             InspectorAction::ZRem { key, member } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    self.set_error("Read-only mode: write blocked".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
                     if let Err(err) = client.zrem(&key, &member).await {
-                        self.error_message = Some(format!("Failed to remove zset member: {err}"));
+                        self.set_error(format!("Failed to remove zset member: {err}"));
                         return;
                     }
                     self.reload_inspector_value(&key).await;
@@ -1663,7 +1731,7 @@ impl App {
                 fields,
             } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    self.set_error("Read-only mode: write blocked".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
@@ -1672,7 +1740,7 @@ impl App {
                         .map(|(f, v)| (f.as_str(), v.as_str()))
                         .collect();
                     if let Err(err) = client.xadd(&key, &entry_id, &field_refs).await {
-                        self.error_message = Some(format!("Failed to add stream entry: {err}"));
+                        self.set_error(format!("Failed to add stream entry: {err}"));
                         return;
                     }
                     self.reload_inspector_value(&key).await;
@@ -1680,12 +1748,12 @@ impl App {
             }
             InspectorAction::StreamRem { key, entry_id } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    self.set_error("Read-only mode: write blocked".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
                     if let Err(err) = client.xdel(&key, &entry_id).await {
-                        self.error_message = Some(format!("Failed to delete stream entry: {err}"));
+                        self.set_error(format!("Failed to delete stream entry: {err}"));
                         return;
                     }
                     self.reload_inspector_value(&key).await;
@@ -1704,8 +1772,7 @@ impl App {
                             self.value_inspector.stream_groups = Some(groups);
                         }
                         Err(err) => {
-                            self.error_message =
-                                Some(format!("Failed to fetch stream groups: {err}"));
+                            self.set_error(format!("Failed to fetch stream groups: {err}"));
                         }
                     }
                 }
@@ -1717,12 +1784,12 @@ impl App {
                 approximate,
             } => {
                 if self.readonly {
-                    self.error_message = Some("Read-only mode: write blocked".to_string());
+                    self.set_error("Read-only mode: write blocked".to_string());
                     return;
                 }
                 if let Some(ref client) = self.client {
                     if let Err(err) = client.xtrim(&key, &strategy, &threshold, approximate).await {
-                        self.error_message = Some(format!("Failed to XTRIM '{key}': {err}"));
+                        self.set_error(format!("Failed to XTRIM '{key}': {err}"));
                         return;
                     }
                     self.reload_inspector_value(&key).await;
@@ -1737,7 +1804,7 @@ impl App {
             }
             InspectorAction::InvalidInput(msg) => {
                 self.status_bar.push_error(msg.clone());
-                self.error_message = Some(msg);
+                self.set_error(msg);
             }
             InspectorAction::EditStringExternal { key, value } => {
                 // Only queue when an editor is actually configured; otherwise
@@ -1756,7 +1823,7 @@ impl App {
                 if let Ok(mut clipboard) = arboard::Clipboard::new() {
                     let _ = clipboard.set_text(val.clone());
                 }
-                self.error_message = Some(format!("Copied: {}", val));
+                self.set_error(format!("Copied: {}", val));
             }
         }
     }
@@ -1827,18 +1894,35 @@ impl App {
 
     fn update_status_bar_context(&mut self) {
         self.status_bar.key_count = self.key_browser.tree.total_keys();
+        // Hints are derived from the loaded keymap: the old hardcoded
+        // strings advertised vim keys in every preset — the REPL tab told
+        // emacs users to press Ctrl+P, which inserted a literal 'p' into
+        // the input instead of opening the palette.
+        let (nav_down, nav_up, confirm, delete, palette, tab_info) = {
+            let km = &self.keymap;
+            let d = |action: &str| Self::display_key(km.binding(action).unwrap_or(""));
+            (
+                d("nav_down"),
+                d("nav_up"),
+                d("confirm"),
+                d("delete"),
+                d("palette"),
+                d("tab_info"),
+            )
+        };
         self.status_bar.hints = match self.active_tab {
             Tab::Keys => vec![
-                ("j/k".to_string(), "nav".to_string()),
-                ("Enter".to_string(), "open".to_string()),
-                ("D".to_string(), "delete".to_string()),
+                (format!("{nav_down}/{nav_up}"), "nav".to_string()),
+                (confirm, "open".to_string()),
+                (delete, "delete".to_string()),
             ],
             Tab::Repl => vec![
                 ("Enter".to_string(), "run".to_string()),
                 ("Up/Down".to_string(), "history".to_string()),
-                ("Ctrl+P".to_string(), "palette".to_string()),
+                (palette, "palette".to_string()),
             ],
-            Tab::Info => vec![("3".to_string(), "info".to_string())],
+            Tab::Info => vec![(tab_info, "info".to_string())],
+            // D is a hardcoded widget key, identical in every preset.
             Tab::PubSub => vec![
                 ("Tab".to_string(), "mode".to_string()),
                 ("Enter".to_string(), "send".to_string()),
@@ -1981,6 +2065,8 @@ impl App {
             ("delete_selected", "Delete selected"),
             ("toggle_select", "Toggle selection"),
             ("select_all", "Select all"),
+            ("go_up", "Go up one level"),
+            ("copy", "Copy key name"),
             ("duplicate_key", "Duplicate key"),
             ("cycle_sort", "Cycle sort order"),
             ("set_ttl", "Set TTL"),
@@ -1996,7 +2082,6 @@ impl App {
             ("inspector_hash_filter", "Filter hash fields"),
             ("inspector_value_search", "Search inside value"),
             ("inspector_stream_follow", "Toggle stream follow"),
-            ("inspector_stream_groups", "Toggle consumer groups"),
             ("search_toggle_mode", "Toggle search regex mode"),
             ("search_execute", "Run search"),
             ("search_close", "Close search"),
@@ -2012,15 +2097,36 @@ impl App {
                 lines.push((shown, description));
             }
         }
+
+        // Chords handled outside the keymap. They were previously
+        // undiscoverable — the connection screen's Ctrl+\ was documented
+        // nowhere in the app (the palette's Connect… item was its only
+        // discoverable path), and MONITOR's toggle was outright unreachable
+        // (Ctrl+M is byte-identical to Enter, so it is Alt+M now).
+        let fixed: &[(&str, &str)] = &[
+            ("Ctrl+\\", "Connection screen (also Ctrl+4; same byte)"),
+            ("Ctrl+R", "Reconnect to server"),
+            ("g", "Jump to key-browser root"),
+            ("Tab", "Cycle string view: Raw/JSON/Base64/Hex"),
+            ("Alt+M", "REPL: toggle MONITOR pane"),
+            ("Alt+R", "REPL: toggle raw output"),
+            ("Ctrl+L", "REPL: clear output"),
+            ("Ctrl+U", "Clear the input line"),
+        ];
+        for (key, description) in fixed {
+            width = width.max(key.len());
+            lines.push(((*key).to_string(), description));
+        }
+
         for (key, description) in lines {
             // Pad to the widest key so descriptions line up in a column.
             let pad = " ".repeat(width.saturating_sub(key.len()) + 2);
             text.push_str(&format!("{key}{pad}{description}\n"));
         }
         text.push_str(
-            "\nCtrl+C forces quit from any prompt.\n\
+            "\n\
              Mouse: click a tab to switch, click a key row to select.\n\
-             Bindings follow the active keymap preset; see README for the full\n\
+             Bindings follow the loaded keymap; see README for the full\n\
              per-type inspector keys.",
         );
         text
@@ -2805,10 +2911,14 @@ mod help_overlay_tests {
     }
 
     /// The overlay must describe the bindings in use, not a hardcoded list.
+    /// It also pins the fixed-chord section: the connection-screen chord
+    /// was previously undiscoverable, MONITOR's toggle never fired (Ctrl+M
+    /// is byte-identical to Enter; the binding is Alt+M now), and the
+    /// overlay once claimed "Ctrl+C forces quit from any prompt" — false
+    /// in the vim preset, where nothing binds Ctrl+C to quit.
     #[test]
     fn help_reflects_the_vim_preset() {
         let text = help_for(Keymap::vim());
-        assert!(text.contains("quit"), "missing action labels: {text}");
         assert!(
             text.lines()
                 .any(|l| l.starts_with('q') && l.contains("Quit")),
@@ -2818,6 +2928,27 @@ mod help_overlay_tests {
             text.lines()
                 .any(|l| l.contains("Ctrl+p") && l.contains("palette")),
             "vim binds the palette to Ctrl+P:\n{text}"
+        );
+        assert!(
+            text.lines()
+                .any(|l| l.contains("Ctrl+\\") && l.contains("Connection screen")),
+            "the hardcoded connection-screen chord must be discoverable:\n{text}"
+        );
+        assert!(
+            text.lines()
+                .any(|l| l.contains("Alt+M") && l.contains("MONITOR")),
+            "the MONITOR toggle must be listed:\n{text}"
+        );
+        assert!(
+            !text.contains("Ctrl+C forces quit"),
+            "the false Ctrl+C quit claim must not come back:\n{text}"
+        );
+        assert_eq!(
+            text.lines()
+                .filter(|l| l.contains("consumer groups"))
+                .count(),
+            1,
+            "the consumer-groups row was duplicated before:\n{text}"
         );
     }
 
@@ -3044,13 +3175,22 @@ mod editor_config_tests {
     /// `run` copies the config's value into the inspector; without this the
     /// setting would parse but never take effect.
     #[test]
+    /// The display budget must be wired by `App::new`. The old test
+    /// performed the wiring itself and asserted its own assignment — it
+    /// stayed green when the real line (then in `run()`) was deleted.
     fn value_display_budget_reaches_the_inspector() {
-        let mut app = App::new(Config {
+        let app = App::new(Config {
             max_value_display_bytes: Some(512),
             ..Default::default()
         });
-        app.value_inspector.max_value_display_bytes = app.config.max_value_display_bytes();
         assert_eq!(app.value_inspector.max_value_display_bytes, 512);
+        // And the default path honors the config default too.
+        assert_eq!(
+            App::new(Config::default())
+                .value_inspector
+                .max_value_display_bytes,
+            Config::default().max_value_display_bytes()
+        );
     }
 }
 
@@ -3565,9 +3705,10 @@ mod connection_screen_access_tests {
                 let mut app = App::new(Config::default());
                 app.active_tab = Tab::Keys;
                 // Simulate the palette returning this command.
-                app.command_palette = Some(crate::ui::command_palette::CommandPalette::new(vec![
-                    cmd.to_string(),
-                ]));
+                app.command_palette = Some(crate::ui::command_palette::CommandPalette::new(
+                    vec![cmd.to_string()],
+                    "Ctrl+P".to_string(),
+                ));
                 app.handle_key_event(KeyEvent::from(KeyCode::Enter)).await;
                 assert_eq!(
                     app.active_tab, tab,
@@ -3586,9 +3727,10 @@ mod connection_screen_access_tests {
             .unwrap();
         rt.block_on(async {
             let mut app = App::new(Config::default());
-            app.command_palette = Some(crate::ui::command_palette::CommandPalette::new(vec![
-                "Connect…".to_string(),
-            ]));
+            app.command_palette = Some(crate::ui::command_palette::CommandPalette::new(
+                vec!["Connect…".to_string()],
+                "Ctrl+P".to_string(),
+            ));
             app.handle_key_event(KeyEvent::from(KeyCode::Enter)).await;
             assert_eq!(
                 app.mode(),
@@ -3605,9 +3747,10 @@ mod connection_screen_access_tests {
             .unwrap();
         rt.block_on(async {
             let mut app = App::new(Config::default());
-            app.command_palette = Some(crate::ui::command_palette::CommandPalette::new(vec![
-                "Quit".to_string(),
-            ]));
+            app.command_palette = Some(crate::ui::command_palette::CommandPalette::new(
+                vec!["Quit".to_string()],
+                "Ctrl+P".to_string(),
+            ));
             app.handle_key_event(KeyEvent::from(KeyCode::Enter)).await;
             assert!(app.should_quit, "Quit must still quit");
         });
@@ -3623,9 +3766,10 @@ mod connection_screen_access_tests {
             .unwrap();
         rt.block_on(async {
             let mut app = App::new(Config::default());
-            app.command_palette = Some(crate::ui::command_palette::CommandPalette::new(vec![
-                "Switch:Nosuch".to_string(),
-            ]));
+            app.command_palette = Some(crate::ui::command_palette::CommandPalette::new(
+                vec!["Switch:Nosuch".to_string()],
+                "Ctrl+P".to_string(),
+            ));
             app.handle_key_event(KeyEvent::from(KeyCode::Enter)).await;
             assert_eq!(
                 app.error_message.as_deref(),
@@ -3634,31 +3778,56 @@ mod connection_screen_access_tests {
         });
     }
 
-    /// The palette's advertised items must all be wired: cross-check the list
-    /// the app builds against the arms that handle it.
+    /// The palette's advertised items must all be wired. Every item is
+    /// executed through the app and must not report itself as unwired.
+    ///
+    /// This replaces a source-scraping test whose `find("])).")` pattern
+    /// matched only the test's own string literal, so the extracted "block"
+    /// spanned the production list *and the test's own `wired` array* —
+    /// it passed unconditionally and could never fail for any production
+    /// change. The guard is now `PALETTE_ITEMS`, the same const the app
+    /// builds the palette from, executed item by item.
     #[test]
-    fn every_palette_item_is_handled() {
-        let wired = [
-            "Connect…",
-            "Quit",
-            "Switch:Keys",
-            "Switch:REPL",
-            "Switch:Info",
-            "Switch:PubSub",
-        ];
-        // A raw string copy of the construction site, so renaming an item in
-        // the list without wiring it fails here.
-        let source = include_str!("app.rs");
-        let start = source
-            .find("CommandPalette::new(vec![")
-            .expect("palette site");
-        let end = source[start..].find("])).").expect("palette list end");
-        let block = &source[start..start + end];
-        for item in wired {
-            assert!(
-                block.contains(&format!("{item:?}")),
-                "{item} missing from the palette list"
-            );
+    fn every_palette_item_is_executed_and_handled() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        for &item in super::PALETTE_ITEMS {
+            rt.block_on(async {
+                let mut app = App::new(Config::default());
+                let mut palette = crate::ui::command_palette::CommandPalette::new(
+                    super::PALETTE_ITEMS.iter().map(|s| s.to_string()).collect(),
+                    "Ctrl+P".to_string(),
+                );
+                // Filter down to exactly this item so Enter executes it.
+                palette.query = item.to_lowercase();
+                palette.filter();
+                app.command_palette = Some(palette);
+                app.handle_key_event(KeyEvent::from(KeyCode::Enter)).await;
+                assert!(
+                    app.command_palette.is_none(),
+                    "{item} must close the palette on execution"
+                );
+                assert_eq!(
+                    app.error_message.as_deref(),
+                    None,
+                    "{item} must be wired, not reported as unwired"
+                );
+                // And the item must have done something observable.
+                match item {
+                    "Quit" => assert!(app.should_quit, "{item} must quit"),
+                    "Switch:Keys" => assert_eq!(app.active_tab, Tab::Keys),
+                    "Switch:REPL" => assert_eq!(app.active_tab, Tab::Repl),
+                    "Switch:Info" => assert_eq!(app.active_tab, Tab::Info),
+                    "Switch:PubSub" => assert_eq!(app.active_tab, Tab::PubSub),
+                    "Connect…" => assert_eq!(
+                        app.mode(),
+                        &AppMode::ConnectionScreen,
+                        "{item} must open the connection screen"
+                    ),
+                    other => panic!("PALETTE_ITEMS contains an unhandled item: {other}"),
+                }
+            });
         }
     }
 }

@@ -28,6 +28,18 @@ pub struct Config {
     /// Upper bound on bytes rendered for a single value. Larger values are
     /// truncated with a visible marker rather than drawn in full.
     pub max_value_display_bytes: Option<usize>,
+    /// Per-action keybinding overrides. The default is the vim preset; a
+    /// `[keybindings]` section in the config file overrides any subset of
+    /// the actions (each field defaults independently, so a partial table
+    /// mixes user bindings with preset defaults).
+    ///
+    /// This is finally wired: the field existed as `serde` defaults on
+    /// every `KeyDef` while `App` hardcoded `Keymap::default()`, so any
+    /// `[keybindings]` TOML was silently ignored. Bindings that no terminal
+    /// can deliver are reported at startup by
+    /// `crate::config::keybindings::validation_warnings`.
+    #[serde(default)]
+    pub keybindings: keybindings::Keymap,
 }
 
 impl Config {
@@ -51,6 +63,12 @@ impl Config {
         self.scan_count.unwrap_or(200)
     }
 
+    /// Whether mouse capture is enabled. Defaults to true; the
+    /// `mouse_enabled` config key finally controls something.
+    pub fn mouse_enabled(&self) -> bool {
+        self.mouse_enabled.unwrap_or(true)
+    }
+
     pub fn refresh_interval_ms(&self) -> u64 {
         // Clamped rather than passed through. This drives the event loop's tick
         // rate, and the periodic tasks (latency probe, info refresh, stream
@@ -69,10 +87,6 @@ impl Config {
 
     pub fn color_scheme(&self) -> &str {
         self.color_scheme.as_deref().unwrap_or("default")
-    }
-
-    pub fn mouse_enabled(&self) -> bool {
-        self.mouse_enabled.unwrap_or(true)
     }
 
     pub fn confirm_deletes(&self) -> bool {

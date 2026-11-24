@@ -210,6 +210,17 @@ impl ReplWidget {
         if let Event::Key(key) = event {
             match key.code {
                 KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' => {
+                    // In the emacs preset the global quit binding claims
+                    // Ctrl+C before the tab sees it; vim's quit is `q`, so
+                    // this arm fires there. Either way Ctrl+U below also
+                    // clears the line.
+                    self.input.clear();
+                    self.cursor = 0;
+                    self.ac_visible = false;
+                    self.command_history.reset_cursor();
+                }
+                // Readline's kill-line: clears the input in both presets.
+                KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'u' => {
                     self.input.clear();
                     self.cursor = 0;
                     self.ac_visible = false;
@@ -218,10 +229,18 @@ impl ReplWidget {
                 KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'l' => {
                     self.history.clear();
                 }
-                KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'r' => {
+                // Raw mode was Ctrl+R, which never fired: the app-level
+                // reconnect arm claims that chord before any tab handler.
+                // ESC + 'r' is what a terminal actually delivers for Alt+R.
+                KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::ALT) && c == 'r' => {
                     self.raw_mode = !self.raw_mode;
                 }
-                KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'm' => {
+                // MONITOR was toggled with Ctrl+M — byte 0x0D, which every
+                // terminal delivers as Enter, so the toggle (and therefore
+                // the whole MONITOR pane and `--allow-monitor` flag) was
+                // unreachable from the keyboard. ESC + 'm' (Alt+M) is
+                // deliverable.
+                KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::ALT) && c == 'm' => {
                     self.monitor_visible = !self.monitor_visible;
                 }
                 KeyCode::Esc => {
@@ -267,11 +286,27 @@ impl ReplWidget {
                 KeyCode::Tab => {
                     if self.ac_visible {
                         if key.modifiers.contains(KeyModifiers::SHIFT) {
+                            // Kitty protocol names the key literally; legacy
+                            // terminals send ESC[Z, handled by the BackTab
+                            // arm below.
                             if self.ac_selected > 0 {
                                 self.ac_selected -= 1;
                             }
                         } else if self.ac_selected + 1 < self.ac_suggestions.len() {
                             self.ac_selected += 1;
+                        }
+                    } else {
+                        self.open_autocomplete();
+                    }
+                }
+                // What Shift+Tab actually is on a legacy terminal: the CSI
+                // sequence ESC[Z, which crossterm decodes as BackTab — never
+                // as Tab with SHIFT. The arm's absence made backwards
+                // autocomplete cycling unreachable from any real keyboard.
+                KeyCode::BackTab => {
+                    if self.ac_visible {
+                        if self.ac_selected > 0 {
+                            self.ac_selected -= 1;
                         }
                     } else {
                         self.open_autocomplete();
@@ -566,6 +601,9 @@ mod tests {
     }
 
     #[test]
+    /// Backwards autocomplete cycling via the event a terminal really sends
+    /// for Shift+Tab: ESC[Z, decoded by crossterm as `BackTab`. The old
+    /// test pressed Tab+SHIFT, an event no legacy terminal produces.
     fn test_repl_shift_tab_cycles_back() {
         let mut repl = ReplWidget::with_history_path(temp_history_path());
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Char('s'))));
@@ -573,8 +611,7 @@ mod tests {
         repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::Tab)));
         let second = repl.ac_selected;
 
-        let shift_tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT);
-        repl.handle_event(&Event::Key(shift_tab));
+        repl.handle_event(&Event::Key(KeyEvent::from(KeyCode::BackTab)));
         assert_eq!(repl.ac_selected, second - 1);
     }
 
@@ -637,13 +674,16 @@ mod tests {
     }
 
     #[test]
+    /// Raw mode toggles on Alt+R: ESC + 'r'. The old binding was Ctrl+R,
+    /// which the app-level reconnect arm claims before any tab handler, so
+    /// the toggle never fired from the keyboard.
     fn test_repl_ctrl_r_toggles_raw_mode() {
         let mut repl = ReplWidget::with_history_path(temp_history_path());
         assert!(!repl.raw_mode);
-        let ctrl_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
-        repl.handle_event(&Event::Key(ctrl_r));
+        let alt_r = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT);
+        repl.handle_event(&Event::Key(alt_r));
         assert!(repl.raw_mode);
-        repl.handle_event(&Event::Key(ctrl_r));
+        repl.handle_event(&Event::Key(alt_r));
         assert!(!repl.raw_mode);
     }
 
@@ -717,16 +757,18 @@ mod tests {
     }
 
     #[test]
+    /// MONITOR toggles on Alt+M: ESC + 'm'. The old binding was Ctrl+M,
+    /// byte 0x0D — which every terminal delivers as Enter, so the toggle
+    /// (and the whole MONITOR pane) was unreachable from any keyboard.
     fn test_repl_monitor_toggle() {
         let mut repl = ReplWidget::with_history_path(temp_history_path());
         assert!(!repl.monitor_visible);
 
-        let ctrl_m = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL);
-        repl.handle_event(&Event::Key(ctrl_m));
+        let alt_m = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT);
+        repl.handle_event(&Event::Key(alt_m));
         assert!(repl.monitor_visible);
 
-        let ctrl_m = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL);
-        repl.handle_event(&Event::Key(ctrl_m));
+        repl.handle_event(&Event::Key(alt_m));
         assert!(!repl.monitor_visible);
     }
 

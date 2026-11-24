@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-10-18
+## [0.1.0] - 2026-11-23
 
 A keyboard-driven Redis TUI: connection management, a namespace-grouped key
 browser, a typed value inspector covering all six Redis types, a REPL with

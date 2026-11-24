@@ -1961,7 +1961,12 @@ impl App {
             // Shares a key with `edit`: the inspector claims it for strings,
             // so this only fires when the selected key holds something else.
             ("expire", "Expire immediately  (non-strings)"),
-            ("inspector_toggle_view", "Toggle inspector view mode"),
+            ("inspector_stream_groups", "Toggle consumer groups"),
+            // Bound to `f`, but only meaningful on a stream: it toggles the
+            // compact rendering of stream entries. Calling it "view mode"
+            // invited confusion with `Tab`, which is what cycles a string's
+            // Raw/JSON/Base64/Hex rendering.
+            ("inspector_toggle_view", "Toggle compact stream rendering"),
             ("inspector_hash_filter", "Filter hash fields"),
             ("inspector_value_search", "Search inside value"),
             ("inspector_stream_follow", "Toggle stream follow"),
@@ -2844,7 +2849,7 @@ mod help_overlay_tests {
             "tab_keys" => "Keys tab",
             "new_key" => "New key",
             "delete" => "Delete key",
-            "inspector_toggle_view" => "inspector view",
+            "inspector_toggle_view" => "compact stream rendering",
             "search_toggle_mode" => "regex mode",
             other => panic!("unmapped action {other}"),
         }

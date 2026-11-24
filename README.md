@@ -183,9 +183,8 @@ redis-server --port 6379          # or use any reachable server
 cargo run -- --url redis://localhost:6379/0
 ```
 
-Press `?` for the full key list. The overlay is generated from whichever
-keymap preset you have loaded, so it always shows the keys that actually work —
-if you use the emacs preset it will not tell you to press `q` to quit.
+Press `?` for the full key list. The overlay is generated from the keymap the
+app actually loaded, so it shows the keys that really work.
 
 Suggested first steps:
 
@@ -194,7 +193,8 @@ Suggested first steps:
 | `1` `2` `3` `4` | Switch between Keys, REPL, Info and Pub/Sub |
 | `/` | Search keys by name, fuzzy by default, `Ctrl+r` toggles regex |
 | `Enter` | Inspect the selected key's value |
-| `a` | Expand or collapse a namespace |
+| `l` / `h` | Expand or collapse the namespace under the cursor |
+| `Tab` | Cycle a string's view mode: Raw → JSON → Base64 → Hex |
 | `e` | Edit a string (see `$EDITOR` below) |
 | `Ctrl+p` | Command palette |
 | `q` | Quit |

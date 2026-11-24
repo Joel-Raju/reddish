@@ -1345,6 +1345,31 @@ fn standalone(client: &RedisClientHandle) -> redis::aio::MultiplexedConnection {
     }
 }
 
+/// Parse a Redis stream ID (`ms-seq`) into numbers for comparison.
+///
+/// Stream IDs must never be compared as strings: `"ms-10"` sorts before
+/// `"ms-9"` lexicographically because `1` < `9`, so a test that string-
+/// compares them passes or fails depending on whether the XADDs happened to
+/// land in the same millisecond. Redis itself compares them numerically, which
+/// is the only correct order.
+fn stream_id(id: &str) -> (u64, u64) {
+    let (ms, seq) = id
+        .split_once('-')
+        .unwrap_or_else(|| panic!("malformed stream id {id:?}"));
+    (
+        ms.parse().unwrap_or_else(|_| panic!("bad ms in {id:?}")),
+        seq.parse().unwrap_or_else(|_| panic!("bad seq in {id:?}")),
+    )
+}
+
+#[test]
+fn stream_id_orders_numerically_not_lexicographically() {
+    // The exact pair the string comparison got wrong.
+    assert!(stream_id("100-10") > stream_id("100-9"));
+    assert_eq!(stream_id("100-9"), (100, 9));
+    assert!(stream_id("101-0") > stream_id("100-99"));
+}
+
 #[tokio::test]
 async fn test_list_insert_before_and_after() {
     let client = RedisClientHandle::connect(&test_profile()).await.unwrap();
@@ -1511,8 +1536,11 @@ async fn test_stream_xtrim_minid() {
 
     let entries = client.xrange(key).await.unwrap();
     assert!(
-        entries.iter().all(|e| e.id >= cutoff),
-        "kept entries before cutoff"
+        entries
+            .iter()
+            .all(|e| stream_id(&e.id) >= stream_id(&cutoff)),
+        "kept entries before cutoff: {:?} vs {cutoff}",
+        entries.iter().map(|e| e.id.clone()).collect::<Vec<_>>()
     );
 
     redis::cmd("DEL")

@@ -216,7 +216,16 @@ Connection profiles are loaded from:
 The default keymap is the vim preset. A `[keybindings]` section in
 `config.toml` overrides any subset of the actions — each field defaults
 independently, so a partial table mixes your bindings with preset
-defaults. The emacs-style column below shows what an emacs-flavoured
+defaults. Each action is a nested table with a `key` field (a bare
+string like `quit = 'Q'` does not parse):
+
+```toml
+[keybindings.quit]
+key = 'Q'
+
+[keybindings.refresh]
+key = 'ctrl+x'
+``` The emacs-style column below shows what an emacs-flavoured
 override table would set; bindings are validated at startup, and one no
 terminal can deliver is reported instead of silently failing.
 

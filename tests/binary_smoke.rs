@@ -103,11 +103,10 @@ fn unknown_flag_is_rejected() {
 #[test]
 fn help_does_not_require_a_terminal() {
     // If --help ever started initializing the terminal, this would fail on a
-    // headless runner with no TTY.
-    assert!(
-        !std::io::IsTerminal::is_terminal(&std::io::stdin()),
-        "test assumes no TTY on stdin"
-    );
+    // headless runner with no TTY. The old version also asserted that the
+    // test's own stdin was not a TTY — an assertion about the test
+    // environment, not the product, which failed for no product reason
+    // when the harness provided a TTY.
     let out = run(&["--help"]);
     assert!(out.status.success());
 }

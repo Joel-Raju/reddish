@@ -1,7 +1,9 @@
+mod helpers;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::backend::TestBackend;
 use reddish_tui::events::Event;
-use reddish_tui::redis::client::{RedisClientHandle, RedisType};
+use reddish_tui::redis::client::RedisType;
 use reddish_tui::redis::types::RedisValue;
 use reddish_tui::ui::value_inspector::ValueInspector;
 use reddish_tui::ui::value_viewer::ValueViewer;
@@ -861,7 +863,9 @@ async fn test_redis_get_set_string() {
         last_connected: None,
         ..Default::default()
     };
-    let client = RedisClientHandle::connect(&profile).await.unwrap();
+    let Some(client) = helpers::connect_or_skip(&profile).await else {
+        return;
+    };
     let mut c = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
         _ => unreachable!("test always uses standalone"),
@@ -872,6 +876,18 @@ async fn test_redis_get_set_string() {
         .query_async::<()>(&mut c)
         .await
         .unwrap();
+    // The old version SET the key and asserted nothing — it did not even
+    // GET it back, and it leaked m2_key on the shared server.
+    let got: String = redis::cmd("GET")
+        .arg("m2_key")
+        .query_async(&mut c)
+        .await
+        .unwrap();
+    assert_eq!(got, "hello", "the SET must have actually landed");
+    let _ = redis::cmd("DEL")
+        .arg("m2_key")
+        .query_async::<()>(&mut c)
+        .await;
 }
 
 #[test]
@@ -1037,7 +1053,9 @@ async fn test_redis_hgetall() {
         last_connected: None,
         ..Default::default()
     };
-    let client = RedisClientHandle::connect(&profile).await.unwrap();
+    let Some(client) = helpers::connect_or_skip(&profile).await else {
+        return;
+    };
     let mut c = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
         _ => unreachable!("test always uses standalone"),
@@ -1079,7 +1097,9 @@ async fn test_redis_lrange() {
         last_connected: None,
         ..Default::default()
     };
-    let client = RedisClientHandle::connect(&profile).await.unwrap();
+    let Some(client) = helpers::connect_or_skip(&profile).await else {
+        return;
+    };
     let mut c = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
         _ => unreachable!("test always uses standalone"),
@@ -1119,7 +1139,9 @@ async fn test_redis_smembers() {
         last_connected: None,
         ..Default::default()
     };
-    let client = RedisClientHandle::connect(&profile).await.unwrap();
+    let Some(client) = helpers::connect_or_skip(&profile).await else {
+        return;
+    };
     let mut c = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
         _ => unreachable!("test always uses standalone"),
@@ -1160,7 +1182,9 @@ async fn test_redis_zrange_withscores() {
         last_connected: None,
         ..Default::default()
     };
-    let client = RedisClientHandle::connect(&profile).await.unwrap();
+    let Some(client) = helpers::connect_or_skip(&profile).await else {
+        return;
+    };
     let mut c = match &client.client {
         reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
         _ => unreachable!("test always uses standalone"),

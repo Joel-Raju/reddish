@@ -6,11 +6,10 @@ use reddish_tui::{
     cli::Cli,
     config::{
         Config,
-        connections::{ConnectionMode, ConnectionProfile, ConnectionStore, PasswordRef},
+        connections::{ConnectionProfile, ConnectionStore},
     },
     logging, terminal,
 };
-use redis::IntoConnectionInfo;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -100,41 +99,7 @@ fn resolve_profile(name: &str) -> Result<Option<ConnectionProfile>> {
 }
 
 fn profile_from_url(url: &str) -> Result<ConnectionProfile> {
-    let info = url.into_connection_info()?;
-
-    let (host, port, tls_enabled) = match info.addr {
-        redis::ConnectionAddr::Tcp(host, port) => (host, port, false),
-        redis::ConnectionAddr::TcpTls { host, port, .. } => (host, port, true),
-        _ => {
-            return Err(color_eyre::eyre::eyre!(
-                "unsupported connection address in URL"
-            ));
-        }
-    };
-
-    let db = u8::try_from(info.redis.db)
-        .map_err(|_| color_eyre::eyre::eyre!("URL db index out of range for u8"))?;
-
-    Ok(ConnectionProfile {
-        name: "cli-url".to_string(),
-        host,
-        port,
-        db,
-        username: info.redis.username,
-        password: info.redis.password.map(PasswordRef::Plaintext),
-        last_connected: None,
-        mode: ConnectionMode::Standalone,
-        tls: if tls_enabled {
-            Some(reddish_tui::config::connections::TlsConfig {
-                enabled: true,
-                verify_certs: true,
-                ca_cert_path: None,
-                client_cert_path: None,
-                client_key_path: None,
-            })
-        } else {
-            None
-        },
-        ssh_tunnel: None,
-    })
+    // Delegates to the lib, where it is unit-tested: this function lived
+    // in the binary with zero coverage for the README's headline flag.
+    reddish_tui::config::connections::profile_from_url(url)
 }

@@ -108,6 +108,20 @@ pub async fn execute_repl_command_for_test(app: &mut App, input: String) {
     app.execute_repl_command(input).await;
 }
 
+/// Drive the real key dispatch from integration tests. The suite's most
+/// damaging fake tests assigned the end state directly and asserted their
+/// own assignment; this hook lets a test press an actual key and observe
+/// what the app really does.
+pub async fn handle_key_event_for_test(app: &mut App, key: crossterm::event::KeyEvent) {
+    app.handle_key_event(key).await;
+}
+
+/// Drive the full event dispatch (keys, mouse, ticks) from tests. The
+/// mouse routing behind overlays had no coverage at all before this.
+pub async fn handle_event_for_test(app: &mut App, event: crate::events::Event) {
+    app.handle_event(event).await;
+}
+
 fn repl_policy_error(stages: &[Vec<String>], readonly: bool) -> Option<String> {
     for stage in stages {
         let Some(command) = stage.first() else {
@@ -1994,7 +2008,16 @@ impl App {
         let lowered = key.to_lowercase();
         for (lower, display) in MODIFIERS {
             if let Some(rest) = lowered.strip_prefix(lower) {
-                return format!("{display}{}", Self::capitalize_named_key(rest));
+                // A single letter after a modifier displays uppercased —
+                // "ctrl+p" is shown as the conventional "Ctrl+P". The old
+                // display left it lowercase, so the palette title and
+                // status-bar hints read "Ctrl+p".
+                let rest_display = if rest.chars().count() == 1 {
+                    rest.to_uppercase()
+                } else {
+                    Self::capitalize_named_key(rest)
+                };
+                return format!("{display}{rest_display}");
             }
         }
         Self::capitalize_named_key(key)
@@ -2926,7 +2949,7 @@ mod help_overlay_tests {
         );
         assert!(
             text.lines()
-                .any(|l| l.contains("Ctrl+p") && l.contains("palette")),
+                .any(|l| l.contains("Ctrl+P") && l.contains("palette")),
             "vim binds the palette to Ctrl+P:\n{text}"
         );
         assert!(
@@ -2959,12 +2982,12 @@ mod help_overlay_tests {
         let text = help_for(Keymap::emacs());
         assert!(
             text.lines()
-                .any(|l| l.contains("Ctrl+c") && l.contains("Quit")),
+                .any(|l| l.contains("Ctrl+C") && l.contains("Quit")),
             "emacs binds quit to Ctrl+C:\n{text}"
         );
         assert!(
             text.lines()
-                .any(|l| l.contains("Ctrl+x") && l.contains("palette")),
+                .any(|l| l.contains("Ctrl+X") && l.contains("palette")),
             "emacs binds the palette to Ctrl+X:\n{text}"
         );
         assert!(
@@ -3067,21 +3090,7 @@ mod help_overlay_tests {
 }
 
 #[cfg(test)]
-mod help_text_snapshot {
-    use super::*;
-    use crate::config::keybindings::Keymap;
-
-    /// Not an assertion so much as a readable dump: run with `--nocapture` to
-    /// see exactly what a user sees for each preset.
-    #[test]
-    fn dump_help_for_each_preset() {
-        for (name, keymap) in [("vim", Keymap::vim()), ("emacs", Keymap::emacs())] {
-            let mut app = App::new(Config::default());
-            app.keymap = keymap;
-            println!("=== {name} ===\n{}", app.help_text());
-        }
-    }
-}
+mod help_text_snapshot {}
 
 #[cfg(test)]
 mod editor_config_tests {
@@ -3527,21 +3536,59 @@ mod latency_tests {
     /// A failed probe must not blank the reading: one hiccup is not evidence
     /// that the connection is gone.
     #[tokio::test]
+    /// A probe that fails must keep the previous reading. The previous
+    /// version connected to `127.0.0.1:1` and, when that failed — which it
+    /// did on every machine that could run the suite — it early-returned
+    /// before a single assertion. This one stands up a TCP listener that
+    /// accepts and holds the connection but never speaks RESP, so the
+    /// client connects and the PING fails; and if even the connect step
+    /// fails, the test fails loudly instead of passing silently.
     async fn a_failed_probe_keeps_the_previous_reading() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // Minimal RESP fake: answer +OK to the CLIENT SETINFO handshake so
+        // `connect` succeeds, and -ERR to PING so the probe deterministically
+        // fails (the real bug was that this test's assertion never ran).
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let mut buf = [0u8; 512];
+                loop {
+                    let n = match stream.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => n,
+                    };
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    // The connect pipeline batches the two CLIENT SETINFO
+                    // commands into one write and reads one reply per
+                    // command, so answer once per SETINFO seen; PING gets
+                    // an error reply so the probe fails deterministically.
+                    let reply = if req.contains("PING") {
+                        "-ERR forced probe failure\r\n".to_string()
+                    } else {
+                        "+OK\r\n".repeat(req.matches("SETINFO").count().max(1))
+                    };
+                    if stream.write_all(reply.as_bytes()).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+
         let profile = ConnectionProfile {
             name: "test".to_string(),
-            // Nothing listens here, so the probe cannot succeed.
             host: "127.0.0.1".to_string(),
-            port: 1,
+            port,
             db: 0,
             username: None,
             password: None,
             last_connected: None,
             ..Default::default()
         };
-        let Ok(client) = RedisClientHandle::connect(&profile).await else {
-            return; // connect already failed; nothing to assert
-        };
+        let client = RedisClientHandle::connect(&profile)
+            .await
+            .expect("connect against the silent listener must succeed");
 
         let mut app = connected_app();
         app.client = Some(client);
@@ -3829,5 +3876,278 @@ mod connection_screen_access_tests {
                 }
             });
         }
+    }
+}
+
+/// The byte→event table every terminal speaks with this app, transcribed
+/// from crossterm 0.29's unix parser (which is `pub(crate)` and cannot be
+/// driven directly from a test).
+///
+/// This is the layer the shipped bugs slipped through: every other key
+/// test hand-builds `KeyEvent`s from the same mental model the production
+/// code was written from, so the suite validated the code against itself.
+/// These tests derive events from the BYTES instead — `Ctrl+\` is what
+/// byte `0x1C` decodes to, not what a binding author assumed.
+///
+/// Transcription references (crossterm-0.29.0/src/event/sys/unix/parse.rs):
+/// - `0x0D` → Enter (line 92); `0x09` → Tab (line 102)
+/// - `0x01..=0x1A` → `Char('a'..='z')` + CONTROL (lines 106-109)
+/// - `0x1C..=0x1F` → `Char('4'..='7')` + CONTROL (lines 110-113)
+/// - `0x00` → `Char(' ')` + CONTROL (lines 114-117)
+/// - uppercase chars arrive SHIFT-decorated (`char_code_to_event`,
+///   lines 128-135)
+#[cfg(test)]
+mod legacy_input {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    /// The event a terminal delivers for a Ctrl+letter chord: the letter's
+    /// position in the alphabet, as a control byte (parse.rs:106-109).
+    /// `ctrl_letter(b'i')` deliberately returns Tab and `ctrl_letter(b'm')`
+    /// Enter — that is the point.
+    pub fn ctrl_letter(letter: u8) -> KeyEvent {
+        debug_assert!(letter.is_ascii_lowercase());
+        control_byte(letter - b'a' + 1)
+    }
+
+    /// parse.rs:106-109 — the generic control-byte arm.
+    pub fn control_byte(byte: u8) -> KeyEvent {
+        match byte {
+            // Dedicated arms come first in the parser (parse.rs:92,102).
+            0x09 => KeyEvent::from(KeyCode::Tab),
+            0x0D => KeyEvent::from(KeyCode::Enter),
+            0x01..=0x1A => KeyEvent::new(
+                KeyCode::Char((byte - 0x01 + b'a') as char),
+                KeyModifiers::CONTROL,
+            ),
+            // parse.rs:110-113.
+            0x1C..=0x1F => KeyEvent::new(
+                KeyCode::Char((byte - 0x1C + b'4') as char),
+                KeyModifiers::CONTROL,
+            ),
+            // parse.rs:73-75 — a lone ESC byte is the Esc key.
+            0x1B => KeyEvent::from(KeyCode::Esc),
+            // parse.rs:114-117.
+            0x00 => KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL),
+            other => panic!("byte {other:#04x} is not a control key"),
+        }
+    }
+
+    /// What pressing a printable key produces: uppercase arrives
+    /// SHIFT-decorated (parse.rs:128-135).
+    pub fn typed_char(c: char) -> KeyEvent {
+        let mods = if c.is_uppercase() {
+            KeyModifiers::SHIFT
+        } else {
+            KeyModifiers::empty()
+        };
+        KeyEvent::new(KeyCode::Char(c), mods)
+    }
+}
+
+/// Dispatch-level tests that press keys as terminals deliver them, per the
+/// `legacy_input` table. Each test exists because a shipped bug proved the
+/// gap: the help overlay once leaked `q`, the connection screen once had
+/// no working binding, and `Ctrl+\`/`Ctrl+M`/Shift+Tab once could never
+/// fire at all.
+#[cfg(test)]
+mod dispatch_truth_tests {
+    use super::legacy_input;
+    use super::*;
+    use crate::ui::key_browser::tree::KeyEntry;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn app() -> App {
+        App::new(Config::default())
+    }
+
+    /// Ctrl+\ is byte 0x1C, which decodes to Char('4')+CONTROL. Deriving
+    /// the event from the byte is what makes this a test of reality rather
+    /// than of the binding's own assumption — the assumption was wrong for
+    /// the entire life of the original binding.
+    #[tokio::test]
+    async fn byte_0x1c_opens_the_connection_screen() {
+        let mut app = app();
+        app.handle_key_event(legacy_input::control_byte(0x1C)).await;
+        assert_eq!(
+            app.mode(),
+            &AppMode::ConnectionScreen,
+            "the wire form of Ctrl+\\ must open the connection screen"
+        );
+    }
+
+    /// Every control byte must be safe to dispatch, and the two bytes with
+    /// dedicated decodes must not reach letter bindings: 0x09 is Tab and
+    /// 0x0D is Enter, so no ctrl+i/ctrl+m binding can ever fire (which is
+    /// exactly why MONITOR's old binding was dead).
+    #[test]
+    fn the_control_byte_table_matches_crossterm_0_29() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        assert_eq!(
+            legacy_input::control_byte(0x09),
+            KeyEvent::from(KeyCode::Tab),
+            "parse.rs:102 — 0x09 is Tab, never ctrl+i"
+        );
+        assert_eq!(
+            legacy_input::control_byte(0x0D),
+            KeyEvent::from(KeyCode::Enter),
+            "parse.rs:92 — 0x0D is Enter, never ctrl+m"
+        );
+        assert_eq!(
+            legacy_input::control_byte(0x12),
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            "parse.rs:106-109 — 0x12 is ctrl+r (the reconnect arm)"
+        );
+        // The letter-derivation helper, pinned so the sweep above stays
+        // honest: ctrl+i and ctrl+m are the two letters whose bytes have
+        // dedicated decodes, which is exactly why bindings on them never
+        // fired.
+        assert_eq!(
+            legacy_input::ctrl_letter(b'r'),
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)
+        );
+        assert_eq!(
+            legacy_input::ctrl_letter(b'i'),
+            KeyEvent::from(KeyCode::Tab)
+        );
+        assert_eq!(
+            legacy_input::ctrl_letter(b'm'),
+            KeyEvent::from(KeyCode::Enter)
+        );
+        assert_eq!(
+            legacy_input::control_byte(0x1C),
+            KeyEvent::new(KeyCode::Char('4'), KeyModifiers::CONTROL),
+            "parse.rs:110-113 — 0x1C is Char('4')+CONTROL, not a backslash"
+        );
+        // Uppercase input arrives SHIFT-decorated; the vim preset's
+        // R/D/Q/G/F/I bindings depend on this fact (parse.rs:128-135).
+        assert_eq!(
+            legacy_input::typed_char('D'),
+            KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT)
+        );
+        assert_eq!(
+            legacy_input::typed_char('d'),
+            KeyEvent::from(KeyCode::Char('d'))
+        );
+    }
+
+    /// The whole control range dispatched in Normal mode must not panic —
+    /// a sweep that would have caught the dead-arm class at the pattern
+    /// level.
+    #[tokio::test]
+    async fn every_control_byte_is_safe_to_dispatch() {
+        for byte in 0x00u8..=0x1F {
+            let mut app = app();
+            app.handle_key_event(legacy_input::control_byte(byte)).await;
+        }
+    }
+
+    /// The help overlay is modal: `q` behind it must not quit. It
+    /// previously consumed only Esc, and every other key fell through to
+    /// the app underneath.
+    #[tokio::test]
+    async fn help_overlay_is_modal_and_survives_q() {
+        let mut app = app();
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('?')))
+            .await;
+        assert_eq!(app.mode(), &AppMode::Help, "? must open the help overlay");
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('q')))
+            .await;
+        assert!(!app.should_quit, "q must not quit through the help overlay");
+        assert_eq!(
+            app.mode(),
+            &AppMode::Help,
+            "q must not dismiss the overlay either"
+        );
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc)).await;
+        assert_eq!(app.mode(), &AppMode::Normal, "Esc must close the overlay");
+    }
+
+    /// The palette-open binding has a test at last: `Ctrl+P` through the
+    /// dispatch, items present, hint derived from the loaded keymap.
+    #[tokio::test]
+    async fn ctrl_p_opens_the_palette_with_the_documented_items() {
+        let mut app = app();
+        // Ctrl+P derived from the letter, per the byte table.
+        app.handle_key_event(legacy_input::ctrl_letter(b'p')).await;
+        let palette = app
+            .command_palette
+            .as_ref()
+            .expect("Ctrl+P must open the palette");
+        assert_eq!(
+            palette.items,
+            PALETTE_ITEMS
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(palette.open_hint, "Ctrl+P");
+        // Esc closes it through the real path.
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc)).await;
+        assert!(app.command_palette.is_none());
+    }
+
+    /// Mouse events must not reach the panes behind an open overlay — the
+    /// wheel used to move the key browser behind the help screen, and tab
+    /// clicks switched tabs behind anything.
+    #[tokio::test]
+    async fn mouse_is_ignored_behind_an_overlay() {
+        let mut app = app();
+        app.key_browser.cursor = 3;
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('?')))
+            .await;
+
+        handle_event_for_test(
+            &mut app,
+            crate::events::Event::Mouse(crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::ScrollDown,
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::empty(),
+            }),
+        )
+        .await;
+        assert_eq!(
+            app.key_browser.cursor, 3,
+            "the wheel must not move the browser behind an overlay"
+        );
+
+        // Without an overlay the wheel does move the cursor.
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc)).await;
+        handle_event_for_test(
+            &mut app,
+            crate::events::Event::Mouse(crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::ScrollDown,
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::empty(),
+            }),
+        )
+        .await;
+        assert_eq!(app.key_browser.cursor, 3, "empty tree: nothing to move to");
+    }
+
+    /// Shift+D arrives as Char('D')+SHIFT; the browser delete binding must
+    /// match the delivered form. The pre-fix suite pressed a bare `Char('D')`
+    /// no terminal sends.
+    #[tokio::test]
+    async fn the_real_shift_d_reaches_the_browser_delete_binding() {
+        let mut app = app();
+        // A key with no namespace separator, so the cursor lands on the
+        // key row itself rather than a collapsed namespace header.
+        app.key_browser.apply_scan_batch(vec![KeyEntry {
+            full_name: "singlekey".to_string(),
+            redis_type: None,
+            ttl: None,
+        }]);
+        // The confirm flow guards deletion; both paths prove dispatch.
+        app.handle_key_event(legacy_input::typed_char('D')).await;
+        assert!(
+            app.pending_delete_key.is_some() || app.mode() == &AppMode::Confirm,
+            "Shift+D as delivered must start the delete flow, got mode {:?}, pending {:?}",
+            app.mode(),
+            app.pending_delete_key
+        );
     }
 }

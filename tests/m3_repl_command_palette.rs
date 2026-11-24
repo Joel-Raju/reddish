@@ -2,24 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::backend::TestBackend;
 use reddish_tui::events::Event;
 use reddish_tui::ui::command_palette::{CommandPalette, PaletteAction};
-use reddish_tui::ui::repl::{ReplAction, ReplLine, ReplLineStatus, ReplWidget};
-
-#[test]
-fn test_repl_line_status() {
-    let line = ReplLine {
-        input: "PING".to_string(),
-        output: "PONG".to_string(),
-        status: ReplLineStatus::Success,
-    };
-    assert_eq!(line.status, ReplLineStatus::Success);
-
-    let err_line = ReplLine {
-        input: "GET".to_string(),
-        output: "Error".to_string(),
-        status: ReplLineStatus::Error("ERR".to_string()),
-    };
-    assert!(matches!(err_line.status, ReplLineStatus::Error(ref s) if s == "ERR"));
-}
+use reddish_tui::ui::repl::{ReplAction, ReplLineStatus, ReplWidget};
 
 /// Isolated history path so tests never touch the developer's real REPL
 /// history file.
@@ -111,54 +94,87 @@ fn test_palette_renders_without_panic() {
     let _ = terminal.draw(|f| palette.render(f, f.area()));
 }
 
-#[test]
-fn test_app_repl_tab_switch() {
+#[tokio::test]
+async fn test_app_repl_tab_switch() {
+    use crossterm::event::{KeyCode, KeyEvent};
+
     let mut app = reddish_tui::app::App::new(reddish_tui::config::Config::default());
     assert_eq!(app.active_tab, reddish_tui::app::Tab::Keys);
-    // Simulate tab switch to REPL
-    app.active_tab = reddish_tui::app::Tab::Repl;
-    assert_eq!(app.active_tab, reddish_tui::app::Tab::Repl);
+    // The real dispatch: the tab keys themselves. The previous version
+    // assigned `active_tab` and asserted the assignment.
+    for (key, tab) in [
+        ('2', reddish_tui::app::Tab::Repl),
+        ('3', reddish_tui::app::Tab::Info),
+        ('4', reddish_tui::app::Tab::PubSub),
+        ('1', reddish_tui::app::Tab::Keys),
+    ] {
+        reddish_tui::app::handle_key_event_for_test(&mut app, KeyEvent::from(KeyCode::Char(key)))
+            .await;
+        assert_eq!(app.active_tab, tab, "pressing {key} must switch tabs");
+    }
 }
 
-#[test]
-fn test_app_repl_overlay_press_colon() {
+#[tokio::test]
+async fn test_app_repl_overlay_press_colon() {
+    use crossterm::event::{KeyCode, KeyEvent};
     use reddish_tui::app::AppMode;
-
-    let app = reddish_tui::app::App::new(reddish_tui::config::Config::default());
-    assert_eq!(app.mode(), &AppMode::Normal);
-    assert!(app.overlay_input.is_none());
-}
-
-#[test]
-fn test_app_repl_overlay_esc_closes() {
-    use reddish_tui::app::AppMode;
-    use reddish_tui::ui::widgets::input::InputWidget;
 
     let mut app = reddish_tui::app::App::new(reddish_tui::config::Config::default());
-    app.mode_stack.push(AppMode::ReplOverlay);
-    app.overlay_input = Some(InputWidget::new("hello"));
-    assert_eq!(app.mode(), &AppMode::ReplOverlay);
-
-    app.mode_stack.pop();
-    app.overlay_input = None;
     assert_eq!(app.mode(), &AppMode::Normal);
     assert!(app.overlay_input.is_none());
+    // The real dispatch: the previous version pressed nothing.
+    reddish_tui::app::handle_key_event_for_test(&mut app, KeyEvent::from(KeyCode::Char(':'))).await;
+    assert_eq!(
+        app.mode(),
+        &AppMode::ReplOverlay,
+        "pressing : opens the overlay"
+    );
+    assert!(
+        app.overlay_input.is_some(),
+        "the overlay owns an input line"
+    );
 }
 
-#[test]
-fn test_app_repl_overlay_enter_executes() {
-    use reddish_tui::app::AppMode;
-    use reddish_tui::ui::widgets::input::InputWidget;
+#[tokio::test]
+async fn test_app_repl_overlay_esc_closes() {
+    use crossterm::event::{KeyCode, KeyEvent};
+    use reddish_tui::app::{self, AppMode};
 
     let mut app = reddish_tui::app::App::new(reddish_tui::config::Config::default());
-    app.mode_stack.push(AppMode::ReplOverlay);
-    app.overlay_input = Some(InputWidget::new("PING"));
+    // Open the overlay the way a user does.
+    app::handle_key_event_for_test(&mut app, KeyEvent::from(KeyCode::Char(':'))).await;
     assert_eq!(app.mode(), &AppMode::ReplOverlay);
 
-    app.mode_stack.pop();
-    app.overlay_input = None;
-    assert_eq!(app.mode(), &AppMode::Normal);
+    app::handle_key_event_for_test(&mut app, KeyEvent::from(KeyCode::Esc)).await;
+    assert_eq!(app.mode(), &AppMode::Normal, "Esc must close the overlay");
+    assert!(app.overlay_input.is_none(), "Esc must drop the input line");
+}
+
+#[tokio::test]
+async fn test_app_repl_overlay_enter_executes() {
+    use crossterm::event::{KeyCode, KeyEvent};
+    use reddish_tui::app::{self, AppMode};
+
+    let mut app = reddish_tui::app::App::new(reddish_tui::config::Config::default());
+    // Open the overlay and type the command key by key — the real user
+    // path. The old test constructed `InputWidget::new("PING")`, but that
+    // constructor takes a *label*, so the value was always empty, its
+    // Enter executed nothing, and the test merely popped the mode stack
+    // itself and asserted the pop.
+    app::handle_key_event_for_test(&mut app, KeyEvent::from(KeyCode::Char(':'))).await;
+    assert_eq!(app.mode(), &AppMode::ReplOverlay);
+    for c in "PING".chars() {
+        app::handle_key_event_for_test(&mut app, KeyEvent::from(KeyCode::Char(c))).await;
+    }
+
+    app::handle_key_event_for_test(&mut app, KeyEvent::from(KeyCode::Enter)).await;
+    assert_eq!(app.mode(), &AppMode::Normal, "Enter must close the overlay");
     assert!(app.overlay_input.is_none());
+    assert_eq!(
+        app.error_message.as_deref(),
+        Some("Not connected"),
+        "Enter must have executed PING, which fails with no client — the failure is the proof it ran"
+    );
 }
 
 #[test]

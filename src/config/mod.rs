@@ -45,10 +45,17 @@ pub struct Config {
 impl Config {
     pub fn load() -> Result<Self> {
         let path = config_path()?;
+        Self::load_from_path(&path)
+    }
+
+    /// The load path, parameterized by file so tests can point it at a
+    /// temp file. `load()` previously had no coverage: corrupt-file
+    /// behaviour, missing-file defaults, nothing.
+    pub fn load_from_path(path: &std::path::Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let contents = std::fs::read_to_string(&path)?;
+        let contents = std::fs::read_to_string(path)?;
         let config: Config = toml::from_str(&contents).map_err(|e| {
             color_eyre::eyre::eyre!("Invalid TOML in config file {:?}: {}", path, e)
         })?;
@@ -295,5 +302,70 @@ mod reachability_tests {
     fn refresh_interval_is_read_from_config() {
         let c: Config = toml::from_str("refresh_interval_ms = 500").expect("valid TOML");
         assert_eq!(c.refresh_interval_ms(), 500);
+    }
+}
+
+#[cfg(test)]
+mod load_tests {
+    use super::Config;
+    use std::path::PathBuf;
+
+    fn temp_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("reddish-config-{name}-{}", std::process::id()))
+    }
+
+    /// The load path had no coverage at all before: corrupt files,
+    /// missing files, none of it was tested.
+    #[test]
+    fn a_missing_file_yields_defaults() {
+        let path = temp_path("missing-does-not-exist");
+        let _ = std::fs::remove_file(&path);
+        let config = Config::load_from_path(&path).unwrap();
+        assert_eq!(config.scan_count(), 200, "the default must apply");
+    }
+
+    #[test]
+    fn a_valid_file_is_parsed() {
+        let path = temp_path("valid");
+        std::fs::write(&path, "scan_count = 7\nrefresh_interval_ms = 250\n").unwrap();
+        let config = Config::load_from_path(&path).unwrap();
+        assert_eq!(config.scan_count(), 7);
+        assert_eq!(config.refresh_interval_ms(), 250);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_corrupt_file_is_an_error_that_names_the_path() {
+        let path = temp_path("corrupt");
+        std::fs::write(&path, "not [valid toml").unwrap();
+        let err = Config::load_from_path(&path).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Invalid TOML"), "got: {msg}");
+        assert!(
+            msg.contains("corrupt"),
+            "the error must name the file: {msg}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The wiring this suite once faked: a keybinding override in the
+    /// config file must reach the keymap the app loads. The schema is a
+    /// nested table per action — `quit = 'Q'` (a bare string) does NOT
+    /// parse, and that foot-gun is exactly the kind of thing a test
+    /// should pin.
+    #[test]
+    fn keybinding_overrides_in_the_file_reach_the_keymap() {
+        let path = temp_path("keybindings");
+        std::fs::write(
+            &path,
+            "[keybindings.quit]\nkey = 'Q'\n\n[keybindings.refresh]\nkey = 'ctrl+x'\n",
+        )
+        .unwrap();
+        let config = Config::load_from_path(&path).unwrap();
+        assert_eq!(config.keybindings.binding("quit"), Some("Q"));
+        assert_eq!(config.keybindings.binding("refresh"), Some("ctrl+x"));
+        // Untouched fields keep their preset defaults.
+        assert_eq!(config.keybindings.binding("filter"), Some("/"));
+        let _ = std::fs::remove_file(&path);
     }
 }

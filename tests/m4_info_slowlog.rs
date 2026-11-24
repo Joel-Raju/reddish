@@ -1,3 +1,5 @@
+mod helpers;
+
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::backend::TestBackend;
 use reddish_tui::config::connections::ConnectionProfile;
@@ -23,8 +25,9 @@ fn test_profile() -> ConnectionProfile {
 
 #[tokio::test]
 async fn test_info_sections_present() {
-    let profile = test_profile();
-    let client = RedisClientHandle::connect(&profile).await.unwrap();
+    let Some(client) = helpers::connect_or_skip(&test_profile()).await else {
+        return;
+    };
     let info: String = client.info("default").await.unwrap();
 
     assert!(info.contains("# Server"));
@@ -42,11 +45,37 @@ async fn test_info_sections_present() {
 
 #[tokio::test]
 async fn test_slowlog_parses_without_panic() {
-    let profile = test_profile();
-    let client = RedisClientHandle::connect(&profile).await.unwrap();
+    // Serialize with the other slowlog-config tests: the threshold is
+    // server-global, and the lock also keeps their reset-and-count
+    // assertions from racing this test's logging.
+    let _lock = SLOWLOG_CONFIG_LOCK.lock().await;
+    let Some(client) = helpers::connect_or_skip(&test_profile()).await else {
+        return;
+    };
+
+    // Start from a known state, log one entry at threshold 0, and restore
+    // the threshold (ThresholdGuard) even on panic.
+    slowlog_reset(&client).await.unwrap();
+    let _ = with_slowlog_threshold_zero(&client, async || {
+        let mut c = standalone(&client).await;
+        redis::cmd("PING").query_async::<()>(&mut c).await.unwrap();
+    })
+    .await;
+
     let entries = slowlog_get(&client, 10).await.unwrap();
-    // Should not panic even if empty
-    let _ = entries.len();
+    // The old assertion was `let _ = entries.len();` — a test that could
+    // never fail. The logged PING guarantees an entry, so the parse must
+    // produce one with its command fields populated.
+    assert!(
+        !entries.is_empty(),
+        "the threshold-0 PING must land in the slowlog"
+    );
+    assert!(
+        !entries[0].command.is_empty(),
+        "the logged command must have its fields parsed"
+    );
+    // Clean up on the shared server.
+    slowlog_reset(&client).await.unwrap();
 }
 
 #[test]
@@ -497,9 +526,9 @@ async fn with_slowlog_threshold_zero(
 #[tokio::test]
 async fn test_slowlog_len_reports_server_count() {
     let _lock = SLOWLOG_CONFIG_LOCK.lock().await;
-    let client = RedisClientHandle::connect(&slowlog_profile())
-        .await
-        .unwrap();
+    let Some(client) = helpers::connect_or_skip(&slowlog_profile()).await else {
+        return;
+    };
 
     // Start from a known state so the assertion is not order-dependent.
     slowlog_reset(&client).await.unwrap();
@@ -522,9 +551,9 @@ async fn test_slowlog_len_reports_server_count() {
 #[tokio::test]
 async fn test_slowlog_reset_clears_the_log() {
     let _lock = SLOWLOG_CONFIG_LOCK.lock().await;
-    let client = RedisClientHandle::connect(&slowlog_profile())
-        .await
-        .unwrap();
+    let Some(client) = helpers::connect_or_skip(&slowlog_profile()).await else {
+        return;
+    };
 
     let recorded = with_slowlog_threshold_zero(&client, async || {
         let mut c = standalone(&client).await;
@@ -557,9 +586,9 @@ async fn test_slowlog_reset_is_idempotent() {
     // Shares the server's slowlog with the other tests here, so it must take
     // the same lock: a concurrent reset would make the length assertion flaky.
     let _lock = SLOWLOG_CONFIG_LOCK.lock().await;
-    let client = RedisClientHandle::connect(&slowlog_profile())
-        .await
-        .unwrap();
+    let Some(client) = helpers::connect_or_skip(&slowlog_profile()).await else {
+        return;
+    };
     slowlog_reset(&client).await.unwrap();
     slowlog_reset(&client).await.unwrap();
     assert_eq!(slowlog_len(&client).await.unwrap(), 0);

@@ -67,16 +67,19 @@ async fn test_event_tick_fires() {
     );
 }
 
-#[test]
-fn test_app_quits_on_q() {
+#[tokio::test]
+async fn test_app_quits_on_q() {
     let mut app = App::new(Config::default());
     assert!(!app.should_quit);
-    // Simulate pressing 'q' by checking the run loop logic directly.
-    // Since we can't easily drive the event loop in a unit test without
-    // the real EventHandler (which spawns blocking threads), we test
-    // the state transition directly:
-    app.should_quit = true;
-    assert!(app.should_quit);
+    // The real dispatch: pressing `q` through the key handling path. The
+    // previous version assigned `should_quit = true` and asserted the
+    // assignment — it proved nothing about the app.
+    reddish_tui::app::handle_key_event_for_test(
+        &mut app,
+        crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('q')),
+    )
+    .await;
+    assert!(app.should_quit, "pressing q must quit through dispatch");
 }
 
 #[test]

@@ -241,3 +241,104 @@ mod secret_tests {
         assert_eq!(p.resolve().unwrap(), SECRET);
     }
 }
+
+/// Build a connection profile from a `redis://` / `rediss://` URL.
+///
+/// Previously this lived in `main.rs` (the binary crate) with no test
+/// coverage at all — the README's headline usage (`--url`) was tested
+/// nowhere. Pure, so it lives here where tests can reach it.
+pub fn profile_from_url(url: &str) -> color_eyre::Result<ConnectionProfile> {
+    use redis::IntoConnectionInfo;
+    let info = url.into_connection_info()?;
+
+    let (host, port, tls_enabled) = match info.addr {
+        redis::ConnectionAddr::Tcp(host, port) => (host, port, false),
+        redis::ConnectionAddr::TcpTls { host, port, .. } => (host, port, true),
+        _ => {
+            return Err(color_eyre::eyre::eyre!(
+                "unsupported connection address in URL"
+            ));
+        }
+    };
+
+    let db = u8::try_from(info.redis.db)
+        .map_err(|_| color_eyre::eyre::eyre!("URL db index out of range for u8"))?;
+
+    Ok(ConnectionProfile {
+        name: "cli-url".to_string(),
+        host,
+        port,
+        db,
+        username: info.redis.username,
+        password: info.redis.password.map(PasswordRef::Plaintext),
+        last_connected: None,
+        mode: ConnectionMode::Standalone,
+        tls: if tls_enabled {
+            Some(TlsConfig {
+                enabled: true,
+                verify_certs: true,
+                ca_cert_path: None,
+                client_cert_path: None,
+                client_key_path: None,
+            })
+        } else {
+            None
+        },
+        ssh_tunnel: None,
+    })
+}
+
+#[cfg(test)]
+mod url_tests {
+    use super::profile_from_url;
+
+    #[test]
+    fn plain_redis_url_parses_every_field() {
+        let p = profile_from_url("redis://user:secret@db.example:6380/3").unwrap();
+        assert_eq!(p.host, "db.example");
+        assert_eq!(p.port, 6380);
+        assert_eq!(p.db, 3);
+        assert_eq!(p.username.as_deref(), Some("user"));
+        assert!(
+            matches!(p.password, Some(crate::config::connections::PasswordRef::Plaintext(ref s)) if s == "secret"),
+            "the URL password must arrive as a plaintext ref"
+        );
+        assert!(p.tls.is_none(), "redis:// must not enable TLS");
+    }
+
+    #[test]
+    fn defaults_apply_when_url_has_no_extras() {
+        let p = profile_from_url("redis://127.0.0.1").unwrap();
+        assert_eq!(p.host, "127.0.0.1");
+        assert_eq!(p.port, 6379, "the redis crate applies the default port");
+        assert_eq!(p.db, 0);
+    }
+
+    #[test]
+    fn rediss_enables_tls_with_verification() {
+        let p = profile_from_url("rediss://secure.example:6380/0").unwrap();
+        let tls = p.tls.as_ref().expect("rediss:// must enable TLS");
+        assert!(tls.enabled);
+        assert!(tls.verify_certs, "TLS verification must default to on");
+    }
+
+    #[test]
+    fn a_db_index_that_cannot_fit_u8_is_rejected() {
+        // db=16 is *valid* here: how many databases a server has is
+        // server-side state (databases=32 servers exist), so the client
+        // accepts it and lets SELECT fail if the server disagrees. Only
+        // values that cannot fit the u8 field are rejected up front.
+        profile_from_url("redis://127.0.0.1:6379/16").unwrap();
+        let err = profile_from_url("redis://127.0.0.1:6379/300").unwrap_err();
+        assert!(
+            err.to_string().contains("out of range"),
+            "db 300 must be rejected, got: {err}"
+        );
+    }
+
+    #[test]
+    fn garbage_is_rejected_not_panicked() {
+        assert!(profile_from_url("not a url at all").is_err());
+        assert!(profile_from_url("http://wrong-scheme").is_err());
+    }
+}

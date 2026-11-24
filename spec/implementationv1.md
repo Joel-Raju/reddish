@@ -540,7 +540,7 @@ The `PLAN.md` defined 6 phases (A–F) with 15 sub-milestones. Below is the curr
 | **E** | E1 — MONITOR mode | ✅ **Complete** | `--allow-monitor` flag, `client.monitor()` returns unbounded receiver, `Ctrl+M` toggles overlay, `drain_monitor_messages()` on tick, 1000-line cap. 3 tests | Unavailable in cluster mode (returns `None`) |
 | **E** | E2 — String editor + `$EDITOR` | ✅ **Complete** | `edit_in_external_editor` + TUI suspend/resume; built-in editor is a centred popup over the value pane | None |
 | **F** | F1 — CI & Audit | ✅ **Complete** | 6-job matrix; `cargo audit` clean after bumping crossbeam-epoch | — |
-| **F** | F2 — Documentation | ✅ **Complete** | README quick-start + keybindings, MANUAL_TESTING.md, CHANGELOG.md, `man/redis-tui.1` | — |
+| **F** | F2 — Documentation | ✅ **Complete** | README quick-start + keybindings, TESTING_PLAN.md (consolidated; MANUAL_TESTING.md was folded into it and retired), CHANGELOG.md, `man/redis-tui.1` | — |
 
 #### Implementation Notes / Deviations from PLAN.md
 

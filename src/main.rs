@@ -73,14 +73,14 @@ fn main() -> Result<()> {
         if let Some(profile) = resolve_profile(profile_name)? {
             app.startup_profile = Some(profile);
         } else {
-            app.error_message = Some(format!("Profile not found: {profile_name}"));
+            app.set_error(format!("Profile not found: {profile_name}"));
         }
     }
 
     if let Some(url) = cli.url.as_deref() {
         match profile_from_url(url) {
             Ok(profile) => app.startup_profile = Some(profile),
-            Err(err) => app.error_message = Some(format!("Invalid --url: {err}")),
+            Err(err) => app.set_error(format!("Invalid --url: {err}")),
         }
     }
 

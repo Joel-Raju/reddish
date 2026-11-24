@@ -433,7 +433,8 @@ As milestone files empty out, delete them:
 - Delete empty milestone files
 - Update `Cargo.toml` if any `[[test]]` entries reference milestone names
 - Update CI to run `cargo test --lib` + `cargo test --test <feature>`
-- Update `MANUAL_TESTING.md` if it references test file names
+- Update `TESTING_PLAN.md` if it references test file names (it absorbed
+  the former MANUAL_TESTING.md)
 
 ---
 

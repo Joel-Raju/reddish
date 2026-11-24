@@ -206,6 +206,13 @@ every write, and the REPL refuses `FLUSHDB`, `FLUSHALL` and `KEYS *`.
   "Ctrl+C forces quit from any prompt" line are gone; the previously
   undocumented fixed chords (connection screen, reconnect, MONITOR) are
   listed.
+- **Startup failures are visible.** An invalid `--url` or an unknown
+  `--profile` used to write a message nothing rendered; both now toast
+  in the status bar like every other error.
+- **One test plan.** `MANUAL_TESTING.md` is retired and folded into
+  `TESTING_PLAN.md`, which now covers the full matrix: every startup
+  path and its failure modes, per-type editing for all six Redis types,
+  keybinding overrides, and the troubleshooting table.
 
 - **Key list rendering is windowed.** With every namespace expanded the browser
   allocated a `ListItem` — a `String` and a `Style` — for all 10,001 rows on

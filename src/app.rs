@@ -1137,7 +1137,9 @@ impl App {
     /// nothing — every "the app shows a message" claim in the docs was
     /// hollow. This setter keeps the field (tests and internal state read
     /// it) and finally mirrors each write into the status-bar toast queue.
-    fn set_error(&mut self, msg: String) {
+    /// Public because `main.rs` reports startup failures (`--profile` not
+    /// found, invalid `--url`) through it — those were also invisible.
+    pub fn set_error(&mut self, msg: String) {
         self.error_message = Some(msg.clone());
         self.status_bar.push_error(msg);
     }
@@ -4148,6 +4150,33 @@ mod dispatch_truth_tests {
             "Shift+D as delivered must start the delete flow, got mode {:?}, pending {:?}",
             app.mode(),
             app.pending_delete_key
+        );
+    }
+}
+
+#[cfg(test)]
+mod set_error_tests {
+    use super::*;
+
+    /// The whole point of `set_error`: the message must land in the
+    /// status-bar toast queue, not just the write-only field. Startup
+    /// failures (`--profile` not found, invalid `--url`) report through
+    /// it, so the visibility contract matters beyond in-app paths.
+    #[test]
+    fn set_error_surfaces_in_the_status_bar_toast_queue() {
+        let mut app = App::new(Config::default());
+        assert!(app.error_message.is_none());
+        app.set_error("Profile not found: scratch".to_string());
+        assert_eq!(
+            app.error_message.as_deref(),
+            Some("Profile not found: scratch")
+        );
+        assert!(
+            app.status_bar
+                .error_notifications
+                .iter()
+                .any(|(msg, _)| msg == "Profile not found: scratch"),
+            "the toast queue must carry the message"
         );
     }
 }

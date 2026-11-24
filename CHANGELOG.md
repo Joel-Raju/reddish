@@ -14,7 +14,7 @@ browser, a typed value inspector covering all six Redis types, a REPL with
 fuzzy autocomplete, Pub/Sub, global key search, and a server dashboard with
 per-second stats and slow-log analysis.
 
-Six themes, vim and emacs keymap presets, cluster / sentinel / TLS support,
+Five themes, vim and emacs keymap presets, cluster / sentinel / TLS support,
 `$EDITOR` integration, and enforced performance budgets. `--readonly` blocks
 every write, and the REPL refuses `FLUSHDB`, `FLUSHALL` and `KEYS *`.
 
@@ -141,8 +141,9 @@ every write, and the REPL refuses `FLUSHDB`, `FLUSHALL` and `KEYS *`.
   overrides it.
 - **The status bar shows a live latency.** `StatusBar::latency_ms` was never
   assigned anywhere, so the field it renders was permanently blank. A PING
-  every ~1s now fills it in; a failed probe keeps the previous reading rather
-  than blanking the field.
+  every ~4s at the default `refresh_interval_ms` of 1000 now fills it in
+  (the probe runs every 4th tick); a failed probe keeps the previous reading
+  rather than blanking the field.
 
 - **`refresh_interval_ms` is now honoured.** It was documented as the refresh
   interval and appeared in the example config, but nothing read it — the event
@@ -162,6 +163,49 @@ every write, and the REPL refuses `FLUSHDB`, `FLUSHALL` and `KEYS *`.
   `Switch:Keys`/`REPL`/`Info`/`PubSub` but only wired `Quit` — executing a
   switch item closed the overlay and did nothing. All items are wired, and an
   unwired one now reports itself instead of silently doing nothing.
+- **The uppercase bindings finally fire.** Terminals deliver `D`, `R`, `Q`,
+  `G`, `F`, `I` with a SHIFT modifier (crossterm decorates uppercase input),
+  and `matches()` demanded exact modifiers — so the vim preset's refresh,
+  element-delete, zset filter, stream follow/groups, and list-insert keys
+  were dead on every real machine while their unit tests stayed green. The
+  delete case was worse: the inspector ignored the key and the browser's
+  modifier-blind fallback prompted to delete the **entire key** instead of
+  the selected element. Key spellings now parse to the event the wire
+  carries, and every preset binding is checked against the legacy decode
+  table by a test plus startup validation for user config.
+- **MONITOR is reachable.** It was toggled with `Ctrl+M` — byte `0x0D`, which
+  every terminal delivers as Enter. The toggle is `Alt+M`; raw mode is
+  `Alt+R` (the old `Ctrl+R` was shadowed by global reconnect); Shift+Tab
+  cycles autocomplete backwards (legacy sends `ESC[Z` = BackTab); `Ctrl+U`
+  clears the input line.
+- **The help overlay is modal.** It consumed only Esc, so `q` quit the app
+  through the overlay and `?` stacked a second help screen.
+- **Errors are visible.** `App::error_message` was written in ~60 places and
+  rendered by nothing — readonly blocks, "Copied:", CSV export paths,
+  palette mis-wiring reports, all invisible. Every write now also pushes a
+  status-bar toast.
+- **The built-in string editor is modal.** Its advertised `Ctrl+S` save
+  opened the global search overlay and `Ctrl+X` opened the palette, because
+  global bindings ran before the editor saw the key.
+- **The inspector honors the keymap's navigation bindings.** Emacs
+  `Ctrl+N`/`Ctrl+P` previously fell through and moved the key browser
+  behind the open value.
+- **REPL pipelines record per-command errors and keep running**, as this
+  changelog already claimed: a failing stage no longer aborts the line.
+- **`[keybindings]` config finally loads.** The serde defaults existed on
+  every field while `App` hardcoded the vim preset, so user keybinding TOML
+  was silently ignored. The same fix wired `mouse_enabled`.
+- **The emacs preset is deliverable.** All 14 `ctrl+shift+<letter>` chords
+  are byte-identical to plain `ctrl+` chords in legacy encoding; the preset
+  now uses vim's contextual inspector letters. `set_inter` (`Ctrl+I` is
+  Tab), `set_diff` (shadowed by delete), `rename_key` (shadowed by
+  reconnect) and `go_up` (shadowed by nav-left) rebound.
+- **Mouse events no longer drive the panes behind an open overlay.**
+- **Help text, status-bar hints and the palette title are generated from
+  the loaded keymap.** The duplicated consumer-groups row and the false
+  "Ctrl+C forces quit from any prompt" line are gone; the previously
+  undocumented fixed chords (connection screen, reconnect, MONITOR) are
+  listed.
 
 - **Key list rendering is windowed.** With every namespace expanded the browser
   allocated a `ListItem` — a `String` and a `Style` — for all 10,001 rows on

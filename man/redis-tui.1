@@ -107,6 +107,30 @@ Stream follow mode, XTRIM, and the consumer groups panel.
 .TP
 .B Tab
 Cycle string view mode: Raw, JSON, Base64, Hex.
+.SS REPL
+.TP
+.B Enter
+Run the command. Pipelines use ;; — each stage's output pipes into the
+next; a failing stage records its own error and the rest still run.
+.TP
+.B Up / Down
+Recall command history.
+.TP
+.B Tab / Shift+Tab
+Open the suggestion list and cycle it; Enter accepts the highlighted item.
+.TP
+.B Alt+M
+Toggle the MONITOR pane (requires \-\-allow\-monitor). Ctrl+M cannot be
+bound: byte 0x0D is Enter.
+.TP
+.B Alt+R
+Toggle raw output mode.
+.TP
+.B Ctrl+L
+Clear the output pane.
+.TP
+.B Ctrl+U
+Clear the input line.
 .SH EXIT STATUS
 .TP
 .B 0

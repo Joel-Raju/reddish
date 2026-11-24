@@ -73,15 +73,18 @@ A pre-generated roff man page lives at `man/redis-tui.1`. Install it with:
 sudo install -Dm644 man/redis-tui.1 /usr/local/share/man/man1/redis-tui.1
 ```
 
-It is built from the same `Cli` definition the binary parses, so it cannot
-drift. Regenerate after changing a flag:
+It is built from the same `Cli` definition the binary parses, so the
+OPTIONS section cannot drift. Regenerate after changing a flag:
 
 ```bash
 cargo run --example generate-man > man/redis-tui.1
 ```
 
-A unit test compares the committed page against a freshly generated one and
-fails if they differ.
+A unit test compares the committed page against a freshly generated one
+and fails if they differ. The hand-written prose sections (FILES,
+KEYBOARD, …) are not generated — the audit that found this repo's stale
+keybinding claims read them line by line, so treat edits to them with
+the same care as code.
 
 ## Usage
 
@@ -110,6 +113,7 @@ redis-tui [OPTIONS]
 --url <URL>          redis://[user:pass@]host:port/db
 --profile <NAME>     Connect using a saved profile
 --readonly           Disable all write operations
+--allow-monitor      Permit the MONITOR pane (REPL: Alt+M to toggle)
 --log-level <LEVEL>  Override config log level
 --theme <THEME>      Override config theme
 ```
@@ -183,8 +187,9 @@ redis-server --port 6379          # or use any reachable server
 cargo run -- --url redis://localhost:6379/0
 ```
 
-Press `?` for the full key list. The overlay is generated from the keymap the
-app actually loaded, so it shows the keys that really work.
+Press `?` for the in-app key list. The overlay is generated from the
+keymap the app actually loaded plus the fixed chords (connection screen,
+reconnect, MONITOR toggle), so it shows the keys that really work.
 
 Suggested first steps:
 
@@ -208,7 +213,19 @@ Connection profiles are loaded from:
 
 ## Keybindings
 
-Reddish supports configurable keymaps and ships with Vim/Emacs-style defaults.
+The default keymap is the vim preset. A `[keybindings]` section in
+`config.toml` overrides any subset of the actions — each field defaults
+independently, so a partial table mixes your bindings with preset
+defaults. The emacs-style column below shows what an emacs-flavoured
+override table would set; bindings are validated at startup, and one no
+terminal can deliver is reported instead of silently failing.
+
+An uppercase letter in a binding means the shifted key: terminals deliver
+`D` as Shift+D, and crossterm reports the SHIFT bit, so `"D"` and
+`"shift+d"` are the same binding. Bindings like `ctrl+i`, `ctrl+m` or
+`ctrl+shift+f` cannot be delivered by any legacy terminal (0x09 is Tab,
+0x0D is Enter, and Ctrl+Shift+F is the same byte as Ctrl+F) and are
+rejected by validation.
 
 ### Mouse
 
@@ -253,13 +270,13 @@ rather than the panes behind it.
 | confirm | `Enter` | `Enter` | Inspect selected key |
 | delete | `D` | `Ctrl+d` | Delete selected key |
 | new_key | `n` | `Ctrl+n` | Create a new key |
-| rename_key | `r` | `Ctrl+r` | Rename selected key |
-| expire_key | `e` | `Ctrl+e` | Persist key (remove TTL) |
-| set_ttl | `t` | `Ctrl+t` | Set TTL on selected key |
-| duplicate_key | `d` | `Ctrl+shift+d` | Duplicate selected key |
+| rename_key | `r` | `Alt+r` | Rename selected key |
+| expire_key | `e` | `Ctrl+e` | Expire immediately — `EXPIRE key 1`; the key is gone ~1s later (non-strings only; on strings `e` edits) |
+| set_ttl | `t` | `Ctrl+t` | Set TTL on selected key; submitting a **blank value persists** it (removes the TTL) |
+| duplicate_key | `d` | `Alt+d` | Duplicate selected key |
 | set_union | `u` | `Ctrl+u` | SUNIONSTORE with multi-select |
-| set_inter | `i` | `Ctrl+i` | SINTERSTORE with multi-select |
-| set_diff | `x` | `Ctrl+d` | SDIFFSTORE with multi-select |
+| set_inter | `i` | `Alt+i` | SINTERSTORE with multi-select |
+| set_diff | `x` | `Alt+x` | SDIFFSTORE with multi-select |
 | toggle_select | `Space` | `Space` | Toggle key selection |
 | select_all | `Ctrl+a` | `Ctrl+a` | Select all visible keys |
 | cycle_sort | `s` | `Ctrl+o` | Cycle sort: alpha → type → TTL |
@@ -272,30 +289,31 @@ rather than the panes behind it.
 | delete | `D` | `Ctrl+d` | Delete current item |
 | copy | `y` | `Ctrl+w` | Copy current item |
 | set_ttl | `t` | `Ctrl+t` | Set TTL on inspected key |
-| inspector_list_push | `a` | `Ctrl+shift+a` | RPUSH to list |
-| inspector_list_prepend | `p` | `Ctrl+shift+p` | LPUSH to list |
-| inspector_list_insert | `I` | `Ctrl+shift+i` | Insert before/after the current list element |
-| inspector_hash_add | `a` | `Ctrl+shift+h` | Add hash field |
+| inspector_list_push | `a` | `a` | RPUSH to list |
+| inspector_list_prepend | `p` | `p` | LPUSH to list |
+| inspector_list_insert | `I` | `I` | Insert before/after the current list element |
+| inspector_hash_add | `a` | `a` | Add hash field |
 | inspector_hash_filter | `Ctrl+f` | `Alt+f` | Filter hash fields by name (`Esc` clears) |
-| inspector_value_search | `Ctrl+shift+f` | `Alt+/` | Search within the current value's members |
-| delete_selected | `Ctrl+d` | `Ctrl+shift+d` | Delete all selected hash fields |
+| inspector_value_search | `Alt+/` | `Alt+/` | Search within the current value's members |
+| delete_selected | `Ctrl+d` | `Ctrl+d` | Delete all selected hash fields |
 | select_all | `Ctrl+a` | `Ctrl+a` | Select all visible hash fields |
 | toggle_select | `Space` | `Space` | Toggle selection of the field under the cursor |
-| inspector_set_add | `a` | `Ctrl+shift+s` | Add set member |
-| inspector_zset_add | `a` | `Ctrl+shift+z` | Add zset member |
-| inspector_zset_range_query | `Q` | `Ctrl+shift+q` | Filter zset by score range |
-| inspector_stream_add | `a` | `Ctrl+shift+x` | Add stream entry |
-| inspector_stream_trim | `Ctrl+t` | `Ctrl+shift+t` | XTRIM the stream (MAXLEN / MINID) |
-| inspector_stream_follow | `F` | `Ctrl+shift+v` | Follow the stream tail (reloads on tick) |
-| inspector_stream_groups | `G` | `Ctrl+shift+m` | Toggle the consumer groups panel |
-| inspector_toggle_view | `f` | `Ctrl+shift+f` | Toggle stream compact/full |
-| inspector_goto_end | `g` | `Ctrl+shift+g` | Jump to last stream entry |
+| inspector_set_add | `a` | `a` | Add set member |
+| inspector_zset_add | `a` | `a` | Add zset member |
+| inspector_zset_range_query | `Q` | `Q` | Filter zset by score range |
+| inspector_stream_add | `a` | `a` | Add stream entry |
+| inspector_stream_trim | `Ctrl+t` | `Ctrl+t` | XTRIM the stream (MAXLEN / MINID) |
+| inspector_stream_follow | `F` | `F` | Follow the stream tail (reloads on tick) |
+| inspector_stream_groups | `G` | `G` | Toggle the consumer groups panel |
+| inspector_toggle_view | `f` | `f` | Toggle stream compact/full |
+| inspector_goto_end | `g` | `g` | Jump to last stream entry |
 | cycle_sort | `s` | `Ctrl+o` | Toggle zset score sort asc/desc |
 | Tab | `Tab` | `Tab` | Cycle string view mode (Raw / JSON / Base64 / Hex) |
 
-> `q` quits the app from anywhere, so inspector bindings deliberately avoid it.
-> The vim preset binds the hash filter to `Ctrl+f` because `/` is already the
-> global search key.
+> `q` quits the app from any tab. Overlays are modal: while the help,
+> search, confirm or connection screens are open, keys (including `q`)
+> belong to the overlay. The vim preset binds the hash filter to `Ctrl+f`
+> because `/` is already the global search key.
 
 ### Pub/Sub
 
@@ -365,9 +383,22 @@ full — this bounds rendering, not what the client downloads.
 
 | Action | Vim | Emacs | Description |
 |--------|-----|-------|-------------|
-| Tab | `Tab` | `Tab` | Switch channel / message input mode |
-| delete | `D` | `Ctrl+d` | Unsubscribe from selected channel |
+| Tab | `Tab` | `Tab` | Cycle input mode: Channel → Message → Pattern → Channel |
+| delete | `D` | `D` | Unsubscribe from selected channel |
 | Ctrl+L | `Ctrl+l` | `Ctrl+l` | Clear message history |
+
+### REPL shortcuts
+
+| Key | Description |
+|-----|-------------|
+| `Enter` | Run the command (with `;;` pipelines, each stage's output pipes into the next; a failing stage records its own error and the rest still run) |
+| `Up` / `Down` | Recall command history |
+| `Tab` | Open the suggestion list; `Enter` accepts the highlighted item |
+| `Shift+Tab` | Cycle suggestions backwards |
+| `Alt+M` | Toggle the MONITOR pane (needs `--allow-monitor`) |
+| `Alt+R` | Toggle raw output mode |
+| `Ctrl+L` | Clear the output pane |
+| `Ctrl+U` | Clear the input line |
 
 ## Testing
 

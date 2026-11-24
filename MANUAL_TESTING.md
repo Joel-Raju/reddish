@@ -275,7 +275,8 @@ Expected:
 For each type, verify add/edit/delete/copy operations:
 
 **String:**
-- Select `user:1:name`, press `e` → edit value, press `Enter` to save
+- Select `user:1:name`, press `e` → edit value, press `Ctrl+S` to save
+  (`Enter` inserts a newline; `Ctrl+X`/`Esc` cancels)
 - Press `Tab` to cycle view modes (Raw → JSON → Base64 → Hex)
 - Press `y` to copy string value
 
@@ -317,16 +318,17 @@ Expected:
 3. Verify autocomplete: type `ge`, press `Tab`.
 
 Expected:
-- input autocompletes to `GET`
+- the suggestion list opens with `GET` highlighted; press `Enter` to
+  accept it into the input (a second `Tab` only moves the highlight)
 
 4. Verify history:
 - press `Up` to recall previous command
 - press `Down` to move forward
 
-5. Verify pipeline parsing:
+5. Verify pipeline parsing (the separator is `;;`, not `|`):
 
 ```text
-GET user:1:name | STRLEN
+GET user:1:name ;; STRLEN
 ```
 
 Expected:
@@ -338,7 +340,9 @@ Expected:
 - Type `GET counter`, press `Enter`
 
 Expected:
-- overlay executes command, shows result briefly, then closes
+- overlay executes the command and closes; success output lands in the
+  REPL tab's pane (switch to it with `2` to see it), errors toast in the
+  status bar
 - you remain in Keys tab
 
 ### 5.9 Info dashboard
@@ -372,12 +376,14 @@ Expected:
 - message appears in the feed on the right
 - left panel shows `test-channel` with `▶` active indicator
 
-5. Press `Tab` to switch back to channel mode.
+5. Press `Tab` twice to switch back to channel mode (one press lands on
+   Pattern mode — the cycle is Channel → Message → Pattern → Channel).
 6. Type `another-channel`, press `Enter`.
 
 Expected:
 - second channel appears in left panel
-- you can switch between channels with `j/k` or Up/Down
+- you can switch between channels with `Up`/`Down` (`j`/`k` are not
+  bound in Pub/Sub — they type into the input)
 
 7. With cursor on `test-channel`, press `D`.
 

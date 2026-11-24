@@ -95,6 +95,27 @@ pub enum BrowserAction {
     RefreshRequested,
 }
 
+/// The slice of rows a viewport can actually show, as `(offset, count)`.
+///
+/// Scrolls the minimum amount that keeps `cursor` on screen, matching what
+/// ratatui does with a zero offset, and never scrolls past the last page.
+///
+/// Split out of `render` because it carries the load-bearing property of the
+/// windowing optimization and is worth asserting on its own: `count` must
+/// depend on the viewport height and never on `row_count`. Asserting that
+/// deterministically beats a timing test, which measured the same code at 4.9x
+/// growth in debug, 6.2x on a GitHub runner and 16.3x in release.
+pub fn visible_window(row_count: usize, cursor: usize, inner_height: usize) -> (usize, usize) {
+    let inner_height = inner_height.max(1);
+    let max_offset = row_count.saturating_sub(inner_height);
+    let cursor = cursor.min(row_count.saturating_sub(1));
+    let offset = cursor
+        .saturating_sub(inner_height.saturating_sub(1))
+        .min(max_offset);
+    let count = inner_height.min(row_count.saturating_sub(offset));
+    (offset, count)
+}
+
 /// Where the key list was drawn and how far it was scrolled, so mouse clicks
 /// can be mapped back to a logical row index.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -525,18 +546,13 @@ impl KeyBrowser {
         // — for each was the entire frame cost: ~15ms to draw 20 rows.
         let list_area = chunks[1];
         let inner_height = list_area.height.saturating_sub(2).max(1) as usize;
-        let max_offset = rows.len().saturating_sub(inner_height);
-        // Scroll the minimum amount that keeps the cursor on screen, matching
-        // what ratatui would do with a zero offset.
-        let cursor = self.cursor.min(rows.len().saturating_sub(1));
-        let offset = cursor
-            .saturating_sub(inner_height.saturating_sub(1))
-            .min(max_offset);
+        let cursor = self.cursor;
+        let (offset, visible) = visible_window(rows.len(), cursor, inner_height);
 
         let items: Vec<ListItem> = rows
             .iter()
             .skip(offset)
-            .take(inner_height)
+            .take(visible)
             .enumerate()
             .map(|(local, row)| {
                 let i = offset + local;
@@ -924,49 +940,48 @@ mod windowing_tests {
         }
     }
 
-    /// Render cost must grow far more slowly than the row count.
+    /// The window is bounded by the viewport, never by the row count.
     ///
-    /// The bound is empirical, not arbitrary. Measured with 100 rows against
-    /// 10,000 — a 100x increase in rows:
+    /// This is the property the whole optimization rests on, asserted
+    /// deterministically rather than by timing.
     ///
-    /// ```text
-    ///   windowed    ~4.9x    <- what this allows up to 9x of
-    ///   un-windowed ~13.0x   <- the state a regression returns to
-    /// ```
-    ///
-    /// Rendering is still O(rows) because `sorted_rows` walks the whole tree to
-    /// learn the row count and to sort it; windowing only removed the per-row
-    /// `ListItem` allocation, which was the dominant cost. So this cannot
-    /// assert flat timing and does not try to — it pins the gap between the two
-    /// states, which is what protects the optimization.
-    ///
-    /// A 5x bound was tried first and failed on a GitHub runner at 6.2x, which
-    /// is how the true windowed figure was established in the first place.
+    /// A timing assertion was tried first and abandoned after it gave three
+    /// different answers for identical code: 4.9x growth in debug, 6.2x on a
+    /// GitHub runner, 16.3x in release. The ratio moves because in release the
+    /// per-row `ListItem` allocation is optimised away, leaving only the
+    /// unavoidable `sorted_rows` walk. No threshold is loose enough to survive
+    /// all three and tight enough to catch a regression.
     #[test]
-    fn render_cost_does_not_scale_with_the_row_count() {
-        // Best of three: the test binary shares a CPU with everything else
-        // running in CI, and a slow neighbour should not fail the build.
-        let time = |count: usize| {
-            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-            let b = browser_with(count);
-            let start = std::time::Instant::now();
-            for _ in 0..20 {
-                terminal
-                    .draw(|f| {
-                        b.render(f, f.area());
-                    })
-                    .unwrap();
+    fn the_window_is_bounded_by_the_viewport_not_the_row_count() {
+        for row_count in [0usize, 1, 21, 100, 10_000, 1_000_000] {
+            for cursor in [0usize, 1, 20, 21, row_count / 2, row_count] {
+                for height in [1usize, 5, 21, 200] {
+                    let (offset, count) = visible_window(row_count, cursor, height);
+                    assert!(
+                        count <= height,
+                        "{row_count} rows, cursor {cursor}, height {height}: \
+                         window wants {count} rows"
+                    );
+                    assert!(
+                        offset + count <= row_count,
+                        "{row_count} rows, cursor {cursor}, height {height}: \
+                         window {offset}..{} runs past the end",
+                        offset + count
+                    );
+                }
             }
-            start.elapsed()
-        };
+        }
+    }
 
-        let small = time(100).min(time(100)).min(time(100));
-        let large = time(10_000).min(time(10_000)).min(time(10_000));
-
-        assert!(
-            large < small * 9,
-            "20 frames over 100 rows took {small:?} but over 10,000 rows took \
-             {large:?}: the window is not being applied"
+    /// The concrete case that motivated the windowing.
+    #[test]
+    fn ten_thousand_rows_in_an_eighty_by_twenty_four_terminal_builds_one_page() {
+        let (offset, count) = visible_window(10_001, 5_000, 21);
+        assert_eq!(count, 21, "a 21-row viewport cannot show more than 21 rows");
+        assert_eq!(
+            offset,
+            5_000 - 20,
+            "scrolled the minimum needed to keep row 5000 visible"
         );
     }
 

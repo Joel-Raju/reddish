@@ -152,6 +152,17 @@ every write, and the REPL refuses `FLUSHDB`, `FLUSHALL` and `KEYS *`.
 
 ### Changed
 
+- **Fixed a binding that could never fire.** The connection screen was bound to
+  `Ctrl+\`, matched as `KeyCode::Char('\\')` with CONTROL — but terminals send
+  `Ctrl+\` as byte `0x1C`, which crossterm decodes as `Ctrl+4`. The screen was
+  unreachable from the keyboard. The binding now accepts the byte as it
+  actually arrives (so `Ctrl+\` and `Ctrl+4` both work), and the connection
+  screen is also reachable from the command palette as `Connect…`.
+- **The command palette now performs the actions it lists.** It advertised
+  `Switch:Keys`/`REPL`/`Info`/`PubSub` but only wired `Quit` — executing a
+  switch item closed the overlay and did nothing. All items are wired, and an
+  unwired one now reports itself instead of silently doing nothing.
+
 - **Key list rendering is windowed.** With every namespace expanded the browser
   allocated a `ListItem` — a `String` and a `Style` — for all 10,001 rows on
   every frame, while an 80x24 terminal draws about 20 of them. Only the visible

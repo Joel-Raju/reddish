@@ -811,11 +811,24 @@ impl App {
         if let Some(ref mut palette) = self.command_palette {
             if let Some(action) = palette.handle_event(&Event::Key(key)) {
                 match action {
-                    PaletteAction::Execute(cmd) => {
-                        if cmd == "Quit" {
-                            self.should_quit = true;
+                    PaletteAction::Execute(cmd) => match cmd.as_str() {
+                        "Quit" => self.should_quit = true,
+                        // Every item the palette lists must do something.
+                        // Before this, `Switch:*` were displayed but executing
+                        // them only closed the overlay — the palette advertised
+                        // actions it did not perform.
+                        "Switch:Keys" => self.active_tab = Tab::Keys,
+                        "Switch:REPL" => self.active_tab = Tab::Repl,
+                        "Switch:Info" => self.active_tab = Tab::Info,
+                        "Switch:PubSub" => self.active_tab = Tab::PubSub,
+                        // The connection screen has no discoverable path
+                        // otherwise: its key binding is a chord most users
+                        // would never guess.
+                        "Connect…" => self.open_connection_screen(),
+                        other => {
+                            self.error_message = Some(format!("Palette item not wired: {other}"));
                         }
-                    }
+                    },
                     PaletteAction::Close => {}
                 }
                 self.command_palette = None;
@@ -845,6 +858,7 @@ impl App {
 
         if self.keymap.matches("palette", &key) {
             self.command_palette = Some(CommandPalette::new(vec![
+                "Connect…".to_string(),
                 "Quit".to_string(),
                 "Switch:Keys".to_string(),
                 "Switch:REPL".to_string(),
@@ -879,7 +893,19 @@ impl App {
         }
 
         match key.code {
-            KeyCode::Char('\\')
+            // Open the connection screen.
+            //
+            // The obvious spelling — `Char('\\')` with CONTROL — does not match
+            // what terminals send. `Ctrl+\` arrives as byte 0x1C, and crossterm
+            // decodes that range as digits: 0x1C becomes `Char('4')` with
+            // CONTROL (verified against crossterm 0.29's parse.rs). So the
+            // digit form is the one that actually fires — it covers both the
+            // physical `Ctrl+\` and `Ctrl+4`, which share the byte. The
+            // backslash form is kept too: under the kitty keyboard protocol a
+            // terminal may name the key literally, and accepting it costs one
+            // arm. The binding was dead on arrival when it only had the
+            // backslash spelling.
+            KeyCode::Char('4') | KeyCode::Char('\\')
                 if key
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
@@ -3468,5 +3494,171 @@ mod tick_rate_tests {
             "the default interval gives a {}ms period, too slow to call live",
             effective_ms(1000)
         );
+    }
+}
+
+#[cfg(test)]
+mod connection_screen_access_tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn app_on_keys_tab() -> App {
+        let app = App::new(Config::default());
+        assert_eq!(app.active_tab, Tab::Keys);
+        app
+    }
+
+    /// The binding was dead: it matched `Char('\\')` with CONTROL, but
+    /// terminals send `Ctrl+\` as byte 0x1C and crossterm decodes that range
+    /// as digits. This is the event that actually arrives.
+    #[tokio::test]
+    async fn ctrl_backslash_arrives_as_ctrl_digit_four_and_opens_the_screen() {
+        let mut app = app_on_keys_tab();
+        assert_ne!(app.mode(), &AppMode::ConnectionScreen);
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('4'), KeyModifiers::CONTROL))
+            .await;
+
+        assert_eq!(
+            app.mode(),
+            &AppMode::ConnectionScreen,
+            "Ctrl+\\ (delivered as Ctrl+4) must open the connection screen"
+        );
+    }
+
+    /// The old spelling must be accepted too if some terminal ever sends it,
+    /// but the digit form is the one that matters.
+    #[tokio::test]
+    async fn a_legacy_backslash_encoding_still_opens_the_screen() {
+        let mut app = app_on_keys_tab();
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL))
+            .await;
+        assert_eq!(app.mode(), &AppMode::ConnectionScreen);
+    }
+
+    #[tokio::test]
+    async fn a_bare_four_does_not_open_the_screen() {
+        let mut app = app_on_keys_tab();
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('4')))
+            .await;
+        assert_ne!(
+            app.mode(),
+            &AppMode::ConnectionScreen,
+            "typing 4 in the key browser must not open a dialog"
+        );
+    }
+
+    /// Before this fix the palette listed `Switch:*` items but only wired
+    /// `Quit`: executing them closed the overlay and did nothing.
+    #[test]
+    fn palette_switch_items_actually_switch_tabs() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        for (cmd, tab) in [
+            ("Switch:Keys", Tab::Keys),
+            ("Switch:REPL", Tab::Repl),
+            ("Switch:Info", Tab::Info),
+            ("Switch:PubSub", Tab::PubSub),
+        ] {
+            rt.block_on(async {
+                let mut app = App::new(Config::default());
+                app.active_tab = Tab::Keys;
+                // Simulate the palette returning this command.
+                app.command_palette = Some(crate::ui::command_palette::CommandPalette::new(vec![
+                    cmd.to_string(),
+                ]));
+                app.handle_key_event(KeyEvent::from(KeyCode::Enter)).await;
+                assert_eq!(
+                    app.active_tab, tab,
+                    "{cmd} must switch the tab, not just close the palette"
+                );
+                assert!(app.command_palette.is_none(), "palette must close");
+            });
+        }
+    }
+
+    /// The connection screen needs a discoverable path, not only a chord.
+    #[test]
+    fn palette_connect_item_opens_the_connection_screen() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let mut app = App::new(Config::default());
+            app.command_palette = Some(crate::ui::command_palette::CommandPalette::new(vec![
+                "Connect…".to_string(),
+            ]));
+            app.handle_key_event(KeyEvent::from(KeyCode::Enter)).await;
+            assert_eq!(
+                app.mode(),
+                &AppMode::ConnectionScreen,
+                "Connect… must open the connection screen"
+            );
+        });
+    }
+
+    #[test]
+    fn palette_quit_still_quits() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let mut app = App::new(Config::default());
+            app.command_palette = Some(crate::ui::command_palette::CommandPalette::new(vec![
+                "Quit".to_string(),
+            ]));
+            app.handle_key_event(KeyEvent::from(KeyCode::Enter)).await;
+            assert!(app.should_quit, "Quit must still quit");
+        });
+    }
+
+    /// Any item the palette lists but does not wire must say so, rather than
+    /// silently doing nothing. This is the guard that keeps the earlier bug
+    /// from coming back unnoticed.
+    #[test]
+    fn an_unwired_palette_item_reports_itself_instead_of_no_op() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let mut app = App::new(Config::default());
+            app.command_palette = Some(crate::ui::command_palette::CommandPalette::new(vec![
+                "Switch:Nosuch".to_string(),
+            ]));
+            app.handle_key_event(KeyEvent::from(KeyCode::Enter)).await;
+            assert_eq!(
+                app.error_message.as_deref(),
+                Some("Palette item not wired: Switch:Nosuch")
+            );
+        });
+    }
+
+    /// The palette's advertised items must all be wired: cross-check the list
+    /// the app builds against the arms that handle it.
+    #[test]
+    fn every_palette_item_is_handled() {
+        let wired = [
+            "Connect…",
+            "Quit",
+            "Switch:Keys",
+            "Switch:REPL",
+            "Switch:Info",
+            "Switch:PubSub",
+        ];
+        // A raw string copy of the construction site, so renaming an item in
+        // the list without wiring it fails here.
+        let source = include_str!("app.rs");
+        let start = source
+            .find("CommandPalette::new(vec![")
+            .expect("palette site");
+        let end = source[start..].find("])).").expect("palette list end");
+        let block = &source[start..start + end];
+        for item in wired {
+            assert!(
+                block.contains(&format!("{item:?}")),
+                "{item} missing from the palette list"
+            );
+        }
     }
 }

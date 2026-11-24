@@ -197,6 +197,7 @@ Suggested first steps:
 | `Tab` | Cycle a string's view mode: Raw → JSON → Base64 → Hex |
 | `e` | Edit a string (see `$EDITOR` below) |
 | `Ctrl+p` | Command palette |
+| `Ctrl+\` | Connection screen (also `Ctrl+4`; identical byte) |
 | `q` | Quit |
 
 ### Connection profiles
@@ -229,7 +230,7 @@ rather than the panes behind it.
 |--------|-----|-------|-------------|
 | quit | `q` | `Ctrl+c` | Quit application |
 | help | `?` | `?` | Show help overlay |
-| palette | `Ctrl+p` | `Ctrl+x` | Open command palette |
+| palette | `Ctrl+p` | `Ctrl+x` | Open command palette (`Connect…`, `Quit`, tab switches) |
 | filter | `/` | `Ctrl+s` | Open global search |
 | repl_overlay | `:` | `Alt+;` | One-line REPL prompt |
 | tab_keys | `1` | `Alt+1` | Keys tab |

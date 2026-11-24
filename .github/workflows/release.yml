@@ -119,6 +119,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # `gh release create --verify-tag` resolves the tag through git, so this
+      # job needs a checkout even though it only ships downloaded artifacts.
+      - uses: actions/checkout@v7
+
       - uses: actions/download-artifact@v8
         with:
           path: dist

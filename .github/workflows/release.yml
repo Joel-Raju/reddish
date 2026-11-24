@@ -81,7 +81,15 @@ jobs:
           cp man/redis-tui.1 "$STAGE/man/"
 
           if [ "${{ matrix.archive }}" = "zip" ]; then
-            (cd . && zip -qr "$NAME.zip" "$STAGE")
+            # The Windows runner has no `zip` in Git Bash, but every supported
+            # Windows image ships bsdtar as `tar`, and `-a` picks the archive
+            # format from the file extension. Verified: bsdtar produces a valid
+            # zip this way, checked with `unzip -l` on the result.
+            if command -v zip >/dev/null 2>&1; then
+              (cd . && zip -qr "$NAME.zip" "$STAGE")
+            else
+              tar -a -cf "$NAME.zip" "$STAGE"
+            fi
             OUT="$NAME.zip"
           else
             tar czf "$NAME.tar.gz" "$STAGE"

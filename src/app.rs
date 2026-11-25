@@ -5289,3 +5289,59 @@ mod inspector_focus_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod inspector_escape_tests {
+    use super::*;
+    use crate::redis::types::RedisValue;
+    use crate::ui::key_browser::tree::KeyEntry;
+    use crossterm::event::{KeyCode, KeyEvent};
+
+    fn app_with_value_open() -> App {
+        let mut app = App::new(Config::default());
+        for name in ["alpha", "bravo", "charlie"] {
+            app.key_browser.tree.insert(KeyEntry {
+                full_name: name.to_string(),
+                redis_type: None,
+                ttl: None,
+            });
+        }
+        app.key_browser.cursor = 1;
+        app.value_inspector.set_value(
+            "listkey".to_string(),
+            RedisValue::List(vec!["one".to_string()]),
+        );
+        app
+    }
+
+    /// The inspector consumes navigation while a value is open, so Esc must
+    /// close the value and hand the arrows back to the key list.
+    #[tokio::test]
+    async fn esc_closes_the_value_and_returns_focus_to_the_list() {
+        let mut app = app_with_value_open();
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc)).await;
+        assert!(
+            app.value_inspector.value.is_none(),
+            "Esc must close the inspected value"
+        );
+        assert!(app.value_inspector.key.is_none());
+
+        let before = app.key_browser.cursor;
+        app.handle_key_event(KeyEvent::from(KeyCode::Down)).await;
+        assert_eq!(
+            app.key_browser.cursor,
+            before + 1,
+            "after Esc, arrows move the key selection again"
+        );
+    }
+
+    /// With no value open, Esc must not be swallowed by the inspector (it is
+    /// still available to overlays and browser contexts).
+    #[tokio::test]
+    async fn esc_with_no_value_is_not_consumed() {
+        let mut app = App::new(Config::default());
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc)).await;
+        assert!(!app.value_inspector.last_key_consumed);
+    }
+}

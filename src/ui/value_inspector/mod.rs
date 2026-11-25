@@ -527,6 +527,40 @@ impl ValueInspector {
         self.prompt_mode = None;
     }
 
+    /// Close the inspected value and return focus to the key list.
+    ///
+    /// The inspector consumes navigation while a value is open, so without a
+    /// way out, keyboard users could not move the key selection at all.
+    pub fn clear(&mut self) {
+        self.key = None;
+        self.value = None;
+        self.loading = false;
+        self.error = None;
+        self.encoding = None;
+        self.memory_bytes = None;
+        self.ttl = None;
+        self.edit_mode = false;
+        self.text_editor = None;
+        self.list_cursor = 0;
+        self.hash_cursor = 0;
+        self.hash_filter = String::new();
+        self.hash_selected.clear();
+        self.set_cursor = 0;
+        self.zset_cursor = 0;
+        self.zset_sort_score_asc = true;
+        self.zset_score_min = None;
+        self.zset_score_max = None;
+        self.stream_cursor = 0;
+        self.stream_compact = true;
+        self.stream_follow = false;
+        self.value_filter = String::new();
+        self.stream_show_groups = false;
+        self.stream_groups = None;
+        self.list_prompt = None;
+        self.prompt_mode = None;
+        self.string_view = StringViewMode::Raw;
+    }
+
     pub fn set_metadata(
         &mut self,
         encoding: Option<String>,
@@ -667,6 +701,11 @@ impl ValueInspector {
             return None;
         };
         self.last_key_consumed = false;
+
+        // With no value target the inspector has nothing to act on: every
+        // key belongs to the key browser (arrows browse, `t` sets a TTL,
+        // `n` creates a key). Consuming here would break all of those.
+        self.key.as_ref()?;
 
         if self.edit_mode {
             // The editor is modal: every key belongs to it.
@@ -886,6 +925,15 @@ impl ValueInspector {
                 self.list_prompt = None;
                 self.prompt_mode = None;
             }
+            return None;
+        }
+
+        // Esc closes the value and returns focus to the key list. The
+        // inspector consumes navigation while a value is open, so without
+        // this, keyboard users would be trapped on the same key.
+        if keymap.matches("cancel", key) {
+            self.clear();
+            self.last_key_consumed = true;
             return None;
         }
 

@@ -315,6 +315,13 @@ impl GlobalSearch {
         self.set_ranked(pairs);
     }
 
+    /// Stop the scan state when there is no producer to finish it (e.g. the
+    /// search overlay opened with no connection). Otherwise `scanning` stays
+    /// true forever and the overlay shows "[scanning…]".
+    pub fn finish_scan(&mut self) {
+        self.scanning = false;
+    }
+
     /// Drain a batch of scan results into the ranked list.
     ///
     /// Only new keys are scored, so cost is proportional to the batch rather

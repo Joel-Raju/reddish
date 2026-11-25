@@ -322,7 +322,8 @@ pub struct App {
     pub keymap: Keymap,
     pub startup_profile: Option<ConnectionProfile>,
     last_profile: Option<ConnectionProfile>,
-    pub scan_rx: Option<mpsc::Receiver<Vec<crate::ui::key_browser::tree::KeyEntry>>>,
+    pub scan_rx:
+        Option<mpsc::Receiver<Result<Vec<crate::ui::key_browser::tree::KeyEntry>, String>>>,
     pub scan_cancel: Option<CancellationToken>,
     pub search_scan_rx: Option<mpsc::Receiver<Vec<String>>>,
     pub search_scan_cancel: Option<CancellationToken>,
@@ -421,7 +422,10 @@ impl App {
     async fn handle_pubsub_action(&mut self, action: PubSubAction) {
         match action {
             PubSubAction::Subscribe(channel) => {
-                match self.start_pubsub_subscription(PubSubKind::Channel(channel.clone())) {
+                match self
+                    .start_pubsub_subscription(PubSubKind::Channel(channel.clone()))
+                    .await
+                {
                     Ok(()) => {
                         self.set_error(format!("Subscribed to channel '{channel}'"));
                     }
@@ -431,7 +435,10 @@ impl App {
                 }
             }
             PubSubAction::PSubscribe(pattern) => {
-                match self.start_pubsub_subscription(PubSubKind::Pattern(pattern.clone())) {
+                match self
+                    .start_pubsub_subscription(PubSubKind::Pattern(pattern.clone()))
+                    .await
+                {
                     Ok(()) => {
                         self.set_error(format!("Subscribed to pattern '{pattern}'"));
                     }
@@ -768,6 +775,20 @@ impl App {
                                 );
                                 self.handle_browser_action(action).await;
                             }
+                        } else {
+                            // The tree may legitimately not hold this key:
+                            // the search runs its own SCAN, the tree is
+                            // capped by max_keys_in_memory, and a still
+                            // streaming scan may not have reached it. The
+                            // old flow closed the overlay and silently did
+                            // nothing — a dead keypress on a valid result.
+                            // Inspect directly instead; SelectKey re-fetches
+                            // TYPE, so no tree entry is required.
+                            let action = BrowserAction::SelectKey(
+                                key_name,
+                                crate::redis::client::RedisType::Unknown,
+                            );
+                            self.handle_browser_action(action).await;
                         }
                         self.active_tab = Tab::Keys;
                         if self.mode() == &AppMode::Search {
@@ -1119,9 +1140,10 @@ impl App {
             }
             Err(err) => {
                 self.client = None;
-                self.status_bar.connection_state = ConnectionState::Reconnecting {
-                    attempt: self.reconnect_attempt,
-                };
+                // A failed manual reconnect is not "reconnecting": nothing
+                // will retry until the user asks again — the old state label
+                // claimed otherwise.
+                self.status_bar.connection_state = ConnectionState::Disconnected;
                 self.set_error(format!("Reconnect failed: {err}"));
             }
         }
@@ -1330,7 +1352,7 @@ impl App {
         }
     }
 
-    fn start_pubsub_subscription(&mut self, kind: PubSubKind) -> color_eyre::Result<()> {
+    async fn start_pubsub_subscription(&mut self, kind: PubSubKind) -> color_eyre::Result<()> {
         let profile = self
             .client
             .as_ref()
@@ -1338,7 +1360,11 @@ impl App {
             .or_else(|| self.last_profile.clone())
             .ok_or_else(|| color_eyre::eyre::eyre!("Not connected"))?;
 
-        let rx = PubSubClient::spawn_subscription(&profile, &kind)?;
+        // The connect+subscribe handshake happens inside the call now: the
+        // old version returned `Ok(rx)` immediately and a failed
+        // subscription died silently — the app reported "Subscribed" with a
+        // dead receiver.
+        let rx = PubSubClient::spawn_subscription(&profile, &kind).await?;
         self.pubsub_rx = Some(rx);
         Ok(())
     }
@@ -1882,7 +1908,15 @@ impl App {
         if let Some(rx) = self.scan_rx.as_mut() {
             loop {
                 match rx.try_recv() {
-                    Ok(batch) => self.key_browser.apply_scan_batch(batch),
+                    Ok(Ok(batch)) => self.key_browser.apply_scan_batch(batch),
+                    Ok(Err(message)) => {
+                        // Surface the failure: a broken scan must not look
+                        // like a finished one.
+                        self.key_browser.fail_scan(message.clone());
+                        self.set_error(message);
+                        should_clear = true;
+                        break;
+                    }
                     Err(mpsc::error::TryRecvError::Empty) => break,
                     Err(mpsc::error::TryRecvError::Disconnected) => {
                         self.key_browser.finish_scan();
@@ -1960,7 +1994,14 @@ impl App {
     fn start_search_scan(&mut self) {
         let client = match &self.client {
             Some(c) => c.clone(),
-            None => return,
+            None => {
+                // The caller has already set `search.scanning = true`; without
+                // a producer that flag never clears and the overlay hangs in
+                // "[scanning…]" forever. Finish the scan state and say why.
+                self.search.finish_scan();
+                self.set_error("Not connected — search needs a connection".to_string());
+                return;
+            }
         };
         let query = self.search.query.clone();
         let mode = self.search.mode;
@@ -2335,7 +2376,7 @@ mod tests {
     /// the test genuinely cannot run there. `cargo test` therefore stays green on
     /// any machine, and the CI integration job, which provisions Redis explicitly,
     /// is what actually exercises this path.
-    async fn spawn_redis_server_on_port(port: u16) -> Option<Child> {
+    pub(super) async fn spawn_redis_server_on_port(port: u16) -> Option<Child> {
         let child = Command::new("redis-server")
             .args([
                 "--port",
@@ -2361,7 +2402,7 @@ mod tests {
         Some(child)
     }
 
-    fn invalid_profile() -> ConnectionProfile {
+    pub(super) fn invalid_profile() -> ConnectionProfile {
         ConnectionProfile {
             name: "invalid".to_string(),
             host: "127.0.0.1".to_string(),
@@ -2876,17 +2917,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_reconnect_failure_sets_reconnecting_and_error() {
+    async fn test_reconnect_failure_sets_disconnected_and_error() {
         let mut app = App::new(Config::default());
         app.last_profile = Some(invalid_profile());
 
         app.reconnect_active_connection().await;
 
         assert!(app.client.is_none());
-        assert!(matches!(
+        // A failed *manual* reconnect is not "reconnecting": nothing retries
+        // until the user asks again, so the status must not claim otherwise.
+        assert_eq!(
             app.status_bar.connection_state,
-            ConnectionState::Reconnecting { attempt: 1 }
-        ));
+            ConnectionState::Disconnected
+        );
         assert!(
             app.error_message
                 .as_deref()
@@ -2928,6 +2971,10 @@ mod tests {
             }
         ));
         assert!(app.error_message.is_none());
+        // A successful reconnect must restart the scan, or the tree would
+        // keep showing keys from the dead connection. The old test asserted
+        // only the connection state, leaving that contract unverified.
+        assert!(app.scan_rx.is_some(), "reconnect must start a fresh scan");
 
         let _ = redis.kill();
         let _ = redis.wait();
@@ -4188,5 +4235,433 @@ mod set_error_tests {
                 .any(|(msg, _)| msg == "Profile not found: scratch"),
             "the toast queue must carry the message"
         );
+    }
+}
+
+/// Composition-level tests: the tick drain layer that every background
+/// pipeline flows through. Before these existed, `handle_tick` — and with it
+/// `drain_scan_batches`, `drain_search_scan`, `drain_pubsub_messages` and
+/// `drain_monitor_messages` — had never been executed by a single test. Every
+/// consumer was tested with synthetic input instead.
+#[cfg(test)]
+mod tick_pipeline_tests {
+    use super::tests::{invalid_profile, spawn_redis_server_on_port};
+    use super::*;
+    use crate::ui::key_browser::BrowserState;
+    use std::time::Duration;
+
+    /// The composed startup path: connect_profile → scan task → tick drain →
+    /// tree. Previously the scan task and the tree were tested separately,
+    /// and the splice between them was not tested at all.
+    #[tokio::test]
+    async fn tick_drains_a_live_scan_into_the_tree() {
+        let port = 16382;
+        let Some(mut redis) = spawn_redis_server_on_port(port).await else {
+            eprintln!("skipping: redis-server is not on PATH");
+            return;
+        };
+        let mut seed = redis::Client::open(format!("redis://127.0.0.1:{port}"))
+            .unwrap()
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
+        let _: () = redis::cmd("MSET")
+            .arg("tick:alpha")
+            .arg("1")
+            .arg("tick:beta")
+            .arg("2")
+            .query_async(&mut seed)
+            .await
+            .unwrap();
+
+        let mut app = App::new(Config::default());
+        app.connect_profile(ConnectionProfile {
+            name: "tick-test".to_string(),
+            host: "127.0.0.1".to_string(),
+            port,
+            db: 0,
+            username: None,
+            password: None,
+            last_connected: None,
+            mode: ConnectionMode::Standalone,
+            tls: None,
+            ssh_tunnel: None,
+        })
+        .await;
+
+        assert!(app.scan_rx.is_some(), "connect must start a scan");
+        // Drive real ticks until the scan finishes flowing through the drain.
+        for _ in 0..200 {
+            app.handle_event(Event::Tick).await;
+            if app.scan_rx.is_none() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            app.scan_rx.is_none(),
+            "the scan must complete within the loop"
+        );
+        assert_eq!(app.key_browser.state, BrowserState::Ready);
+        assert!(
+            app.key_browser.tree.total_keys() >= 2,
+            "the drain must have inserted the scanned keys, got {}",
+            app.key_browser.tree.total_keys()
+        );
+        let entry = app
+            .key_browser
+            .tree
+            .visible_rows()
+            .into_iter()
+            .find_map(|row| row.key)
+            .expect("at least one key row");
+        assert!(
+            entry.redis_type.is_some(),
+            "drained entries must be type-hydrated"
+        );
+
+        let _ = redis.kill();
+        let _ = redis.wait();
+    }
+
+    /// A scan failure must reach the browser state and the user, not be
+    /// presented as a finished scan.
+    #[tokio::test]
+    async fn a_scan_error_reaches_the_browser_and_a_toast() {
+        let mut app = App::new(Config::default());
+        let (tx, rx) =
+            mpsc::channel::<Result<Vec<crate::ui::key_browser::tree::KeyEntry>, String>>(4);
+        app.scan_rx = Some(rx);
+        tx.send(Err("Scan failed: boom".to_string())).await.unwrap();
+
+        app.handle_event(Event::Tick).await;
+
+        match &app.key_browser.state {
+            BrowserState::Error(msg) => assert!(msg.contains("boom")),
+            other => panic!("a failed scan must not look complete, got {other:?}"),
+        }
+        assert!(app.scan_rx.is_none(), "the failed channel must be dropped");
+        assert!(
+            app.error_message
+                .as_deref()
+                .is_some_and(|m| m.contains("boom")),
+            "the failure must be visible to the user"
+        );
+    }
+
+    /// Opening search with no connection used to leave `scanning = true`
+    /// forever (the caller sets it; the producer early-returns), so the
+    /// overlay hung in "[scanning…]".
+    #[tokio::test]
+    async fn search_opened_without_a_connection_does_not_hang_scanning() {
+        let mut app = App::new(Config::default());
+        assert!(app.client.is_none());
+        app.handle_key_event(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Char('/'),
+        ))
+        .await;
+        assert_eq!(app.mode(), &AppMode::Search);
+        assert!(
+            !app.search.scanning,
+            "with no producer the scan state must finish immediately"
+        );
+        assert!(
+            app.error_message
+                .as_deref()
+                .is_some_and(|m| m.contains("Not connected")),
+            "the user must be told why there are no results"
+        );
+    }
+
+    /// Reconnect failure state is Disconnected, not a fake "Reconnecting".
+    #[tokio::test]
+    async fn reconnect_failure_is_disconnected_not_reconnecting() {
+        let mut app = App::new(Config::default());
+        app.last_profile = Some(invalid_profile());
+        app.reconnect_active_connection().await;
+        assert_eq!(
+            app.status_bar.connection_state,
+            ConnectionState::Disconnected
+        );
+    }
+}
+
+/// Stream-follow's tick wiring: `xrange_after` was tested live, and the
+/// inspector's append/pin logic was tested with synthetic streams, but
+/// `stream_follow_tick` itself (the splice) had never been executed.
+#[cfg(test)]
+mod stream_follow_wiring_tests {
+    use super::tests::spawn_redis_server_on_port;
+    use super::*;
+    use crate::redis::client::RedisType;
+    use crate::redis::types::RedisValue;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn a_tick_appends_new_stream_entries_while_following() {
+        let port = 16383;
+        let Some(mut redis) = spawn_redis_server_on_port(port).await else {
+            eprintln!("skipping: redis-server is not on PATH");
+            return;
+        };
+        let url = format!("redis://127.0.0.1:{port}");
+        let mut conn = redis::Client::open(url.as_str())
+            .unwrap()
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
+        let _: () = redis::cmd("XADD")
+            .arg("follow:stream")
+            .arg("*")
+            .arg("page")
+            .arg("/one")
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+
+        let profile = ConnectionProfile {
+            name: "follow".to_string(),
+            host: "127.0.0.1".to_string(),
+            port,
+            db: 0,
+            username: None,
+            password: None,
+            last_connected: None,
+            mode: ConnectionMode::Standalone,
+            tls: None,
+            ssh_tunnel: None,
+        };
+        let mut app = App::new(Config::default());
+        let client = RedisClientHandle::connect(&profile).await.unwrap();
+        let value = client
+            .get_value("follow:stream", RedisType::Stream)
+            .await
+            .unwrap();
+        let before = match &value {
+            RedisValue::Stream(entries) => entries.len(),
+            _ => panic!("expected a stream"),
+        };
+        app.client = Some(client);
+        app.value_inspector
+            .set_value("follow:stream".to_string(), value);
+        app.value_inspector.stream_follow = true;
+
+        // A new entry lands after the inspector's last seen id.
+        let _: () = redis::cmd("XADD")
+            .arg("follow:stream")
+            .arg("*")
+            .arg("page")
+            .arg("/two")
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+
+        // Drive real ticks; follow runs on the 4th-tick cadence.
+        for _ in 0..6 {
+            app.handle_event(Event::Tick).await;
+            let after = match &app.value_inspector.value {
+                Some(RedisValue::Stream(entries)) => entries.len(),
+                _ => 0,
+            };
+            if after > before {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let after = match &app.value_inspector.value {
+            Some(RedisValue::Stream(entries)) => entries.len(),
+            _ => 0,
+        };
+        assert!(
+            after > before,
+            "the tick cadence must append the new entry while following \
+             (before {before}, after {after})"
+        );
+
+        let _ = redis.kill();
+        let _ = redis.wait();
+    }
+}
+
+/// PubSub pipeline: the producer had zero coverage (every "live" pubsub test
+/// opened its own redis connection, bypassing `spawn_subscription`), and the
+/// app-level drain had never been exercised. A spawn-time failure also used
+/// to be silent: the app said "Subscribed" while the receiver was dead.
+#[cfg(test)]
+mod pubsub_pipeline_tests {
+    use super::tests::invalid_profile;
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn subscribe_failure_surfaces_instead_of_returning_a_dead_receiver() {
+        // Nothing listens on port 1, so the handshake fails. The old version
+        // returned Ok(rx) here and reported success.
+        let err = super::PubSubClient::spawn_subscription(
+            &invalid_profile(),
+            &PubSubKind::Channel("x".to_string()),
+        )
+        .await;
+        assert!(
+            err.is_err(),
+            "a failed subscription must be reported, not handed back as a live receiver"
+        );
+    }
+
+    #[tokio::test]
+    async fn tick_drains_published_messages_into_the_widget() {
+        let port = 16384;
+        let Some(mut redis) = super::tests::spawn_redis_server_on_port(port).await else {
+            eprintln!("skipping: redis-server is not on PATH");
+            return;
+        };
+        let url = format!("redis://127.0.0.1:{port}");
+        let mut publisher = redis::Client::open(url.as_str())
+            .unwrap()
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
+
+        let profile = ConnectionProfile {
+            name: "pubsub".to_string(),
+            host: "127.0.0.1".to_string(),
+            port,
+            db: 0,
+            username: None,
+            password: None,
+            last_connected: None,
+            mode: ConnectionMode::Standalone,
+            tls: None,
+            ssh_tunnel: None,
+        };
+        let mut app = App::new(Config::default());
+        app.client = Some(RedisClientHandle::connect(&profile).await.unwrap());
+        app.start_pubsub_subscription(PubSubKind::Channel("drain:test".to_string()))
+            .await
+            .expect("subscribe against a live server");
+
+        let _: () = redis::cmd("PUBLISH")
+            .arg("drain:test")
+            .arg("hello-from-pipeline")
+            .query_async(&mut publisher)
+            .await
+            .unwrap();
+
+        for _ in 0..100 {
+            app.handle_event(Event::Tick).await;
+            if !app.pubsub_widget.messages.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let msg = app
+            .pubsub_widget
+            .messages
+            .back()
+            .expect("the tick drain must deliver the published message");
+        assert_eq!(msg.payload, "hello-from-pipeline");
+        assert_eq!(msg.channel, "drain:test");
+
+        let _ = redis.kill();
+        let _ = redis.wait();
+    }
+}
+
+/// Remaining pipeline splices: screen → connect action, and the search scan
+/// producer → widget. Both halves were tested; the splice between them was
+/// not.
+#[cfg(test)]
+mod splice_tests {
+    use super::*;
+    use crate::config::connections::ConnectionStore;
+    use crate::ui::connection_screen::ConnectionScreen;
+    use std::time::Duration;
+
+    fn profile_on(port: u16, name: &str) -> ConnectionProfile {
+        ConnectionProfile {
+            name: name.to_string(),
+            host: "127.0.0.1".to_string(),
+            port,
+            db: 0,
+            username: None,
+            password: None,
+            last_connected: None,
+            mode: ConnectionMode::Standalone,
+            tls: None,
+            ssh_tunnel: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn connection_screen_connect_starts_the_scan_pipeline() {
+        let port = 16385;
+        let Some(mut redis) = super::tests::spawn_redis_server_on_port(port).await else {
+            eprintln!("skipping: redis-server is not on PATH");
+            return;
+        };
+        let mut app = App::new(Config::default());
+        let mut store = ConnectionStore::default();
+        store.add(profile_on(port, "screen-test"));
+        app.connection_screen = Some(ConnectionScreen::new(store));
+        app.mode_stack.push(AppMode::ConnectionScreen);
+
+        // Enter on the profile list produces ConnectionScreenAction::Connect.
+        app.handle_key_event(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Enter,
+        ))
+        .await;
+
+        assert!(app.client.is_some(), "Connect must connect");
+        assert!(app.scan_rx.is_some(), "Connect must start the key scan");
+        assert_eq!(app.mode(), &AppMode::Normal, "the screen must close");
+
+        let _ = redis.kill();
+        let _ = redis.wait();
+    }
+
+    #[tokio::test]
+    async fn tick_drains_search_scan_results_into_the_widget() {
+        let port = 16386;
+        let Some(mut redis) = super::tests::spawn_redis_server_on_port(port).await else {
+            eprintln!("skipping: redis-server is not on PATH");
+            return;
+        };
+        let mut seed = redis::Client::open(format!("redis://127.0.0.1:{port}"))
+            .unwrap()
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
+        let _: () = redis::cmd("SET")
+            .arg("searchdrain:one")
+            .arg("1")
+            .query_async(&mut seed)
+            .await
+            .unwrap();
+
+        let mut app = App::new(Config::default());
+        app.client = Some(
+            RedisClientHandle::connect(&profile_on(port, "search-test"))
+                .await
+                .unwrap(),
+        );
+        app.search.query = "searchdrain".to_string();
+        app.search.start_scan();
+        app.start_search_scan();
+
+        for _ in 0..100 {
+            app.handle_event(Event::Tick).await;
+            if app.search.results.iter().any(|k| k == "searchdrain:one") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            app.search.results.iter().any(|k| k == "searchdrain:one"),
+            "the search scan must flow through the drain into the widget, got {:?}",
+            app.search.results
+        );
+
+        let _ = redis.kill();
+        let _ = redis.wait();
     }
 }

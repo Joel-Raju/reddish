@@ -157,6 +157,9 @@ pub struct KeyBrowser {
     pub prompt_mode: Option<BrowserPrompt>,
     pub selected: std::collections::HashSet<String>,
     pub sort_mode: SortMode,
+    /// The scan hit `max_keys_in_memory` and rows were dropped. Surfaced
+    /// in the title so a capped scan cannot pass for a complete one.
+    pub truncated: bool,
 }
 
 impl KeyBrowser {
@@ -171,6 +174,7 @@ impl KeyBrowser {
             prompt_mode: None,
             selected: std::collections::HashSet::new(),
             sort_mode: SortMode::Alpha,
+            truncated: false,
         }
     }
 
@@ -600,9 +604,15 @@ impl KeyBrowser {
             .border_style(theme::border_style())
             .title_style(theme::title_style())
             .title(format!(
-                "Keys ({}) [sort: {}] ",
+                "Keys ({}) [sort: {}]{}",
                 self.tree.total_keys(),
-                self.sort_mode.label()
+                self.sort_mode.label(),
+                // A capped scan must not pass for a complete one.
+                if self.truncated {
+                    " [limit reached]"
+                } else {
+                    ""
+                }
             ));
         let list = List::new(items).block(block);
         frame.render_stateful_widget(list, list_area, &mut state.clone());
@@ -648,7 +658,11 @@ impl KeyBrowser {
 
     pub fn apply_scan_batch(&mut self, batch: Vec<KeyEntry>) {
         for entry in batch {
-            self.tree.insert(entry);
+            // `insert` returns false at the max_keys cap; the return value
+            // was discarded, so a truncated scan silently looked complete.
+            if !self.tree.insert(entry) {
+                self.truncated = true;
+            }
         }
         let total = self.tree.total_keys();
         self.state = BrowserState::Scanning { keys_loaded: total };
@@ -658,9 +672,20 @@ impl KeyBrowser {
         self.state = BrowserState::Ready;
     }
 
+    /// The scan task reported a failure. Surface it instead of leaving a
+    /// partial tree marked `Ready` — a SCAN error used to be indistinguishable
+    /// from a completed scan.
+    pub fn fail_scan(&mut self, message: String) {
+        self.state = BrowserState::Error(message);
+    }
+
     pub fn index_of_key(&self, full_name: &str) -> Option<usize> {
-        self.tree
-            .visible_rows()
+        // Index into the same ordering the cursor, navigation and render
+        // use. The previous lookup read `visible_rows()`, which only agrees
+        // with `sorted_rows()` under the default Alpha sort — so in a
+        // type/TTL-sorted view a search jump sent the cursor to a row that
+        // wasn't the key it had just loaded.
+        self.sorted_rows()
             .iter()
             .position(|row| row.key.as_ref().is_some_and(|k| k.full_name == full_name))
     }
@@ -1023,5 +1048,78 @@ mod windowing_tests {
             seen.insert(info.scroll_offset);
         }
         assert!(seen.len() > 3, "offsets should vary: {seen:?}");
+    }
+}
+
+#[cfg(test)]
+mod sort_jump_tests {
+    use super::*;
+    use crate::redis::client::RedisType;
+    use crate::ui::key_browser::tree::KeyEntry;
+
+    fn browser_with_keys() -> KeyBrowser {
+        let mut b = KeyBrowser::new(':', 100);
+        // Types chosen so type-sort order differs from alphabetical order.
+        for (name, t) in [
+            ("alpha", RedisType::ZSet),
+            ("bravo", RedisType::String),
+            ("charlie", RedisType::Set),
+        ] {
+            b.tree.insert(KeyEntry {
+                full_name: name.to_string(),
+                redis_type: Some(t),
+                ttl: None,
+            });
+        }
+        b
+    }
+
+    /// `jump_to_key` indexed `visible_rows()` while the cursor, navigation
+    /// and render all use `sorted_rows()`. The two only agree under the
+    /// default Alpha sort, so a search jump in a type/TTL-sorted view put
+    /// the cursor on a row that was not the key it loaded.
+    #[test]
+    fn jump_lands_on_the_target_row_under_every_sort_mode() {
+        for mode in [SortMode::Alpha, SortMode::ByType, SortMode::ByTtl] {
+            let mut b = browser_with_keys();
+            b.sort_mode = mode;
+            assert!(b.jump_to_key("bravo"), "jump failed under {mode:?}");
+            let rows = b.sorted_rows();
+            let row = rows.get(b.cursor).expect("cursor row must exist");
+            assert_eq!(
+                row.key.as_ref().map(|k| k.full_name.as_str()),
+                Some("bravo"),
+                "the cursor must index the same ordering the render uses ({mode:?})"
+            );
+        }
+    }
+
+    /// Rows dropped at max_keys used to vanish silently; the scan then looked
+    /// complete.
+    #[test]
+    fn a_capped_scan_is_marked_truncated() {
+        let mut b = KeyBrowser::new(':', 2);
+        b.apply_scan_batch(
+            (0..5)
+                .map(|i| KeyEntry {
+                    full_name: format!("k{i}"),
+                    redis_type: None,
+                    ttl: None,
+                })
+                .collect(),
+        );
+        assert_eq!(b.tree.total_keys(), 2);
+        assert!(b.truncated, "insert failures at the cap must be recorded");
+    }
+
+    #[test]
+    fn an_uncapped_scan_is_not_marked_truncated() {
+        let mut b = KeyBrowser::new(':', 10);
+        b.apply_scan_batch(vec![KeyEntry {
+            full_name: "only".to_string(),
+            redis_type: None,
+            ttl: None,
+        }]);
+        assert!(!b.truncated);
     }
 }

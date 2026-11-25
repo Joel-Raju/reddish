@@ -6,12 +6,19 @@ use crate::redis::client::{RedisClientHandle, RedisType};
 use crate::redis::scanner::Scanner;
 use crate::ui::key_browser::tree::KeyEntry;
 
-/// Start a background SCAN task. Returns a cancellation token and a receiver.
-/// The sender is dropped on completion or cancellation, so the receiver sees None.
+/// Start a background SCAN task.
+///
+/// Each channel item is either a hydrated batch or the error that ended the
+/// scan. Errors used to be swallowed: the task broke, the receiver saw
+/// `Disconnected`, and the browser was marked `Ready` — a failed scan looked
+/// identical to a complete one.
 pub fn start_scan(
     client: RedisClientHandle,
     config: &Config,
-) -> (mpsc::Receiver<Vec<KeyEntry>>, CancellationToken) {
+) -> (
+    mpsc::Receiver<Result<Vec<KeyEntry>, String>>,
+    CancellationToken,
+) {
     let count = config.scan_count();
     let (tx, rx) = mpsc::channel(64);
     let cancel = CancellationToken::new();
@@ -59,15 +66,25 @@ pub fn start_scan(
                     if batch.is_empty() && scanner.finished {
                         break;
                     }
-                    // Non-blocking send; if channel is full the batch is dropped (backpressure)
-                    if mpsc::Sender::try_send(&tx, batch).is_err() {
+                    // Await capacity instead of dropping the batch.
+                    // `try_send` used to break the task when the channel
+                    // filled, silently truncating the scan and marking the
+                    // partial tree Ready.
+                    let send = tokio::select! {
+                        _ = cancel_clone.cancelled() => break,
+                        result = tx.send(Ok(batch)) => result,
+                    };
+                    if send.is_err() {
                         break;
                     }
                     if scanner.finished {
                         break;
                     }
                 }
-                Err(_) => {
+                Err(err) => {
+                    // Tell the app why the scan stopped; without this the
+                    // partial tree was presented as complete.
+                    let _ = tx.send(Err(format!("Scan failed: {err}"))).await;
                     break;
                 }
             }

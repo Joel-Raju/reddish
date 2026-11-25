@@ -55,35 +55,34 @@ impl PubSubClient {
     ///
     /// This replaces any existing subscription receiver in the caller; only one
     /// active subscription stream is supported at a time.
-    pub fn spawn_subscription(
+    /// Open the subscription and hand back its message stream.
+    ///
+    /// The connect + subscribe handshake runs here, before the streaming
+    /// task is spawned, so a failure is returned to the caller and shown.
+    /// Previously this returned `Ok(rx)` immediately and any failure inside
+    /// the spawned task died silently: the app reported "Subscribed" while
+    /// no messages would ever arrive.
+    pub async fn spawn_subscription(
         profile: &ConnectionProfile,
         kind: &PubSubKind,
     ) -> color_eyre::Result<mpsc::UnboundedReceiver<PubSubMessage>> {
         let url = RedisClientHandle::connection_url(profile)
             .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
+        let client = redis::Client::open(url)
+            .map_err(|e| color_eyre::eyre::eyre!("invalid pub/sub URL: {e}"))?;
+        let mut pubsub = client
+            .get_async_pubsub()
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("pub/sub connect failed: {e}"))?;
+
+        match kind {
+            PubSubKind::Channel(ch) => pubsub.subscribe(ch.clone()).await,
+            PubSubKind::Pattern(pat) => pubsub.psubscribe(pat.clone()).await,
+        }
+        .map_err(|e| color_eyre::eyre::eyre!("subscribe failed: {e}"))?;
+
         let (tx, rx) = mpsc::unbounded_channel();
-        let kind = kind.clone();
-
         tokio::spawn(async move {
-            let client = match redis::Client::open(url) {
-                Ok(c) => c,
-                Err(_) => return,
-            };
-
-            let mut pubsub = match client.get_async_pubsub().await {
-                Ok(p) => p,
-                Err(_) => return,
-            };
-
-            let sub_result = match &kind {
-                PubSubKind::Channel(ch) => pubsub.subscribe(ch.clone()).await,
-                PubSubKind::Pattern(pat) => pubsub.psubscribe(pat.clone()).await,
-            };
-
-            if sub_result.is_err() {
-                return;
-            }
-
             let mut stream = pubsub.on_message();
             while let Some(msg) = stream.next().await {
                 let payload = msg

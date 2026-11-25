@@ -2040,7 +2040,9 @@ async fn test_scan_task_hydrates_types_and_ttls_end_to_end() {
 
     let mut entries: Vec<KeyEntry> = Vec::new();
     while let Some(batch) = rx.recv().await {
-        entries.extend(batch);
+        // The channel now carries per-batch Results so a scan failure can
+        // reach the browser instead of being swallowed as "complete".
+        entries.extend(batch.expect("a live scan must not error"));
     }
     cancel.cancel();
 
@@ -2073,5 +2075,59 @@ async fn test_scan_task_hydrates_types_and_ttls_end_to_end() {
 
     for k in ["hydrate:str", "hydrate:hash", "hydrate:zset", "hydrate:ttl"] {
         let _ = redis::cmd("DEL").arg(k).query_async::<()>(&mut c).await;
+    }
+}
+
+/// The MONITOR producer had zero coverage of any kind: no test ever called
+/// `client.monitor()`. This drives it against a live server — start the
+/// stream, run a command from another connection, and require the line.
+#[tokio::test]
+async fn test_monitor_stream_yields_live_command_lines() {
+    let profile = ConnectionProfile {
+        name: "test".to_string(),
+        host: "127.0.0.1".to_string(),
+        port: 16379,
+        db: 0,
+        username: None,
+        password: None,
+        last_connected: None,
+        ..Default::default()
+    };
+    let Some(client) = helpers::connect_or_skip(&profile).await else {
+        return;
+    };
+
+    let Some(mut rx) = client.monitor().await.unwrap() else {
+        panic!("standalone MONITOR must be available");
+    };
+
+    // Run a command on a separate connection.
+    let mut other = redis::Client::open("redis://127.0.0.1:16379/0")
+        .unwrap()
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let _: () = redis::cmd("SET")
+        .arg("monitor:probe")
+        .arg("1")
+        .query_async(&mut other)
+        .await
+        .unwrap();
+
+    // The MONITOR stream opens with a flood of setup lines from other
+    // connections (CLIENT SETINFO etc.); drain until our command shows up.
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            panic!("MONITOR never reported the SET command");
+        }
+        let line = tokio::time::timeout(remaining, rx.recv())
+            .await
+            .expect("MONITOR must deliver a line")
+            .expect("MONITOR stream must stay open");
+        if line.contains("monitor:probe") {
+            break;
+        }
     }
 }

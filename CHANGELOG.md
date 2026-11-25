@@ -221,6 +221,23 @@ every write, and the REPL refuses `FLUSHDB`, `FLUSHALL` and `KEYS *`.
   TYPE/TTL round-trip per SCAN batch (badges and the TTL sort get real
   data), and inspection re-fetches TYPE on Enter, so even an unhydrated
   or stale-cached type can never break loading again.
+- **Pipeline failures are no longer silent.** A composite audit of every
+  producer→channel→drain→consumer flow found: SCAN errors were presented
+  as a completed scan; a full channel dropped batches (truncating the
+  scan) and still said `Ready`; rows dropped at `max_keys_in_memory`
+  vanished without a mark (the title now says `[limit reached]`);
+  `Search → Enter` silently did nothing when the result key wasn't in
+  the browser tree; opening search with no connection hung in
+  "[scanning…]" forever; a failed pub/sub subscribe reported "Subscribed"
+  with a dead receiver; a failed manual reconnect claimed
+  "Reconnecting" while nothing would retry; and search jumps in a
+  type/TTL-sorted list landed the cursor on the wrong row.
+- **The drain layer finally has tests.** `handle_tick` — which runs all
+  four channel drains — had never been executed by any test. New
+  end-to-end tests drive connect → SCAN → tick drain → typed tree,
+  connection-screen Connect → scan, search scan → widget,
+  publish → tick → pub/sub pane, MONITOR's producer, and the
+  stream-follow tick splice.
 
 - **Key list rendering is windowed.** With every namespace expanded the browser
   allocated a `ListItem` — a `String` and a `Style` — for all 10,001 rows on

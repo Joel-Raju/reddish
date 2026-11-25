@@ -638,3 +638,97 @@ async fn test_pubsub_kind_reports_pattern_and_channel() {
     assert_eq!(pattern.name(), "news:*");
     assert_ne!(channel, pattern);
 }
+
+/// The search overlay's Execute flow, driven at the app level for the
+/// first time. The old flow silently did nothing when the result key was
+/// not in the browser's tree — and that is not an edge case: the search
+/// runs its own SCAN, the tree is capped by max_keys_in_memory, and a
+/// still-streaming scan may not have reached the key. Enter on a valid
+/// result closed the overlay and loaded nothing.
+#[tokio::test]
+async fn test_search_execute_inspects_even_when_the_key_is_not_in_the_tree() {
+    let profile = test_profile();
+    let Some(client) = helpers::connect_or_skip(&profile).await else {
+        return;
+    };
+    let mut c = match &client.client {
+        reddish_tui::redis::client::RedisClient::Standalone(c) => c.clone(),
+        _ => unreachable!("tests always use standalone"),
+    };
+    let _: () = redis::cmd("SET")
+        .arg("searchboth")
+        .arg("found-me")
+        .query_async(&mut c)
+        .await
+        .unwrap();
+
+    let mut app = reddish_tui::app::App::new(reddish_tui::config::Config::default());
+    app.client = Some(client);
+
+    // Path 1: the key IS in the tree. Jump must land the cursor and load.
+    app.key_browser
+        .tree
+        .insert(reddish_tui::ui::key_browser::tree::KeyEntry {
+            full_name: "searchboth".to_string(),
+            redis_type: None,
+            ttl: None,
+        });
+    app.mode_stack.push(reddish_tui::app::AppMode::Search);
+    app.search.set_results(vec!["searchboth".to_string()]);
+    app.search.query = "searchboth".to_string();
+    app.search.apply_filter();
+
+    reddish_tui::app::handle_key_event_for_test(
+        &mut app,
+        crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Enter),
+    )
+    .await;
+    assert_eq!(app.active_tab, reddish_tui::app::Tab::Keys);
+    assert!(
+        !app.mode_stack.contains(&reddish_tui::app::AppMode::Search),
+        "Execute must close the search overlay"
+    );
+    assert_eq!(
+        app.value_inspector.value,
+        Some(reddish_tui::redis::types::RedisValue::String(
+            "found-me".to_string()
+        )),
+        "the in-tree path must load the value"
+    );
+
+    // Path 2: the key is NOT in the tree (cap, or scan still streaming).
+    // The old flow no-opped here; now it must inspect directly.
+    let _: () = redis::cmd("SET")
+        .arg("searchunseen")
+        .arg("also-here")
+        .query_async(&mut c)
+        .await
+        .unwrap();
+    app.value_inspector = reddish_tui::ui::value_inspector::ValueInspector::new();
+    app.mode_stack.push(reddish_tui::app::AppMode::Search);
+    app.search.set_results(vec!["searchunseen".to_string()]);
+    app.search.query = "searchunseen".to_string();
+    app.search.apply_filter();
+
+    reddish_tui::app::handle_key_event_for_test(
+        &mut app,
+        crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Enter),
+    )
+    .await;
+    assert_eq!(
+        app.value_inspector.value,
+        Some(reddish_tui::redis::types::RedisValue::String(
+            "also-here".to_string()
+        )),
+        "a valid result outside the tree must still inspect, not no-op"
+    );
+
+    let _ = redis::cmd("DEL")
+        .arg("searchboth")
+        .query_async::<()>(&mut c)
+        .await;
+    let _ = redis::cmd("DEL")
+        .arg("searchunseen")
+        .query_async::<()>(&mut c)
+        .await;
+}

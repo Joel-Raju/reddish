@@ -2215,7 +2215,10 @@ impl App {
             // compact rendering of stream entries. Calling it "view mode"
             // invited confusion with `Tab`, which is what cycles a string's
             // Raw/JSON/Base64/Hex rendering.
-            ("inspector_toggle_view", "Toggle compact stream rendering"),
+            (
+                "inspector_toggle_view",
+                "Show/hide stream entry fields (compact/full)",
+            ),
             ("inspector_hash_filter", "Filter hash fields"),
             ("inspector_value_search", "Search inside value"),
             ("inspector_stream_follow", "Toggle stream follow"),
@@ -2302,7 +2305,13 @@ impl App {
         match self.active_tab {
             Tab::Keys => {
                 geometry.key_list = self.key_browser.render(frame, content_layout[0]);
-                self.value_inspector.render(frame, content_layout[1]);
+                let toggle_hint = self
+                    .keymap
+                    .binding("inspector_toggle_view")
+                    .map(Self::display_key)
+                    .unwrap_or_default();
+                self.value_inspector
+                    .render_with_hint(frame, content_layout[1], &toggle_hint);
             }
             Tab::Repl => {
                 self.repl.render(frame, main_layout[1]);
@@ -3226,7 +3235,7 @@ mod help_overlay_tests {
             "tab_keys" => "Keys tab",
             "new_key" => "New key",
             "delete" => "Delete key",
-            "inspector_toggle_view" => "compact stream rendering",
+            "inspector_toggle_view" => "stream entry fields",
             "search_toggle_mode" => "regex mode",
             other => panic!("unmapped action {other}"),
         }

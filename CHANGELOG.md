@@ -282,6 +282,11 @@ every write, and the REPL refuses `FLUSHDB`, `FLUSHALL` and `KEYS *`.
   or Stream — and on a value that was still loading or had failed to
   load — fell through to the browser's expire (`EXPIRE key 1`, deleting
   the key), and is now claimed with an explanatory message instead.
+- **Stream fields are discoverable.** The compact view's `(N fields)`
+  summary left no clue how to see them; the pane title now shows the
+  toggle binding and its effect (`· f: full` / `· f: compact`), sourced
+  from the loaded keymap, and the help row says "Show/hide stream entry
+  fields (compact/full)".
 - **End-to-end pty smoke tests.** `tests/pty_smoke.rs` spawns the real
   binary under a pseudo-terminal and writes the bytes a terminal
   actually sends — `0x1C` for `Ctrl+\`, `0x10` for `Ctrl+P`, `?`/`q`/`Esc`

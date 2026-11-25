@@ -1357,7 +1357,15 @@ impl ValueInspector {
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
-        self.render_value(frame, area);
+        self.render_with_hint(frame, area, "f");
+    }
+
+    /// Render, showing which key toggles the stream's compact/full view.
+    ///
+    /// The hint comes from the loaded keymap: the panel itself should say how
+    /// to reveal stream fields instead of relying on the help overlay.
+    pub fn render_with_hint(&self, frame: &mut Frame, area: Rect, toggle_hint: &str) {
+        self.render_value(frame, area, toggle_hint);
 
         // The editor draws as a centred popup over the value pane rather than
         // replacing it, so the value being edited stays visible around the
@@ -1369,7 +1377,7 @@ impl ValueInspector {
         }
     }
 
-    fn render_value(&self, frame: &mut Frame, area: Rect) {
+    fn render_value(&self, frame: &mut Frame, area: Rect, toggle_hint: &str) {
         // List-specific render
         if let Some(RedisValue::List(ref items)) = self.value {
             self.render_list(frame, area, items);
@@ -1396,7 +1404,7 @@ impl ValueInspector {
 
         // Stream-specific render
         if let Some(RedisValue::Stream(ref entries)) = self.value {
-            self.render_stream(frame, area, entries);
+            self.render_stream(frame, area, entries, toggle_hint);
             return;
         }
 
@@ -1844,16 +1852,34 @@ impl ValueInspector {
         frame.render_widget(paragraph, area);
     }
 
-    fn render_stream(&self, frame: &mut Frame, area: Rect, entries: &[StreamEntry]) {
+    fn render_stream(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        entries: &[StreamEntry],
+        toggle_hint: &str,
+    ) {
         let mode = if self.stream_compact {
             "compact"
         } else {
             "full"
         };
         let follow = if self.stream_follow { ", follow" } else { "" };
+        // Put the toggle in the panel title: `(N fields)` alone leaves no
+        // clue how to see them.
+        let toggle = if toggle_hint.is_empty() {
+            String::new()
+        } else if self.stream_compact {
+            format!(" · {toggle_hint}: full")
+        } else {
+            format!(" · {toggle_hint}: compact")
+        };
         let title = |k: Option<&str>| match k {
-            Some(k) => format!("Stream [{k}] (len={}, {mode}{follow})", entries.len()),
-            None => format!("Stream (len={}, {mode}{follow})", entries.len()),
+            Some(k) => format!(
+                "Stream [{k}] (len={}, {mode}{follow}{toggle})",
+                entries.len()
+            ),
+            None => format!("Stream (len={}, {mode}{follow}{toggle})", entries.len()),
         };
 
         if self.stream_show_groups {
@@ -2435,6 +2461,43 @@ mod tests {
         assert!(
             rendered.contains("follow"),
             "title should show follow state"
+        );
+    }
+
+    /// The panel title must say how to reach the fields — `(N fields)` in the
+    /// compact view left no clue, and the hint must come from the loaded
+    /// keymap rather than a hardcoded `f`.
+    #[test]
+    fn stream_title_hints_the_compact_full_toggle() {
+        use ratatui::{Terminal, backend::TestBackend};
+        fn rendered(inspector: &ValueInspector, hint: &str) -> String {
+            let backend = TestBackend::new(90, 24);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|f| inspector.render_with_hint(f, f.area(), hint))
+                .unwrap();
+            terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|c| c.symbol())
+                .collect()
+        }
+
+        let mut inspector = stream_inspector();
+        inspector.append_stream_entries(vec![entry("3-0")]);
+        let compact = rendered(&inspector, "f");
+        assert!(
+            compact.contains("f: full"),
+            "compact view must hint how to show fields, got: {compact:?}"
+        );
+
+        inspector.stream_compact = false;
+        let full = rendered(&inspector, "f");
+        assert!(
+            full.contains("f: compact"),
+            "full view must hint how to go back, got: {full:?}"
         );
     }
 

@@ -937,6 +937,16 @@ impl ValueInspector {
             return None;
         }
 
+        // No RedisValue to edit (still loading, or the load failed): claim
+        // `edit` so it cannot fall through to the browser's expire, which
+        // would delete the very key the pane is reporting an error for.
+        if self.value.is_none() && keymap.matches("edit", key) {
+            self.last_key_consumed = true;
+            return Some(InspectorAction::InvalidInput(
+                "The value is not loaded — press Esc and reopen the key".to_string(),
+            ));
+        }
+
         if key.code == KeyCode::Tab {
             self.string_view = self.string_view.next();
             self.last_key_consumed = true;
@@ -984,10 +994,23 @@ impl ValueInspector {
         // the open value — a mode leak, not just a missing binding.
         let nav_up_pressed = keymap.matches("nav_up", key);
         let nav_down_pressed = keymap.matches("nav_down", key);
-        // Navigation is claimed whenever a value is open, even at the ends
-        // of a list: falling through at the boundary moved the key selection
-        // behind the value (the reported bug).
-        if nav_up_pressed || nav_down_pressed || matches!(key.code, KeyCode::Up | KeyCode::Down) {
+        // Presentation keys belong to the value while it is open. Arrows and
+        // j/k moved the key cursor; h/l collapsed the tree, Backspace moved
+        // its breadcrumb, `g` jumped it to root, `s` cycled its sort, and
+        // Space/Ctrl+A changed its selection — all behind the open value.
+        // Claim them for every value type; only *actions* on the selected
+        // key (n/r/d/D/R, set operations) still reach the browser.
+        if nav_up_pressed
+            || nav_down_pressed
+            || matches!(key.code, KeyCode::Up | KeyCode::Down | KeyCode::Backspace)
+            || keymap.matches("nav_left", key)
+            || keymap.matches("nav_right", key)
+            || keymap.matches("go_up", key)
+            || keymap.matches("cycle_sort", key)
+            || keymap.matches("toggle_select", key)
+            || keymap.matches("select_all", key)
+            || (key.modifiers.is_empty() && key.code == KeyCode::Char('g'))
+        {
             self.last_key_consumed = true;
         }
 
@@ -1144,6 +1167,10 @@ impl ValueInspector {
         if let Some(RedisValue::Set(ref members)) = self.value {
             if keymap.matches("inspector_set_add", key)
                 || keymap.matches("delete", key)
+                // `e` on a set cannot edit in place; claiming it here stops
+                // it falling through to the browser's expire (which deletes
+                // the key a second later).
+                || keymap.matches("edit", key)
                 || keymap.matches("copy", key)
             {
                 self.last_key_consumed = true;
@@ -1167,6 +1194,13 @@ impl ValueInspector {
             if keymap.matches("inspector_set_add", key) {
                 self.list_prompt = Some(InputWidget::new("Member to SADD"));
                 self.prompt_mode = Some(PromptMode::SetAddMember);
+            } else if keymap.matches("edit", key) {
+                // Claimed above so it cannot reach the browser's expire; say
+                // why nothing happened.
+                return Some(InspectorAction::InvalidInput(
+                    "Set members cannot be edited in place — delete with D and add with a"
+                        .to_string(),
+                ));
             } else if keymap.matches("delete", key)
                 && let Some(member) = items.get(self.set_cursor)
             {
@@ -1254,6 +1288,9 @@ impl ValueInspector {
                 || keymap.matches("inspector_goto_end", key)
                 || keymap.matches("inspector_stream_groups", key)
                 || keymap.matches("inspector_stream_trim", key)
+                // `e` cannot edit a stream entry in place; claiming it stops
+                // it falling through to the browser's expire.
+                || keymap.matches("edit", key)
                 || keymap.matches("copy", key)
             {
                 self.last_key_consumed = true;
@@ -1276,6 +1313,12 @@ impl ValueInspector {
             if keymap.matches("inspector_stream_add", key) {
                 self.list_prompt = Some(InputWidget::new("Entry ID (Enter=auto)"));
                 self.prompt_mode = Some(PromptMode::StreamAddId);
+            } else if keymap.matches("edit", key) {
+                // Claimed above so it cannot reach the browser's expire.
+                return Some(InspectorAction::InvalidInput(
+                    "Stream entries cannot be edited in place — delete with D and add with a"
+                        .to_string(),
+                ));
             } else if keymap.matches("delete", key)
                 && let Some(entry) = entries.get(self.stream_cursor)
             {
@@ -3312,5 +3355,109 @@ mod truncation_tests {
             "render cost should not scale with the untruncated value: \
              100KB took {small_time:?}, 2MB took {large_time:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod presentation_key_tests {
+    use super::*;
+    use crate::redis::types::{RedisValue, StreamEntry, ZSetEntry};
+
+    fn sample_values() -> Vec<RedisValue> {
+        vec![
+            RedisValue::String("v".to_string()),
+            RedisValue::List(vec!["a".to_string()]),
+            RedisValue::Hash(indexmap::IndexMap::from([(
+                "f".to_string(),
+                "v".to_string(),
+            )])),
+            RedisValue::Set(["m".to_string()].into_iter().collect()),
+            RedisValue::ZSet(vec![ZSetEntry {
+                member: "m".to_string(),
+                score: 1.0,
+            }]),
+            RedisValue::Stream(vec![StreamEntry {
+                id: "1-0".to_string(),
+                fields: indexmap::IndexMap::from([("f".to_string(), "v".to_string())]),
+            }]),
+        ]
+    }
+
+    /// Every presentation key must be claimed while a value is open, for
+    /// every value type — otherwise it reaches the key browser behind the
+    /// value (moving, collapsing, sorting or selecting keys there).
+    #[test]
+    fn presentation_keys_are_consumed_for_every_value_type() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let keys = [
+            KeyEvent::from(KeyCode::Up),
+            KeyEvent::from(KeyCode::Down),
+            KeyEvent::from(KeyCode::Char('h')),
+            KeyEvent::from(KeyCode::Char('l')),
+            KeyEvent::from(KeyCode::Char('s')),
+            KeyEvent::from(KeyCode::Char(' ')),
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+            KeyEvent::from(KeyCode::Char('g')),
+            KeyEvent::from(KeyCode::Backspace),
+        ];
+        for value in sample_values() {
+            for key in &keys {
+                let mut inspector = ValueInspector::new();
+                inspector.set_value("key".to_string(), value.clone());
+                inspector.handle_event(&Event::Key(*key));
+                assert!(
+                    inspector.last_key_consumed,
+                    "{key:?} leaked to the browser for {value:?}"
+                );
+            }
+        }
+    }
+
+    /// The guard that makes action-like keys safe: values that cannot be
+    /// edited in place must not fall through to the browser's `e` (which
+    /// expires the whole key).
+    #[test]
+    fn edit_on_an_ineditable_type_does_not_fall_through() {
+        for value in [
+            RedisValue::Set(["m".to_string()].into_iter().collect()),
+            RedisValue::Stream(vec![StreamEntry {
+                id: "1-0".to_string(),
+                fields: indexmap::IndexMap::new(),
+            }]),
+        ] {
+            let mut inspector = ValueInspector::new();
+            inspector.set_value("key".to_string(), value.clone());
+            inspector.handle_event(&Event::Key(crossterm::event::KeyEvent::from(
+                crossterm::event::KeyCode::Char('e'),
+            )));
+            assert!(
+                inspector.last_key_consumed,
+                "'e' on {value:?} must not reach the browser's expire"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod unloaded_value_tests {
+    use super::*;
+
+    /// With a value still loading or failed, `e` must not reach the
+    /// browser's expire (it would delete the key the pane reports on).
+    #[test]
+    fn edit_on_an_unloaded_value_is_consumed() {
+        let mut inspector = ValueInspector::new();
+        inspector.set_loading("k".to_string());
+        inspector.handle_event(&Event::Key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Char('e'),
+        )));
+        assert!(inspector.last_key_consumed);
+
+        let mut failed = ValueInspector::new();
+        failed.set_error(Some("k".to_string()), "boom".to_string());
+        failed.handle_event(&Event::Key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Char('e'),
+        )));
+        assert!(failed.last_key_consumed);
     }
 }

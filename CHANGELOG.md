@@ -275,6 +275,13 @@ every write, and the REPL refuses `FLUSHDB`, `FLUSHALL` and `KEYS *`.
   the key list (it previously did nothing there). With no value open,
   the inspector consumes nothing, so arrows browse and `t`/`n` reach the
   browser normally.
+- **The value pane owns every presentation key.** The same leak covered
+  `h`/`l` (collapsing the tree), `Backspace` (moving the breadcrumb),
+  `Space`/`Ctrl+A` (selecting keys) and `s` (cycling sort) behind an open
+  value; all are claimed now, for every value type. Worse, `e` on a Set
+  or Stream — and on a value that was still loading or had failed to
+  load — fell through to the browser's expire (`EXPIRE key 1`, deleting
+  the key), and is now claimed with an explanatory message instead.
 - **End-to-end pty smoke tests.** `tests/pty_smoke.rs` spawns the real
   binary under a pseudo-terminal and writes the bytes a terminal
   actually sends — `0x1C` for `Ctrl+\`, `0x10` for `Ctrl+P`, `?`/`q`/`Esc`

@@ -1047,6 +1047,13 @@ impl App {
                     .value_inspector
                     .handle_event_with_keymap(&Event::Key(key), &self.keymap);
                 let consumed = self.value_inspector.last_key_consumed;
+                // Invariant: an action implies the key was consumed. If this
+                // ever fires, a handler returned an action without claiming
+                // the key and the browser would also react to it.
+                debug_assert!(
+                    consumed || inspector_action.is_none(),
+                    "inspector returned an action without marking the key consumed"
+                );
 
                 if let Some(action) = inspector_action.as_ref() {
                     self.handle_inspector_action(action.clone()).await;
@@ -5343,5 +5350,97 @@ mod inspector_escape_tests {
         let mut app = App::new(Config::default());
         app.handle_key_event(KeyEvent::from(KeyCode::Esc)).await;
         assert!(!app.value_inspector.last_key_consumed);
+    }
+}
+
+#[cfg(test)]
+mod browser_isolation_tests {
+    use super::*;
+    use crate::redis::types::RedisValue;
+    use crate::ui::key_browser::SortMode;
+    use crate::ui::key_browser::tree::KeyEntry;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn app_with_tree(path: Vec<String>, cursor: usize) -> App {
+        let mut app = App::new(Config::default());
+        for name in ["alpha", "bravo", "ns:key"] {
+            app.key_browser.tree.insert(KeyEntry {
+                full_name: name.to_string(),
+                redis_type: None,
+                ttl: None,
+            });
+        }
+        app.key_browser.current_path = path;
+        app.key_browser.cursor = cursor;
+        app.value_inspector.set_value(
+            "listkey".to_string(),
+            RedisValue::List(vec!["one".to_string()]),
+        );
+        app
+    }
+
+    fn snapshot(app: &App) -> (usize, Vec<String>, SortMode, usize, usize) {
+        (
+            app.key_browser.cursor,
+            app.key_browser.current_path.clone(),
+            app.key_browser.sort_mode,
+            app.key_browser.selected.len(),
+            app.key_browser.tree.visible_rows().len(),
+        )
+    }
+
+    /// Each of these would change the key pane if the key reached it while a
+    /// value is open: `s` the sort, `g` the breadcrumb, Backspace the path,
+    /// `l` the expansion, Space/Ctrl+A the selection.
+    #[tokio::test]
+    async fn presentation_keys_leave_the_key_pane_untouched() {
+        let cases: [(Vec<String>, usize, &str, KeyEvent); 6] = [
+            (
+                vec![],
+                0,
+                "s cycles browser sort",
+                KeyEvent::from(KeyCode::Char('s')),
+            ),
+            (
+                vec!["ns".to_string()],
+                0,
+                "g jumps the browser to root",
+                KeyEvent::from(KeyCode::Char('g')),
+            ),
+            (
+                vec!["ns".to_string()],
+                0,
+                "Backspace moves the breadcrumb",
+                KeyEvent::from(KeyCode::Backspace),
+            ),
+            (
+                vec![],
+                0,
+                "l expands the namespace under the cursor",
+                KeyEvent::from(KeyCode::Char('l')),
+            ),
+            (
+                vec!["ns".to_string()],
+                0,
+                "Space toggles a key selection",
+                KeyEvent::from(KeyCode::Char(' ')),
+            ),
+            (
+                vec!["ns".to_string()],
+                0,
+                "Ctrl+A selects all keys",
+                KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL),
+            ),
+        ];
+        for (path, cursor, description, key) in cases {
+            let mut app = app_with_tree(path, cursor);
+            let before = snapshot(&app);
+            app.handle_key_event(key).await;
+            assert_eq!(
+                snapshot(&app),
+                before,
+                "while a value is open, {description} must not happen behind it"
+            );
+        }
     }
 }

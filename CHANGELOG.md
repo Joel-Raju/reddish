@@ -5,7 +5,151 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-11-24
+
+### Changed
+
+- **Fixed a binding that could never fire.** The connection screen was bound to
+  `Ctrl+\`, matched as `KeyCode::Char('\\')` with CONTROL — but terminals send
+  `Ctrl+\` as byte `0x1C`, which crossterm decodes as `Ctrl+4`. The screen was
+  unreachable from the keyboard. The binding now accepts the byte as it
+  actually arrives (so `Ctrl+\` and `Ctrl+4` both work), and the connection
+  screen is also reachable from the command palette as `Connect…`.
+- **The command palette now performs the actions it lists.** It advertised
+  `Switch:Keys`/`REPL`/`Info`/`PubSub` but only wired `Quit` — executing a
+  switch item closed the overlay and did nothing. All items are wired, and an
+  unwired one now reports itself instead of silently doing nothing.
+- **The uppercase bindings finally fire.** Terminals deliver `D`, `R`, `Q`,
+  `G`, `F`, `I` with a SHIFT modifier (crossterm decorates uppercase input),
+  and `matches()` demanded exact modifiers — so the vim preset's refresh,
+  element-delete, zset filter, stream follow/groups, and list-insert keys
+  were dead on every real machine while their unit tests stayed green. The
+  delete case was worse: the inspector ignored the key and the browser's
+  modifier-blind fallback prompted to delete the **entire key** instead of
+  the selected element. Key spellings now parse to the event the wire
+  carries, and every preset binding is checked against the legacy decode
+  table by a test plus startup validation for user config.
+- **MONITOR is reachable.** It was toggled with `Ctrl+M` — byte `0x0D`, which
+  every terminal delivers as Enter. The toggle is `Alt+M`; raw mode is
+  `Alt+R` (the old `Ctrl+R` was shadowed by global reconnect); Shift+Tab
+  cycles autocomplete backwards (legacy sends `ESC[Z` = BackTab); `Ctrl+U`
+  clears the input line.
+- **The help overlay is modal.** It consumed only Esc, so `q` quit the app
+  through the overlay and `?` stacked a second help screen.
+- **Errors are visible.** `App::error_message` was written in ~60 places and
+  rendered by nothing — readonly blocks, "Copied:", CSV export paths,
+  palette mis-wiring reports, all invisible. Every write now also pushes a
+  status-bar toast.
+- **The built-in string editor is modal.** Its advertised `Ctrl+S` save
+  opened the global search overlay and `Ctrl+X` opened the palette, because
+  global bindings ran before the editor saw the key.
+- **The inspector honors the keymap's navigation bindings.** Emacs
+  `Ctrl+N`/`Ctrl+P` previously fell through and moved the key browser
+  behind the open value.
+- **REPL pipelines record per-command errors and keep running**, as this
+  changelog already claimed: a failing stage no longer aborts the line.
+- **`[keybindings]` config finally loads.** The serde defaults existed on
+  every field while `App` hardcoded the vim preset, so user keybinding TOML
+  was silently ignored. The same fix wired `mouse_enabled`.
+- **The emacs preset is deliverable.** All 14 `ctrl+shift+<letter>` chords
+  are byte-identical to plain `ctrl+` chords in legacy encoding; the preset
+  now uses vim's contextual inspector letters. `set_inter` (`Ctrl+I` is
+  Tab), `set_diff` (shadowed by delete), `rename_key` (shadowed by
+  reconnect) and `go_up` (shadowed by nav-left) rebound.
+- **Mouse events no longer drive the panes behind an open overlay.**
+- **Help text, status-bar hints and the palette title are generated from
+  the loaded keymap.** The duplicated consumer-groups row and the false
+  "Ctrl+C forces quit from any prompt" line are gone; the previously
+  undocumented fixed chords (connection screen, reconnect, MONITOR) are
+  listed.
+- **Startup failures are visible.** An invalid `--url` or an unknown
+  `--profile` used to write a message nothing rendered; both now toast
+  in the status bar like every other error.
+- **One test plan.** `MANUAL_TESTING.md` is retired and folded into
+  `TESTING_PLAN.md`, which now covers the full matrix: every startup
+  path and its failure modes, per-type editing for all six Redis types,
+  keybinding overrides, and the troubleshooting table.
+- **Value inspection works against a live scan.** The scan task inserted
+  every key with no type and nothing ever hydrated it, so `Enter` failed
+  with "Cannot load value for unknown redis type" for every key — the
+  headline feature, broken end-to-end, invisible to a suite whose tests
+  all fed pre-typed entries. Types and TTLs now hydrate in one pipelined
+  TYPE/TTL round-trip per SCAN batch (badges and the TTL sort get real
+  data), and inspection re-fetches TYPE on Enter, so even an unhydrated
+  or stale-cached type can never break loading again.
+- **Pipeline failures are no longer silent.** A composite audit of every
+  producer→channel→drain→consumer flow found: SCAN errors were presented
+  as a completed scan; a full channel dropped batches (truncating the
+  scan) and still said `Ready`; rows dropped at `max_keys_in_memory`
+  vanished without a mark (the title now says `[limit reached]`);
+  `Search → Enter` silently did nothing when the result key wasn't in
+  the browser tree; opening search with no connection hung in
+  "[scanning…]" forever; a failed pub/sub subscribe reported "Subscribed"
+  with a dead receiver; a failed manual reconnect claimed
+  "Reconnecting" while nothing would retry; and search jumps in a
+  type/TTL-sorted list landed the cursor on the wrong row.
+- **The drain layer finally has tests.** `handle_tick` — which runs all
+  four channel drains — had never been executed by any test. New
+  end-to-end tests drive connect → SCAN → tick drain → typed tree,
+  connection-screen Connect → scan, search scan → widget,
+  publish → tick → pub/sub pane, MONITOR's producer, and the
+  stream-follow tick splice.
+- **Dead data surfaces cleaned up.** The connection screen's save error
+  was written and never rendered (now shown in its footer); four INFO
+  stats were parsed and never drawn (ops-total, evictions, expirations,
+  dataset-loading now render); a search field kept alive only by a test
+  assertion is gone; inspector reload failures after an edit used to
+  silently keep the stale value; and a dead MONITOR feed now says so
+  instead of freezing the pane.
+- **Multiple pub/sub subscriptions work.** A second subscribe replaced
+  the single receiver slot (silently killing the first channel's feed
+  while the UI still listed it), and any unsubscribe stopped every feed.
+  Each subscription now has its own feed; unsubscribing drops only that
+  one. Pattern subscriptions are covered end to end too.
+- **Set operations, refresh, and stream trim gained app-level tests** —
+  their handlers had no test reaching them.
+- **Every overlay renders in tests.** No test rendered the app in Help,
+  Confirm, Search, ConnectionScreen or ReplOverlay; a panic in those draw
+  paths would have shipped unseen. All modes, tabs, value types, toasts
+  and the palette now render in the suite.
+- **A dead event channel is fatal-with-a-reason** instead of a silent
+  redraw loop.
+- **Quitting no longer hangs before restoring the terminal.** The input
+  thread blocked forever in `event::read()`, and dropping the tokio
+  runtime waits for blocking tasks — so `q` set `should_quit`, `run()`
+  returned, and the process stalled *before* leaving the alternate
+  screen until another key was pressed. The input loop now polls in
+  slices and exits when the app drops its receiver, plus the runtime
+  shutdown is bounded. Found by the new pty smoke test.
+- **Keys no longer leak from an open value to the key list.** The app
+  inferred "the inspector consumed this key" from prompt/edit state,
+  which cannot see quiet consumption — so Up/Down (and vim j/k) to move
+  through a value also moved the key selection, and `s`/`g` behind an
+  open value toggled the browser's sort or jumped it to root. The
+  inspector now reports consumption explicitly, claims navigation even
+  at the ends of a list, and `Esc` closes the value and returns focus to
+  the key list (it previously did nothing there). With no value open,
+  the inspector consumes nothing, so arrows browse and `t`/`n` reach the
+  browser normally.
+- **The value pane owns every presentation key.** The same leak covered
+  `h`/`l` (collapsing the tree), `Backspace` (moving the breadcrumb),
+  `Space`/`Ctrl+A` (selecting keys) and `s` (cycling sort) behind an open
+  value; all are claimed now, for every value type. Worse, `e` on a Set
+  or Stream — and on a value that was still loading or had failed to
+  load — fell through to the browser's expire (`EXPIRE key 1`, deleting
+  the key), and is now claimed with an explanatory message instead.
+- **Stream fields are discoverable.** The compact view's `(N fields)`
+  summary left no clue how to see them; the pane title now shows the
+  toggle binding and its effect (`· f: full` / `· f: compact`), sourced
+  from the loaded keymap, and the help row says "Show/hide stream entry
+  fields (compact/full)".
+- **End-to-end pty smoke tests.** `tests/pty_smoke.rs` spawns the real
+  binary under a pseudo-terminal and writes the bytes a terminal
+  actually sends — `0x1C` for `Ctrl+\`, `0x10` for `Ctrl+P`, `?`/`q`/`Esc`
+  — asserting on the rendered screen (ANSI stripped). It covers the
+  decode → dispatch → render chain and the live scan → badge → inspect
+  flow, which no other test reaches.
+
 
 ## [0.1.0] - 2026-11-23
 
@@ -153,147 +297,6 @@ every write, and the REPL refuses `FLUSHDB`, `FLUSHALL` and `KEYS *`.
 
 ### Changed
 
-- **Fixed a binding that could never fire.** The connection screen was bound to
-  `Ctrl+\`, matched as `KeyCode::Char('\\')` with CONTROL — but terminals send
-  `Ctrl+\` as byte `0x1C`, which crossterm decodes as `Ctrl+4`. The screen was
-  unreachable from the keyboard. The binding now accepts the byte as it
-  actually arrives (so `Ctrl+\` and `Ctrl+4` both work), and the connection
-  screen is also reachable from the command palette as `Connect…`.
-- **The command palette now performs the actions it lists.** It advertised
-  `Switch:Keys`/`REPL`/`Info`/`PubSub` but only wired `Quit` — executing a
-  switch item closed the overlay and did nothing. All items are wired, and an
-  unwired one now reports itself instead of silently doing nothing.
-- **The uppercase bindings finally fire.** Terminals deliver `D`, `R`, `Q`,
-  `G`, `F`, `I` with a SHIFT modifier (crossterm decorates uppercase input),
-  and `matches()` demanded exact modifiers — so the vim preset's refresh,
-  element-delete, zset filter, stream follow/groups, and list-insert keys
-  were dead on every real machine while their unit tests stayed green. The
-  delete case was worse: the inspector ignored the key and the browser's
-  modifier-blind fallback prompted to delete the **entire key** instead of
-  the selected element. Key spellings now parse to the event the wire
-  carries, and every preset binding is checked against the legacy decode
-  table by a test plus startup validation for user config.
-- **MONITOR is reachable.** It was toggled with `Ctrl+M` — byte `0x0D`, which
-  every terminal delivers as Enter. The toggle is `Alt+M`; raw mode is
-  `Alt+R` (the old `Ctrl+R` was shadowed by global reconnect); Shift+Tab
-  cycles autocomplete backwards (legacy sends `ESC[Z` = BackTab); `Ctrl+U`
-  clears the input line.
-- **The help overlay is modal.** It consumed only Esc, so `q` quit the app
-  through the overlay and `?` stacked a second help screen.
-- **Errors are visible.** `App::error_message` was written in ~60 places and
-  rendered by nothing — readonly blocks, "Copied:", CSV export paths,
-  palette mis-wiring reports, all invisible. Every write now also pushes a
-  status-bar toast.
-- **The built-in string editor is modal.** Its advertised `Ctrl+S` save
-  opened the global search overlay and `Ctrl+X` opened the palette, because
-  global bindings ran before the editor saw the key.
-- **The inspector honors the keymap's navigation bindings.** Emacs
-  `Ctrl+N`/`Ctrl+P` previously fell through and moved the key browser
-  behind the open value.
-- **REPL pipelines record per-command errors and keep running**, as this
-  changelog already claimed: a failing stage no longer aborts the line.
-- **`[keybindings]` config finally loads.** The serde defaults existed on
-  every field while `App` hardcoded the vim preset, so user keybinding TOML
-  was silently ignored. The same fix wired `mouse_enabled`.
-- **The emacs preset is deliverable.** All 14 `ctrl+shift+<letter>` chords
-  are byte-identical to plain `ctrl+` chords in legacy encoding; the preset
-  now uses vim's contextual inspector letters. `set_inter` (`Ctrl+I` is
-  Tab), `set_diff` (shadowed by delete), `rename_key` (shadowed by
-  reconnect) and `go_up` (shadowed by nav-left) rebound.
-- **Mouse events no longer drive the panes behind an open overlay.**
-- **Help text, status-bar hints and the palette title are generated from
-  the loaded keymap.** The duplicated consumer-groups row and the false
-  "Ctrl+C forces quit from any prompt" line are gone; the previously
-  undocumented fixed chords (connection screen, reconnect, MONITOR) are
-  listed.
-- **Startup failures are visible.** An invalid `--url` or an unknown
-  `--profile` used to write a message nothing rendered; both now toast
-  in the status bar like every other error.
-- **One test plan.** `MANUAL_TESTING.md` is retired and folded into
-  `TESTING_PLAN.md`, which now covers the full matrix: every startup
-  path and its failure modes, per-type editing for all six Redis types,
-  keybinding overrides, and the troubleshooting table.
-- **Value inspection works against a live scan.** The scan task inserted
-  every key with no type and nothing ever hydrated it, so `Enter` failed
-  with "Cannot load value for unknown redis type" for every key — the
-  headline feature, broken end-to-end, invisible to a suite whose tests
-  all fed pre-typed entries. Types and TTLs now hydrate in one pipelined
-  TYPE/TTL round-trip per SCAN batch (badges and the TTL sort get real
-  data), and inspection re-fetches TYPE on Enter, so even an unhydrated
-  or stale-cached type can never break loading again.
-- **Pipeline failures are no longer silent.** A composite audit of every
-  producer→channel→drain→consumer flow found: SCAN errors were presented
-  as a completed scan; a full channel dropped batches (truncating the
-  scan) and still said `Ready`; rows dropped at `max_keys_in_memory`
-  vanished without a mark (the title now says `[limit reached]`);
-  `Search → Enter` silently did nothing when the result key wasn't in
-  the browser tree; opening search with no connection hung in
-  "[scanning…]" forever; a failed pub/sub subscribe reported "Subscribed"
-  with a dead receiver; a failed manual reconnect claimed
-  "Reconnecting" while nothing would retry; and search jumps in a
-  type/TTL-sorted list landed the cursor on the wrong row.
-- **The drain layer finally has tests.** `handle_tick` — which runs all
-  four channel drains — had never been executed by any test. New
-  end-to-end tests drive connect → SCAN → tick drain → typed tree,
-  connection-screen Connect → scan, search scan → widget,
-  publish → tick → pub/sub pane, MONITOR's producer, and the
-  stream-follow tick splice.
-- **Dead data surfaces cleaned up.** The connection screen's save error
-  was written and never rendered (now shown in its footer); four INFO
-  stats were parsed and never drawn (ops-total, evictions, expirations,
-  dataset-loading now render); a search field kept alive only by a test
-  assertion is gone; inspector reload failures after an edit used to
-  silently keep the stale value; and a dead MONITOR feed now says so
-  instead of freezing the pane.
-- **Multiple pub/sub subscriptions work.** A second subscribe replaced
-  the single receiver slot (silently killing the first channel's feed
-  while the UI still listed it), and any unsubscribe stopped every feed.
-  Each subscription now has its own feed; unsubscribing drops only that
-  one. Pattern subscriptions are covered end to end too.
-- **Set operations, refresh, and stream trim gained app-level tests** —
-  their handlers had no test reaching them.
-- **Every overlay renders in tests.** No test rendered the app in Help,
-  Confirm, Search, ConnectionScreen or ReplOverlay; a panic in those draw
-  paths would have shipped unseen. All modes, tabs, value types, toasts
-  and the palette now render in the suite.
-- **A dead event channel is fatal-with-a-reason** instead of a silent
-  redraw loop.
-- **Quitting no longer hangs before restoring the terminal.** The input
-  thread blocked forever in `event::read()`, and dropping the tokio
-  runtime waits for blocking tasks — so `q` set `should_quit`, `run()`
-  returned, and the process stalled *before* leaving the alternate
-  screen until another key was pressed. The input loop now polls in
-  slices and exits when the app drops its receiver, plus the runtime
-  shutdown is bounded. Found by the new pty smoke test.
-- **Keys no longer leak from an open value to the key list.** The app
-  inferred "the inspector consumed this key" from prompt/edit state,
-  which cannot see quiet consumption — so Up/Down (and vim j/k) to move
-  through a value also moved the key selection, and `s`/`g` behind an
-  open value toggled the browser's sort or jumped it to root. The
-  inspector now reports consumption explicitly, claims navigation even
-  at the ends of a list, and `Esc` closes the value and returns focus to
-  the key list (it previously did nothing there). With no value open,
-  the inspector consumes nothing, so arrows browse and `t`/`n` reach the
-  browser normally.
-- **The value pane owns every presentation key.** The same leak covered
-  `h`/`l` (collapsing the tree), `Backspace` (moving the breadcrumb),
-  `Space`/`Ctrl+A` (selecting keys) and `s` (cycling sort) behind an open
-  value; all are claimed now, for every value type. Worse, `e` on a Set
-  or Stream — and on a value that was still loading or had failed to
-  load — fell through to the browser's expire (`EXPIRE key 1`, deleting
-  the key), and is now claimed with an explanatory message instead.
-- **Stream fields are discoverable.** The compact view's `(N fields)`
-  summary left no clue how to see them; the pane title now shows the
-  toggle binding and its effect (`· f: full` / `· f: compact`), sourced
-  from the loaded keymap, and the help row says "Show/hide stream entry
-  fields (compact/full)".
-- **End-to-end pty smoke tests.** `tests/pty_smoke.rs` spawns the real
-  binary under a pseudo-terminal and writes the bytes a terminal
-  actually sends — `0x1C` for `Ctrl+\`, `0x10` for `Ctrl+P`, `?`/`q`/`Esc`
-  — asserting on the rendered screen (ANSI stripped). It covers the
-  decode → dispatch → render chain and the live scan → badge → inspect
-  flow, which no other test reaches.
-
 - **Key list rendering is windowed.** With every namespace expanded the browser
   allocated a `ListItem` — a `String` and a `Style` — for all 10,001 rows on
   every frame, while an 80x24 terminal draws about 20 of them. Only the visible
@@ -324,5 +327,6 @@ every write, and the REPL refuses `FLUSHDB`, `FLUSHALL` and `KEYS *`.
   `/` to `Ctrl+f`, because `q` quits from anywhere and `/` opens global search.
 - `cargo fmt --check` and `clippy -D warnings` are now enforced in CI.
 
-[Unreleased]: https://github.com/Joel-Raju/reddish/compare/v0.1.0...HEAD
+[0.2.0]: https://github.com/Joel-Raju/reddish/compare/v0.1.0...v0.2.0
+[Unreleased]: https://github.com/Joel-Raju/reddish/compare/v0.2.0...HEAD
 [0.1.0]: https://github.com/Joel-Raju/reddish/releases/tag/v0.1.0

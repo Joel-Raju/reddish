@@ -17,8 +17,8 @@ fn main() -> io::Result<()> {
     let cli = reddish_tui::cli::Cli::command();
 
     let man = Man::new(cli)
-        .date("2026-10-17")
-        .source("reddish-tui 0.1.0")
+        .date("2026-11-24")
+        .source("reddish-tui 0.2.0")
         .manual("Redis Terminal User Interface")
         .section("1");
 

@@ -358,6 +358,14 @@ pub struct ValueInspector {
     pub loading: bool,
     pub error: Option<String>,
     pub edit_mode: bool,
+    /// Whether the most recent key event was handled by the inspector.
+    ///
+    /// The app used to infer consumption from edit/prompt state alone, which
+    /// missed quiet consumption — cursor moves, view toggles, selection. The
+    /// same key then reached the key browser behind the value: pressing
+    /// Up/Down to move through a value also moved the key selection, and `s`
+    /// or `g` toggled browser sort / jumped the browser to root.
+    pub last_key_consumed: bool,
     pub string_view: StringViewMode,
     pub encoding: Option<String>,
     pub memory_bytes: Option<u64>,
@@ -408,6 +416,7 @@ impl ValueInspector {
             error: None,
             edit_mode: false,
             string_view: StringViewMode::Raw,
+            last_key_consumed: false,
             encoding: None,
             memory_bytes: None,
             ttl: None,
@@ -644,15 +653,6 @@ impl ValueInspector {
     /// whether the key browser should also see it. Comparing state rather than
     /// the returned action is necessary because prompts return `None` while
     /// still consuming the keystroke.
-    pub fn consumed_state(&self) -> (bool, bool, bool, bool) {
-        (
-            self.edit_mode,
-            self.text_editor.is_some(),
-            self.list_prompt.is_some(),
-            self.prompt_mode.is_some(),
-        )
-    }
-
     pub fn handle_event(&mut self, event: &Event) -> Option<InspectorAction> {
         self.handle_event_with_keymap(event, &crate::config::keybindings::Keymap::default())
     }
@@ -666,8 +666,11 @@ impl ValueInspector {
         let Event::Key(key) = event else {
             return None;
         };
+        self.last_key_consumed = false;
 
         if self.edit_mode {
+            // The editor is modal: every key belongs to it.
+            self.last_key_consumed = true;
             if let Some(ref mut editor) = self.text_editor {
                 if key.code == KeyCode::Esc {
                     self.edit_mode = false;
@@ -693,6 +696,8 @@ impl ValueInspector {
 
         // Handle inline input prompts (for list/hash a/p/e operations)
         if let Some(ref mut prompt) = self.list_prompt {
+            // The prompt is modal: every key belongs to it.
+            self.last_key_consumed = true;
             prompt.handle_event(event);
             if prompt.submitted.is_some() {
                 let val = prompt.submitted.take().unwrap_or_default();
@@ -886,10 +891,12 @@ impl ValueInspector {
 
         if key.code == KeyCode::Tab {
             self.string_view = self.string_view.next();
+            self.last_key_consumed = true;
         }
         if keymap.matches("edit", key)
             && let Some(RedisValue::String(ref s)) = self.value
         {
+            self.last_key_consumed = true;
             if self.prefer_external_editor {
                 return Some(InspectorAction::EditStringExternal {
                     key: self.key.clone().unwrap_or_default(),
@@ -900,14 +907,17 @@ impl ValueInspector {
             self.text_editor = Some(TextAreaEditor::new(s.clone()));
         }
         if keymap.matches("set_ttl", key) {
+            self.last_key_consumed = true;
             self.list_prompt = Some(InputWidget::new("TTL in seconds (blank=persist)"));
             self.prompt_mode = Some(PromptMode::SetTtlSeconds);
         }
         if keymap.matches("inspector_value_search", key) && !self.value_filter.is_empty() {
             // Pressing the binding again with an active filter clears it,
             // giving a single toggle without a separate cancel step.
+            self.last_key_consumed = true;
             self.clear_value_filter();
         } else if keymap.matches("inspector_value_search", key) {
+            self.last_key_consumed = true;
             self.list_prompt = Some(InputWidget::new(
                 "Search value members (empty = all, Esc clears)",
             ));
@@ -916,6 +926,7 @@ impl ValueInspector {
         if keymap.matches("copy", key)
             && let Some(RedisValue::String(ref s)) = self.value
         {
+            self.last_key_consumed = true;
             return Some(InspectorAction::CopyValue(s.clone()));
         }
 
@@ -925,9 +936,24 @@ impl ValueInspector {
         // the open value — a mode leak, not just a missing binding.
         let nav_up_pressed = keymap.matches("nav_up", key);
         let nav_down_pressed = keymap.matches("nav_down", key);
+        // Navigation is claimed whenever a value is open, even at the ends
+        // of a list: falling through at the boundary moved the key selection
+        // behind the value (the reported bug).
+        if nav_up_pressed || nav_down_pressed || matches!(key.code, KeyCode::Up | KeyCode::Down) {
+            self.last_key_consumed = true;
+        }
 
         // List-specific key handling
         if let Some(RedisValue::List(ref items)) = self.value {
+            if keymap.matches("inspector_list_push", key)
+                || keymap.matches("inspector_list_insert", key)
+                || keymap.matches("inspector_list_prepend", key)
+                || keymap.matches("delete", key)
+                || keymap.matches("edit", key)
+                || keymap.matches("copy", key)
+            {
+                self.last_key_consumed = true;
+            }
             match key.code {
                 code if (code == KeyCode::Up || code == KeyCode::Char('k') || nav_up_pressed)
                     && self.list_cursor > 0 =>
@@ -981,6 +1007,17 @@ impl ValueInspector {
         if let Some(RedisValue::Hash(ref entries)) = self.value {
             // Navigation is scoped to the fields visible under the active
             // filter, so the cursor cannot point at a hidden row.
+            if keymap.matches("inspector_hash_filter", key)
+                || keymap.matches("select_all", key)
+                || keymap.matches("toggle_select", key)
+                || keymap.matches("delete_selected", key)
+                || keymap.matches("inspector_hash_add", key)
+                || keymap.matches("delete", key)
+                || keymap.matches("edit", key)
+                || keymap.matches("copy", key)
+            {
+                self.last_key_consumed = true;
+            }
             let visible: Vec<String> = self.visible_hash_fields().into_iter().cloned().collect();
             match key.code {
                 code if code == KeyCode::Up || code == KeyCode::Char('k') || nav_up_pressed => {
@@ -1057,6 +1094,12 @@ impl ValueInspector {
 
         // Set-specific key handling
         if let Some(RedisValue::Set(ref members)) = self.value {
+            if keymap.matches("inspector_set_add", key)
+                || keymap.matches("delete", key)
+                || keymap.matches("copy", key)
+            {
+                self.last_key_consumed = true;
+            }
             let items: Vec<&String> = members.iter().collect();
             match key.code {
                 code if (code == KeyCode::Up || code == KeyCode::Char('k') || nav_up_pressed)
@@ -1092,6 +1135,15 @@ impl ValueInspector {
 
         // ZSet-specific key handling
         if let Some(RedisValue::ZSet(ref entries)) = self.value {
+            if keymap.matches("inspector_zset_add", key)
+                || keymap.matches("edit", key)
+                || keymap.matches("delete", key)
+                || keymap.matches("cycle_sort", key)
+                || keymap.matches("inspector_zset_range_query", key)
+                || keymap.matches("copy", key)
+            {
+                self.last_key_consumed = true;
+            }
             match key.code {
                 code if (code == KeyCode::Up || code == KeyCode::Char('k') || nav_up_pressed)
                     && self.zset_cursor > 0 =>
@@ -1147,6 +1199,17 @@ impl ValueInspector {
 
         // Stream-specific key handling
         if let Some(RedisValue::Stream(ref entries)) = self.value {
+            if keymap.matches("inspector_stream_add", key)
+                || keymap.matches("delete", key)
+                || keymap.matches("inspector_stream_follow", key)
+                || keymap.matches("inspector_toggle_view", key)
+                || keymap.matches("inspector_goto_end", key)
+                || keymap.matches("inspector_stream_groups", key)
+                || keymap.matches("inspector_stream_trim", key)
+                || keymap.matches("copy", key)
+            {
+                self.last_key_consumed = true;
+            }
             match key.code {
                 code if (code == KeyCode::Up || code == KeyCode::Char('k') || nav_up_pressed)
                     && self.stream_cursor > 0 =>

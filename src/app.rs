@@ -1037,17 +1037,16 @@ impl App {
 
         match self.active_tab {
             Tab::Keys => {
-                // The inspector gets first refusal on every key. Detect
-                // consumption from its state rather than from the returned
-                // action: prompts like the hash filter return `None` yet still
-                // claim the key, and letting the key browser see it too would
-                // open two prompts at once (this is what made `i` open both a
-                // list-insert and a set-intersection prompt).
-                let before = self.value_inspector.consumed_state();
+                // The inspector gets first refusal on every key. It reports
+                // consumption explicitly now: inferring it from prompt/edit
+                // state missed quiet consumption (cursor moves, view
+                // toggles, selection), so Up/Down to move through a value
+                // also moved the key selection, and `s`/`g` toggled browser
+                // sort / jumped to root behind the open value.
                 let inspector_action = self
                     .value_inspector
                     .handle_event_with_keymap(&Event::Key(key), &self.keymap);
-                let consumed = self.value_inspector.consumed_state() != before;
+                let consumed = self.value_inspector.last_key_consumed;
 
                 if let Some(action) = inspector_action.as_ref() {
                     self.handle_inspector_action(action.clone()).await;
@@ -2694,37 +2693,102 @@ mod tests {
     }
 
     #[test]
-    fn consumed_state_changes_when_a_prompt_opens() {
+    fn a_prompt_opening_marks_the_key_consumed() {
         use crate::ui::value_inspector::PromptMode;
         let mut inspector = ValueInspector::new();
         let mut map = indexmap::IndexMap::new();
         map.insert("f1".to_string(), "v".to_string());
         inspector.set_value("h".to_string(), RedisValue::Hash(map));
 
-        let before = inspector.consumed_state();
         inspector.handle_event(&Event::Key(crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Char('f'),
             crossterm::event::KeyModifiers::CONTROL,
         )));
-        let after = inspector.consumed_state();
-        assert_ne!(
-            before, after,
+        assert!(
+            inspector.last_key_consumed,
             "opening a prompt must be reported as consuming the key"
         );
         assert_eq!(inspector.prompt_mode, Some(PromptMode::HashFilter));
     }
 
+    /// The reported bug: moving through the value moved the key selection.
+    /// Arrow keys must be consumed by the inspector even at the ends of a
+    /// list, where they change nothing — otherwise they fall through to the
+    /// key browser behind the value.
     #[test]
-    fn consumed_state_unchanged_for_an_unrelated_key() {
+    fn navigation_is_consumed_even_at_the_ends_of_a_list() {
         let mut inspector = ValueInspector::new();
         inspector.set_value(
             "l".to_string(),
             RedisValue::List(vec!["a".to_string(), "b".to_string()]),
         );
-        let before = inspector.consumed_state();
-        // A digit is bound to tab switching globally, so the inspector ignores it.
-        inspector.handle_event(&crossterm_event('7'));
-        assert_eq!(before, inspector.consumed_state());
+
+        inspector.handle_event(&crossterm_event('j'));
+        assert!(inspector.last_key_consumed);
+        assert_eq!(inspector.list_cursor, 1);
+
+        inspector.handle_event(&crossterm_event('j'));
+        assert!(
+            inspector.last_key_consumed,
+            "Down at the bottom must still be consumed"
+        );
+        assert_eq!(inspector.list_cursor, 1, "cursor stays at the bottom");
+
+        inspector.handle_event(&Event::Key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Up,
+        )));
+        assert!(inspector.last_key_consumed);
+        assert_eq!(inspector.list_cursor, 0);
+    }
+
+    /// View toggles and sort keys mutate inspector state without returning
+    /// an action; they must still be consumed or the browser behind reacts
+    /// to the same key (s = browser sort, g = browser root).
+    #[test]
+    fn view_and_sort_toggles_are_consumed() {
+        let mut inspector = ValueInspector::new();
+        inspector.set_value(
+            "z".to_string(),
+            RedisValue::ZSet(vec![crate::redis::types::ZSetEntry {
+                member: "m".to_string(),
+                score: 1.0,
+            }]),
+        );
+
+        inspector.handle_event(&crossterm_event('s'));
+        assert!(
+            inspector.last_key_consumed,
+            "the zset score sort toggle must be consumed"
+        );
+
+        let mut stream = ValueInspector::new();
+        stream.set_value(
+            "x".to_string(),
+            RedisValue::Stream(vec![crate::redis::types::StreamEntry {
+                id: "1-0".to_string(),
+                fields: indexmap::IndexMap::from([("f".to_string(), "v".to_string())]),
+            }]),
+        );
+        stream.handle_event(&crossterm_event('g'));
+        assert!(
+            stream.last_key_consumed,
+            "jump-to-last-entry must be consumed"
+        );
+    }
+
+    #[test]
+    fn an_unrelated_key_is_not_consumed() {
+        let mut inspector = ValueInspector::new();
+        inspector.set_value(
+            "l".to_string(),
+            RedisValue::List(vec!["a".to_string(), "b".to_string()]),
+        );
+        // 'n' (new key) is a browser binding, not an inspector one.
+        inspector.handle_event(&crossterm_event('n'));
+        assert!(
+            !inspector.last_key_consumed,
+            "unbound keys must reach the browser"
+        );
     }
 
     // ---- helpers ----
@@ -5116,5 +5180,112 @@ mod action_variant_tests {
 
         let _ = redis.kill();
         let _ = redis.wait();
+    }
+}
+
+/// The reported bug: with a value open in the inspector, moving through the
+/// value with Up/Down also moved the key selection on the left. The app
+/// inferred "the inspector consumed this key" from prompt/edit state, which
+/// cannot see cursor moves or view toggles, so every such key fell through
+/// to the browser behind the value.
+#[cfg(test)]
+mod inspector_focus_tests {
+    use super::*;
+    use crate::redis::types::{RedisValue, ZSetEntry};
+    use crate::ui::key_browser::tree::KeyEntry;
+    use crossterm::event::{KeyCode, KeyEvent};
+
+    fn app_with_a_list_value() -> App {
+        let mut app = App::new(Config::default());
+        for name in ["alpha", "bravo", "charlie"] {
+            app.key_browser.tree.insert(KeyEntry {
+                full_name: name.to_string(),
+                redis_type: None,
+                ttl: None,
+            });
+        }
+        app.key_browser.cursor = 1; // bravo, so any leak is observable
+        app.value_inspector.set_value(
+            "listkey".to_string(),
+            RedisValue::List(vec!["one".to_string(), "two".to_string()]),
+        );
+        app
+    }
+
+    #[tokio::test]
+    async fn moving_through_the_value_does_not_move_the_key_selection() {
+        let mut app = app_with_a_list_value();
+        let browser_cursor = app.key_browser.cursor;
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Down)).await;
+        assert_eq!(app.value_inspector.list_cursor, 1, "the value cursor moves");
+        assert_eq!(
+            app.key_browser.cursor, browser_cursor,
+            "Down in the value must not move the key selection"
+        );
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Up)).await;
+        assert_eq!(app.value_inspector.list_cursor, 0);
+        assert_eq!(app.key_browser.cursor, browser_cursor);
+
+        // At the top the value cursor cannot move — the key must still be
+        // consumed, or the browser moves instead (the exact leak).
+        app.handle_key_event(KeyEvent::from(KeyCode::Up)).await;
+        assert_eq!(app.value_inspector.list_cursor, 0);
+        assert_eq!(
+            app.key_browser.cursor, browser_cursor,
+            "Up at the top of the value must not move the key selection"
+        );
+    }
+
+    #[tokio::test]
+    async fn vim_nav_through_the_value_is_also_isolated() {
+        let mut app = app_with_a_list_value();
+        let browser_cursor = app.key_browser.cursor;
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('j')))
+            .await;
+        assert_eq!(app.value_inspector.list_cursor, 1);
+        assert_eq!(app.key_browser.cursor, browser_cursor);
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('k')))
+            .await;
+        assert_eq!(app.value_inspector.list_cursor, 0);
+        assert_eq!(app.key_browser.cursor, browser_cursor);
+    }
+
+    /// `s` on a zset sorts scores in the inspector; it must not also cycle
+    /// the browser's sort mode behind the value.
+    #[tokio::test]
+    async fn zset_sort_in_the_inspector_does_not_cycle_browser_sort() {
+        let mut app = App::new(Config::default());
+        app.value_inspector.set_value(
+            "z".to_string(),
+            RedisValue::ZSet(vec![ZSetEntry {
+                member: "m".to_string(),
+                score: 1.0,
+            }]),
+        );
+        let before = app.key_browser.sort_mode;
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('s')))
+            .await;
+        assert_eq!(
+            app.key_browser.sort_mode, before,
+            "inspector sort must not change the browser's sort"
+        );
+        assert!(app.value_inspector.last_key_consumed);
+    }
+
+    /// Consumption must not swallow everything: browser bindings the
+    /// inspector does not handle still work while a value is open.
+    #[tokio::test]
+    async fn a_browser_binding_still_reaches_the_browser() {
+        let mut app = App::new(Config::default());
+        app.value_inspector
+            .set_value("l".to_string(), RedisValue::List(vec!["a".to_string()]));
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('n')))
+            .await;
+        assert!(
+            app.key_browser.prompt.is_some(),
+            "'n' must still open the new-key prompt"
+        );
     }
 }

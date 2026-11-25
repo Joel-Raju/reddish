@@ -265,6 +265,13 @@ every write, and the REPL refuses `FLUSHDB`, `FLUSHALL` and `KEYS *`.
   screen until another key was pressed. The input loop now polls in
   slices and exits when the app drops its receiver, plus the runtime
   shutdown is bounded. Found by the new pty smoke test.
+- **Keys no longer leak from an open value to the key list.** The app
+  inferred "the inspector consumed this key" from prompt/edit state,
+  which cannot see quiet consumption — so Up/Down (and vim j/k) to move
+  through a value also moved the key selection, and `s`/`g` behind an
+  open value toggled the browser's sort or jumped it to root. The
+  inspector now reports consumption explicitly, and claims navigation
+  even at the ends of a list.
 - **End-to-end pty smoke tests.** `tests/pty_smoke.rs` spawns the real
   binary under a pseudo-terminal and writes the bytes a terminal
   actually sends — `0x1C` for `Ctrl+\`, `0x10` for `Ctrl+P`, `?`/`q`/`Esc`

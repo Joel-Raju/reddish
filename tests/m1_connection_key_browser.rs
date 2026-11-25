@@ -2079,30 +2079,34 @@ async fn test_scan_task_hydrates_types_and_ttls_end_to_end() {
 }
 
 /// The MONITOR producer had zero coverage of any kind: no test ever called
-/// `client.monitor()`. This drives it against a live server — start the
-/// stream, run a command from another connection, and require the line.
+/// `client.monitor()`. This runs against its own scratch server: MONITOR
+/// observes *all* traffic, so sharing the suite's server with every other
+/// test running in parallel made line assertions racy.
 #[tokio::test]
 async fn test_monitor_stream_yields_live_command_lines() {
+    let port = 16392;
+    let Some(mut redis) = helpers::spawn_redis_server(port).await else {
+        eprintln!("skipping: redis-server is not on PATH");
+        return;
+    };
     let profile = ConnectionProfile {
-        name: "test".to_string(),
+        name: "monitor".to_string(),
         host: "127.0.0.1".to_string(),
-        port: 16379,
+        port,
         db: 0,
         username: None,
         password: None,
         last_connected: None,
         ..Default::default()
     };
-    let Some(client) = helpers::connect_or_skip(&profile).await else {
-        return;
-    };
+    let client = RedisClientHandle::connect(&profile).await.unwrap();
 
     let Some(mut rx) = client.monitor().await.unwrap() else {
         panic!("standalone MONITOR must be available");
     };
 
     // Run a command on a separate connection.
-    let mut other = redis::Client::open("redis://127.0.0.1:16379/0")
+    let mut other = redis::Client::open(format!("redis://127.0.0.1:{port}"))
         .unwrap()
         .get_multiplexed_async_connection()
         .await
@@ -2114,8 +2118,8 @@ async fn test_monitor_stream_yields_live_command_lines() {
         .await
         .unwrap();
 
-    // The MONITOR stream opens with a flood of setup lines from other
-    // connections (CLIENT SETINFO etc.); drain until our command shows up.
+    // The MONITOR stream opens with setup lines (CLIENT SETINFO etc.);
+    // drain until our command shows up.
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     loop {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
@@ -2130,4 +2134,7 @@ async fn test_monitor_stream_yields_live_command_lines() {
             break;
         }
     }
+
+    let _ = redis.kill();
+    let _ = redis.wait();
 }

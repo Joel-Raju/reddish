@@ -325,9 +325,9 @@ pub struct App {
     pub scan_rx:
         Option<mpsc::Receiver<Result<Vec<crate::ui::key_browser::tree::KeyEntry>, String>>>,
     pub scan_cancel: Option<CancellationToken>,
-    pub search_scan_rx: Option<mpsc::Receiver<Vec<String>>>,
+    pub search_scan_rx: Option<mpsc::Receiver<Result<Vec<String>, String>>>,
     pub search_scan_cancel: Option<CancellationToken>,
-    pub pubsub_rx: Option<mpsc::UnboundedReceiver<PubSubMessage>>,
+    pub pubsub_rxs: Vec<(PubSubKind, mpsc::UnboundedReceiver<PubSubMessage>)>,
     pub monitor_rx: Option<mpsc::UnboundedReceiver<String>>,
     tick_count: u64,
     reconnect_attempt: u32,
@@ -397,7 +397,7 @@ impl App {
             scan_cancel: None,
             search_scan_rx: None,
             search_scan_cancel: None,
-            pubsub_rx: None,
+            pubsub_rxs: Vec::new(),
             monitor_rx: None,
             tick_count: 0,
             reconnect_attempt: 0,
@@ -448,11 +448,13 @@ impl App {
                 }
             }
             PubSubAction::Unsubscribe(channel) => {
-                self.pubsub_rx = None;
+                self.pubsub_rxs
+                    .retain(|(kind, _)| kind != &PubSubKind::Channel(channel.clone()));
                 self.set_error(format!("Unsubscribed from '{channel}'"));
             }
             PubSubAction::PUnsubscribe(pattern) => {
-                self.pubsub_rx = None;
+                self.pubsub_rxs
+                    .retain(|(kind, _)| kind != &PubSubKind::Pattern(pattern.clone()));
                 self.set_error(format!("Unsubscribed from pattern '{pattern}'"));
             }
             PubSubAction::Publish { channel, message } => {
@@ -583,8 +585,17 @@ impl App {
             terminal.draw(|f| self.render(f))?;
 
             let event = tokio::time::timeout(Duration::from_millis(100), events.next()).await;
-            if let Ok(Some(event)) = event {
-                self.handle_event(event).await;
+            match event {
+                Ok(Some(event)) => self.handle_event(event).await,
+                // The input channel closed: the terminal reader is gone.
+                // Redrawing at the timeout rate forever looks like a frozen
+                // app with no explanation, so say why and stop.
+                Ok(None) => {
+                    self.set_error("Input stream closed".to_string());
+                    self.should_quit = true;
+                }
+                // Timeout: redraw and keep waiting.
+                Err(_) => {}
             }
 
             // The external editor owns the terminal, so it is driven here where
@@ -1322,9 +1333,25 @@ impl App {
     }
 
     fn drain_monitor_messages(&mut self) {
+        let mut ended = false;
         if let Some(ref mut rx) = self.monitor_rx {
-            while let Ok(line) = rx.try_recv() {
-                self.repl.push_monitor_line(line);
+            loop {
+                match rx.try_recv() {
+                    Ok(line) => self.repl.push_monitor_line(line),
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        ended = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if ended {
+            self.monitor_rx = None;
+            // A MONITOR feed that dies used to leave the pane silently
+            // frozen; say so instead of pretending it is still live.
+            if self.repl.monitor_visible {
+                self.set_error("MONITOR stream closed".to_string());
             }
         }
     }
@@ -1365,7 +1392,7 @@ impl App {
         // subscription died silently — the app reported "Subscribed" with a
         // dead receiver.
         let rx = PubSubClient::spawn_subscription(&profile, &kind).await?;
-        self.pubsub_rx = Some(rx);
+        self.pubsub_rxs.push((kind, rx));
         Ok(())
     }
 
@@ -1886,7 +1913,15 @@ impl App {
         };
         let r_type = match client.key_type(key).await {
             Ok(t) => t,
-            Err(_) => return,
+            Err(err) => {
+                // Silent before: a failed reload left the stale value on
+                // screen with no sign that it was no longer current.
+                self.value_inspector.set_error(
+                    Some(key.to_string()),
+                    format!("Failed to reload value: {err}"),
+                );
+                return;
+            }
         };
         let value_fut = client.get_value(key, r_type);
         let ttl_fut = client.ttl(key);
@@ -1900,6 +1935,13 @@ impl App {
             self.value_inspector.set_value(key.to_string(), value);
             self.value_inspector
                 .set_metadata(encoding_res.ok(), memory_res.ok(), ttl_res.ok());
+        } else if let Err(err) = value_res {
+            // The old `if let Ok` branch silently kept the stale value when
+            // the reload failed.
+            self.value_inspector.set_error(
+                Some(key.to_string()),
+                format!("Failed to reload value: {err}"),
+            );
         }
     }
 
@@ -1933,22 +1975,28 @@ impl App {
     }
 
     fn drain_pubsub_messages(&mut self) {
-        let mut should_clear = false;
-        if let Some(rx) = self.pubsub_rx.as_mut() {
+        // One feed per subscription. The old single-slot receiver was
+        // replaced by every new subscribe (so a second channel silently
+        // killed the first feed) and cleared wholesale on any unsubscribe
+        // (so removing one channel stopped all of them).
+        let widget = &mut self.pubsub_widget;
+        let mut ended: Vec<String> = Vec::new();
+        self.pubsub_rxs.retain_mut(|(kind, rx)| {
+            let name = kind.name().to_string();
             loop {
                 match rx.try_recv() {
-                    Ok(msg) => self.pubsub_widget.push_message(msg),
-                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Ok(msg) => widget.push_message(msg),
+                    Err(mpsc::error::TryRecvError::Empty) => return true,
                     Err(mpsc::error::TryRecvError::Disconnected) => {
-                        should_clear = true;
-                        break;
+                        ended.push(name);
+                        return false;
                     }
                 }
             }
-        }
-
-        if should_clear {
-            self.pubsub_rx = None;
+        });
+        // A feed that dies must not leave the UI listing it as live.
+        for name in ended {
+            self.set_error(format!("Subscription to '{name}' ended"));
         }
     }
 
@@ -2006,7 +2054,7 @@ impl App {
         let query = self.search.query.clone();
         let mode = self.search.mode;
         let count = self.config.scan_count();
-        let (tx, rx) = mpsc::channel::<Vec<String>>(64);
+        let (tx, rx) = mpsc::channel::<Result<Vec<String>, String>>(64);
         let cancel = CancellationToken::new();
         let cancel_clone = cancel.clone();
         self.search_scan_rx = Some(rx);
@@ -2026,12 +2074,19 @@ impl App {
         if let Some(rx) = self.search_scan_rx.as_mut() {
             loop {
                 match rx.try_recv() {
-                    Ok(batch) => {
+                    Ok(Ok(batch)) => {
                         if batch.is_empty() {
                             finished = true;
                             break;
                         }
                         self.search.drain_scan_batch(batch);
+                    }
+                    Ok(Err(message)) => {
+                        // A failed search must say so instead of showing an
+                        // empty result list as if nothing matched.
+                        self.set_error(message);
+                        finished = true;
+                        break;
                     }
                     Err(mpsc::error::TryRecvError::Empty) => break,
                     Err(mpsc::error::TryRecvError::Disconnected) => {
@@ -2334,7 +2389,7 @@ fn spawn_search_scan(
     query: String,
     mode: crate::ui::search::SearchMode,
     count: u32,
-    tx: tokio::sync::mpsc::Sender<Vec<String>>,
+    tx: tokio::sync::mpsc::Sender<Result<Vec<String>, String>>,
     cancel: tokio_util::sync::CancellationToken,
 ) {
     tokio::spawn(async move {
@@ -2346,16 +2401,28 @@ fn spawn_search_scan(
             }
             match client.scan_keys(cursor, &pattern, count).await {
                 Ok((new_cursor, keys)) => {
-                    if tokio::sync::mpsc::Sender::try_send(&tx, keys).is_err() {
+                    // Await capacity rather than dropping batches: `try_send`
+                    // used to truncate the search silently when the channel
+                    // filled, exactly like the browser scan.
+                    let send = tokio::select! {
+                        _ = cancel.cancelled() => break,
+                        result = tx.send(Ok(keys)) => result,
+                    };
+                    if send.is_err() {
                         break;
                     }
                     cursor = new_cursor;
                     if cursor == 0 {
-                        let _ = tokio::sync::mpsc::Sender::try_send(&tx, Vec::new());
+                        let _ = tx.send(Ok(Vec::new())).await;
                         break;
                     }
                 }
-                Err(_) => break,
+                Err(err) => {
+                    // Tell the app why the search stopped; without this a
+                    // failed search looked like "no matches".
+                    let _ = tx.send(Err(format!("Search scan failed: {err}"))).await;
+                    break;
+                }
             }
         }
     });
@@ -4660,6 +4727,392 @@ mod splice_tests {
             "the search scan must flow through the drain into the widget, got {:?}",
             app.search.results
         );
+
+        let _ = redis.kill();
+        let _ = redis.wait();
+    }
+}
+
+/// Render coverage for every mode and pane. No test rendered the app in
+/// Help, Confirm, Search, ConnectionScreen or ReplOverlay before this — a
+/// panic in any of those draw paths would have been invisible until a user
+/// opened the overlay.
+#[cfg(test)]
+mod render_state_tests {
+    use super::*;
+    use crate::config::connections::ConnectionStore;
+    use crate::ui::command_palette::CommandPalette;
+    use crate::ui::connection_screen::ConnectionScreen;
+    use crate::ui::widgets::input::InputWidget;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    /// Draw the whole app; panics on any render error.
+    fn draw(app: &App) {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| app.render(f))
+            .expect("the app must render in this state");
+    }
+
+    #[test]
+    fn every_tab_and_mode_renders() {
+        let mut app = App::new(Config::default());
+        for tab in [Tab::Keys, Tab::Repl, Tab::Info, Tab::PubSub] {
+            app.active_tab = tab;
+            draw(&app);
+        }
+
+        // Confirm dialog.
+        app = App::new(Config::default());
+        app.pending_delete_key = Some("doomed".to_string());
+        app.mode_stack.push(AppMode::Confirm);
+        draw(&app);
+
+        // Help overlay.
+        app = App::new(Config::default());
+        app.mode_stack.push(AppMode::Help);
+        draw(&app);
+
+        // Search overlay.
+        app = App::new(Config::default());
+        app.mode_stack.push(AppMode::Search);
+        draw(&app);
+
+        // Connection screen with a profile row.
+        app = App::new(Config::default());
+        let mut store = ConnectionStore::default();
+        store.add(crate::config::connections::ConnectionProfile {
+            name: "render".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 6379,
+            db: 0,
+            username: None,
+            password: None,
+            last_connected: None,
+            ..Default::default()
+        });
+        app.connection_screen = Some(ConnectionScreen::new(store));
+        app.mode_stack.push(AppMode::ConnectionScreen);
+        draw(&app);
+
+        // REPL overlay with typed input.
+        app = App::new(Config::default());
+        app.mode_stack.push(AppMode::ReplOverlay);
+        app.overlay_input = Some(InputWidget::new(""));
+        if let Some(input) = app.overlay_input.as_mut() {
+            input.value = "GET user:1".to_string();
+        }
+        draw(&app);
+
+        // Command palette.
+        app = App::new(Config::default());
+        app.command_palette = Some(CommandPalette::new(
+            PALETTE_ITEMS.iter().map(|s| s.to_string()).collect(),
+            "Ctrl+P".to_string(),
+        ));
+        draw(&app);
+
+        // A pending error toast in the status bar.
+        app = App::new(Config::default());
+        app.set_error("render me".to_string());
+        draw(&app);
+    }
+
+    /// The loaded-value states each type renders through the inspector.
+    #[test]
+    fn every_value_type_renders() {
+        use crate::redis::types::RedisValue;
+        use indexmap::IndexMap;
+
+        let values = [
+            RedisValue::String("hello".to_string()),
+            RedisValue::List(vec!["a".to_string(), "b".to_string()]),
+            RedisValue::Hash(IndexMap::from([("f".to_string(), "v".to_string())])),
+            RedisValue::Set(std::collections::BTreeSet::from(["m".to_string()])),
+            RedisValue::ZSet(vec![crate::redis::types::ZSetEntry {
+                member: "m".to_string(),
+                score: 1.0,
+            }]),
+            RedisValue::Stream(vec![crate::redis::types::StreamEntry {
+                id: "1-0".to_string(),
+                fields: IndexMap::from([("field".to_string(), "value".to_string())]),
+            }]),
+        ];
+        for value in values {
+            let mut app = App::new(Config::default());
+            app.value_inspector.set_value("key".to_string(), value);
+            draw(&app);
+        }
+    }
+}
+
+/// Multi-subscription regression: the single-slot receiver used to be
+/// replaced by every new subscribe (silently killing the previous feed)
+/// and cleared wholesale by any unsubscribe (stopping every feed).
+#[cfg(test)]
+mod multi_subscription_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn a_second_subscribe_does_not_kill_the_first_feed() {
+        let port = 16387;
+        let Some(mut redis) = super::tests::spawn_redis_server_on_port(port).await else {
+            eprintln!("skipping: redis-server is not on PATH");
+            return;
+        };
+        let mut publisher = redis::Client::open(format!("redis://127.0.0.1:{port}"))
+            .unwrap()
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
+
+        let profile = ConnectionProfile {
+            name: "multi".to_string(),
+            host: "127.0.0.1".to_string(),
+            port,
+            db: 0,
+            username: None,
+            password: None,
+            last_connected: None,
+            mode: ConnectionMode::Standalone,
+            tls: None,
+            ssh_tunnel: None,
+        };
+        let mut app = App::new(Config::default());
+        app.client = Some(RedisClientHandle::connect(&profile).await.unwrap());
+        app.start_pubsub_subscription(PubSubKind::Channel("multi:a".to_string()))
+            .await
+            .unwrap();
+        app.start_pubsub_subscription(PubSubKind::Channel("multi:b".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(app.pubsub_rxs.len(), 2);
+
+        for channel in ["multi:a", "multi:b"] {
+            let _: () = redis::cmd("PUBLISH")
+                .arg(channel)
+                .arg(format!("on-{channel}"))
+                .query_async(&mut publisher)
+                .await
+                .unwrap();
+        }
+
+        for _ in 0..100 {
+            app.handle_event(Event::Tick).await;
+            if app.pubsub_widget.messages.len() >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let payloads: Vec<&str> = app
+            .pubsub_widget
+            .messages
+            .iter()
+            .map(|m| m.payload.as_str())
+            .collect();
+        assert!(
+            payloads.contains(&"on-multi:a") && payloads.contains(&"on-multi:b"),
+            "both subscriptions must deliver; the second used to replace the \
+             first feed. got {payloads:?}"
+        );
+
+        // Unsubscribing one channel must leave the other feed alive.
+        app.handle_pubsub_action(PubSubAction::Unsubscribe("multi:a".to_string()))
+            .await;
+        assert_eq!(app.pubsub_rxs.len(), 1);
+
+        let _ = redis.kill();
+        let _ = redis.wait();
+    }
+}
+
+/// Action-handler coverage for the variants no test reached at the app
+/// level: set operations, refresh, stream trim, and pattern subscribe.
+#[cfg(test)]
+mod action_variant_tests {
+    use super::*;
+    use crate::redis::client::SetOpType;
+    use std::time::Duration;
+
+    fn profile_on(port: u16) -> ConnectionProfile {
+        ConnectionProfile {
+            name: "actions".to_string(),
+            host: "127.0.0.1".to_string(),
+            port,
+            db: 0,
+            username: None,
+            password: None,
+            last_connected: None,
+            mode: ConnectionMode::Standalone,
+            tls: None,
+            ssh_tunnel: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn set_op_stores_the_result_on_the_server() {
+        let port = 16388;
+        let Some(mut redis) = super::tests::spawn_redis_server_on_port(port).await else {
+            eprintln!("skipping: redis-server is not on PATH");
+            return;
+        };
+        let mut conn = redis::Client::open(format!("redis://127.0.0.1:{port}"))
+            .unwrap()
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
+        let _: () = redis::cmd("SADD")
+            .arg("op:a")
+            .arg("x")
+            .arg("y")
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        let _: () = redis::cmd("SADD")
+            .arg("op:b")
+            .arg("y")
+            .arg("z")
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+
+        let mut app = App::new(Config::default());
+        app.client = Some(RedisClientHandle::connect(&profile_on(port)).await.unwrap());
+        app.handle_browser_action(BrowserAction::SetOp {
+            op: SetOpType::Union,
+            source_keys: vec!["op:a".to_string(), "op:b".to_string()],
+            dest: "op:union".to_string(),
+        })
+        .await;
+        assert!(app.error_message.is_none(), "got {:?}", app.error_message);
+
+        let members: Vec<String> = redis::cmd("SMEMBERS")
+            .arg("op:union")
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(members.len(), 3, "union of {{x,y}} and {{y,z}} = 3");
+
+        let _ = redis.kill();
+        let _ = redis.wait();
+    }
+
+    #[tokio::test]
+    async fn refresh_requested_restarts_the_scan() {
+        let port = 16389;
+        let Some(mut redis) = super::tests::spawn_redis_server_on_port(port).await else {
+            eprintln!("skipping: redis-server is not on PATH");
+            return;
+        };
+        let mut app = App::new(Config::default());
+        app.last_profile = Some(profile_on(port));
+        app.handle_browser_action(BrowserAction::RefreshRequested)
+            .await;
+        assert!(app.scan_rx.is_some(), "refresh must restart the scan");
+        assert_eq!(
+            app.key_browser.tree.total_keys(),
+            0,
+            "refresh clears the tree"
+        );
+
+        let _ = redis.kill();
+        let _ = redis.wait();
+    }
+
+    #[tokio::test]
+    async fn stream_trim_trims_on_the_server() {
+        let port = 16390;
+        let Some(mut redis) = super::tests::spawn_redis_server_on_port(port).await else {
+            eprintln!("skipping: redis-server is not on PATH");
+            return;
+        };
+        let mut conn = redis::Client::open(format!("redis://127.0.0.1:{port}"))
+            .unwrap()
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
+        for _ in 0..5 {
+            let _: () = redis::cmd("XADD")
+                .arg("trim:stream")
+                .arg("*")
+                .arg("page")
+                .arg("/x")
+                .query_async(&mut conn)
+                .await
+                .unwrap();
+        }
+        let mut app = App::new(Config::default());
+        app.client = Some(RedisClientHandle::connect(&profile_on(port)).await.unwrap());
+        app.handle_inspector_action(InspectorAction::StreamTrim {
+            key: "trim:stream".to_string(),
+            strategy: "MAXLEN".to_string(),
+            threshold: "2".to_string(),
+            approximate: false,
+        })
+        .await;
+        assert!(app.error_message.is_none(), "got {:?}", app.error_message);
+        let len: i64 = redis::cmd("XLEN")
+            .arg("trim:stream")
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(len, 2, "XTRIM MAXLEN 2 must leave two entries");
+
+        let _ = redis.kill();
+        let _ = redis.wait();
+    }
+
+    #[tokio::test]
+    async fn pattern_subscribe_receives_matching_messages() {
+        let port = 16391;
+        let Some(mut redis) = super::tests::spawn_redis_server_on_port(port).await else {
+            eprintln!("skipping: redis-server is not on PATH");
+            return;
+        };
+        let mut publisher = redis::Client::open(format!("redis://127.0.0.1:{port}"))
+            .unwrap()
+            .get_multiplexed_async_connection()
+            .await
+            .unwrap();
+        let mut app = App::new(Config::default());
+        app.client = Some(RedisClientHandle::connect(&profile_on(port)).await.unwrap());
+        app.handle_pubsub_action(PubSubAction::PSubscribe("pattern:*".to_string()))
+            .await;
+        assert!(
+            app.error_message
+                .as_deref()
+                .is_some_and(|m| m.contains("pattern:*"))
+        );
+        assert_eq!(app.pubsub_rxs.len(), 1);
+
+        let _: () = redis::cmd("PUBLISH")
+            .arg("pattern:one")
+            .arg("hit")
+            .query_async(&mut publisher)
+            .await
+            .unwrap();
+        for _ in 0..100 {
+            app.handle_event(Event::Tick).await;
+            if !app.pubsub_widget.messages.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            app.pubsub_widget
+                .messages
+                .back()
+                .map(|m| m.payload.as_str()),
+            Some("hit"),
+            "a pattern subscription must deliver matching messages"
+        );
+
+        // PUnsubscribe removes that feed only.
+        app.handle_pubsub_action(PubSubAction::PUnsubscribe("pattern:*".to_string()))
+            .await;
+        assert!(app.pubsub_rxs.is_empty());
 
         let _ = redis.kill();
         let _ = redis.wait();

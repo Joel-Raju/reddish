@@ -352,11 +352,18 @@ impl InfoDashboard {
             .instantaneous_ops_per_sec
             .map_or("N/A".to_string(), |v| v.to_string());
         let ops_delta = self.delta_label(&self.buf_ops);
+        // `total_commands_processed` was parsed and never shown; it belongs
+        // next to the instantaneous rate.
+        let ops_total = self
+            .stats
+            .total_commands_processed
+            .map(|v| format!(" · {v} total"))
+            .unwrap_or_default();
         self.render_sparkline_cell(
             frame,
             top[2],
             "Ops/sec",
-            &format!("{}{}", ops_val, ops_delta),
+            &format!("{ops_val}{ops_delta}{ops_total}"),
             &self.buf_ops,
             theme::current().warning,
         );
@@ -425,6 +432,22 @@ impl InfoDashboard {
             format!("total {total} keys"),
             Style::default().fg(theme::current().border),
         )));
+        // Evictions and expirations were parsed and never rendered; they are
+        // the two numbers that explain "why did my keys disappear".
+        if self.stats.evicted_keys.is_some() || self.stats.expired_keys.is_some() {
+            let evicted = self
+                .stats
+                .evicted_keys
+                .map_or("?".to_string(), |v| v.to_string());
+            let expired = self
+                .stats
+                .expired_keys
+                .map_or("?".to_string(), |v| v.to_string());
+            lines.push(Line::from(Span::styled(
+                format!("evicted {evicted} · expired {expired}"),
+                Style::default().fg(theme::current().border),
+            )));
+        }
 
         frame.render_widget(Paragraph::new(lines), inner);
     }
@@ -540,6 +563,14 @@ impl InfoDashboard {
             flags.push(Span::styled(
                 format!(" off {offset}"),
                 Style::default().fg(theme::current().border),
+            ));
+        }
+        // A dataset that is still loading from disk explains an otherwise
+        // empty-looking dashboard; the flag was parsed but never shown.
+        if self.stats.loading == Some(true) {
+            flags.push(Span::styled(
+                " LOADING",
+                Style::default().fg(theme::current().warning),
             ));
         }
         lines.push(Line::from(flags));

@@ -103,7 +103,6 @@ pub struct GlobalSearch {
     pub filtered: Vec<String>,
     pub cursor: usize,
     pub scanning: bool,
-    pub scan_results: Vec<String>,
     pub mode: SearchMode,
     /// Compiled pattern for `SearchMode::Regex`. `None` in fuzzy mode, or when
     /// the query is not a valid regex.
@@ -150,7 +149,6 @@ impl GlobalSearch {
             filtered: Vec::new(),
             cursor: 0,
             scanning: false,
-            scan_results: Vec::new(),
             mode: SearchMode::Fuzzy,
             regex: None,
             regex_error: None,

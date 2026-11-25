@@ -2,6 +2,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,
+    text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 
@@ -424,11 +425,20 @@ impl ConnectionScreen {
         frame.render_stateful_widget(list, chunks[0], &mut state);
 
         // Quick-connect bar
-        let qc_block = Block::default().borders(Borders::NONE).title("");
-        let qc_text = Paragraph::new("Quick connect: press n to add a new profile")
-            .style(Style::default().fg(theme::current().border))
-            .block(qc_block);
-        frame.render_widget(qc_text, chunks[1]);
+        // Quick-connect bar, or the last save/delete error. `error` was
+        // written by the app on a failed save and rendered by nothing — the
+        // same write-only-field failure the status bar had.
+        let footer = match &self.error {
+            Some(err) => Line::from(Span::styled(
+                format!("Error: {err}"),
+                Style::default().fg(theme::current().error),
+            )),
+            None => Line::from(Span::styled(
+                "Quick connect: press n to add a new profile",
+                Style::default().fg(theme::current().border),
+            )),
+        };
+        frame.render_widget(Paragraph::new(footer), chunks[1]);
     }
 }
 

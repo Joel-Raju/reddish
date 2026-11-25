@@ -32,3 +32,35 @@ pub async fn connect_or_skip(profile: &ConnectionProfile) -> Option<RedisClientH
         }
     }
 }
+
+/// Start a throwaway `redis-server` on `port`, or return `None` when the
+/// binary is unavailable. Used by tests that need a server to themselves —
+/// a test that observes all traffic (MONITOR) cannot share the suite's
+/// server with the other tests running in parallel without becoming flaky.
+///
+/// Each integration file compiles this module separately, so files that do
+/// not need their own server would flag it as dead.
+#[allow(dead_code)]
+pub async fn spawn_redis_server(port: u16) -> Option<std::process::Child> {
+    use std::process::Command;
+    let child = Command::new("redis-server")
+        .args([
+            "--port",
+            &port.to_string(),
+            "--daemonize",
+            "no",
+            "--loglevel",
+            "warning",
+            "--save",
+            "",
+        ])
+        .spawn()
+        .ok()?;
+    for _ in 0..50 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return Some(child);
+        }
+    }
+    Some(child)
+}

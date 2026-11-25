@@ -134,7 +134,9 @@ fn test_global_search_backspace_triggers_query_changed() {
 fn test_global_search_scan_state() {
     let mut search = GlobalSearch::new();
     assert!(!search.scanning);
-    assert!(search.scan_results.is_empty());
+    // (`scan_results` used to be asserted here — a field nothing in
+    // production ever read or wrote after init, kept alive only by this
+    // assertion. It is gone.)
 
     search.start_scan();
     assert!(search.scanning);

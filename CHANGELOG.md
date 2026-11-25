@@ -238,6 +238,26 @@ every write, and the REPL refuses `FLUSHDB`, `FLUSHALL` and `KEYS *`.
   connection-screen Connect → scan, search scan → widget,
   publish → tick → pub/sub pane, MONITOR's producer, and the
   stream-follow tick splice.
+- **Dead data surfaces cleaned up.** The connection screen's save error
+  was written and never rendered (now shown in its footer); four INFO
+  stats were parsed and never drawn (ops-total, evictions, expirations,
+  dataset-loading now render); a search field kept alive only by a test
+  assertion is gone; inspector reload failures after an edit used to
+  silently keep the stale value; and a dead MONITOR feed now says so
+  instead of freezing the pane.
+- **Multiple pub/sub subscriptions work.** A second subscribe replaced
+  the single receiver slot (silently killing the first channel's feed
+  while the UI still listed it), and any unsubscribe stopped every feed.
+  Each subscription now has its own feed; unsubscribing drops only that
+  one. Pattern subscriptions are covered end to end too.
+- **Set operations, refresh, and stream trim gained app-level tests** —
+  their handlers had no test reaching them.
+- **Every overlay renders in tests.** No test rendered the app in Help,
+  Confirm, Search, ConnectionScreen or ReplOverlay; a panic in those draw
+  paths would have shipped unseen. All modes, tabs, value types, toasts
+  and the palette now render in the suite.
+- **A dead event channel is fatal-with-a-reason** instead of a silent
+  redraw loop.
 
 - **Key list rendering is windowed.** With every namespace expanded the browser
   allocated a `ListItem` — a `String` and a `Style` — for all 10,001 rows on

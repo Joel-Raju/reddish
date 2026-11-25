@@ -418,11 +418,20 @@ cargo test -q
 ```
 
 Some tests spin up local Redis instances and may print Redis startup warnings
-during execution. Integration tests expect a Redis on **port 16379**:
+during execution. Integration tests expect a Redis on **port 16379**; without
+one they skip with a visible reason instead of failing:
 
 ```bash
 redis-server --port 16379 --daemonize yes --loglevel warning --save ''
 ```
+
+`tests/pty_smoke.rs` goes further than every other test: it spawns the real
+binary under a pseudo-terminal, writes the bytes a terminal actually sends
+(`0x1C` for `Ctrl+\`, `0x10` for `Ctrl+P`, bare `?`/`q`/`Esc`), and asserts
+on the rendered screen. That is the only layer that exercises bytes →
+crossterm decode → dispatch → render end to end, and it already caught a
+quit path that hung before restoring the terminal. Unix only; it needs no
+server (one test starts its own).
 
 ## Performance gates
 

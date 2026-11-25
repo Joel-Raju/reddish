@@ -19,27 +19,38 @@ impl EventHandler {
     pub fn new(tick_rate: Duration) -> Self {
         let (tx, rx) = mpsc::channel(100);
 
-        // Input task
+        // Input task. `event::read()` blocks until a byte arrives, which
+        // left this thread parked forever after the app quit — and dropping
+        // a tokio runtime WAITS for blocking tasks, so the process hung
+        // *before restoring the terminal* until one more key was pressed.
+        // Poll in slices and exit as soon as the receiver is gone.
         let tx_input = tx.clone();
         tokio::task::spawn_blocking(move || {
             loop {
-                match event::read() {
-                    Ok(CrosstermEvent::Key(key)) => {
-                        if tx_input.blocking_send(Event::Key(key)).is_err() {
-                            break;
+                if tx_input.is_closed() {
+                    break;
+                }
+                match event::poll(Duration::from_millis(100)) {
+                    Ok(true) => match event::read() {
+                        Ok(CrosstermEvent::Key(key)) => {
+                            if tx_input.blocking_send(Event::Key(key)).is_err() {
+                                break;
+                            }
                         }
-                    }
-                    Ok(CrosstermEvent::Resize(w, h)) => {
-                        if tx_input.blocking_send(Event::Resize(w, h)).is_err() {
-                            break;
+                        Ok(CrosstermEvent::Resize(w, h)) => {
+                            if tx_input.blocking_send(Event::Resize(w, h)).is_err() {
+                                break;
+                            }
                         }
-                    }
-                    Ok(CrosstermEvent::Mouse(mouse)) => {
-                        if tx_input.blocking_send(Event::Mouse(mouse)).is_err() {
-                            break;
+                        Ok(CrosstermEvent::Mouse(mouse)) => {
+                            if tx_input.blocking_send(Event::Mouse(mouse)).is_err() {
+                                break;
+                            }
                         }
-                    }
-                    Ok(_) => {}
+                        Ok(_) => {}
+                        Err(_) => break,
+                    },
+                    Ok(false) => {}
                     Err(_) => break,
                 }
             }

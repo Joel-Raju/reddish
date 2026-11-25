@@ -2107,6 +2107,7 @@ dependencies = [
  "dirs",
  "futures",
  "indexmap",
+ "libc",
  "nucleo",
  "ratatui",
  "redis",

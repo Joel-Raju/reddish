@@ -16,6 +16,7 @@ use reddish_tui::redis::client::RedisClientHandle;
 /// Returns `None` after printing why, so the caller can early-return. A
 /// skip is visible in the run output; a failure on a serverless machine
 /// is indistinguishable from a regression and buries the real ones.
+#[allow(dead_code)] // not every integration file needs the shared server
 pub async fn connect_or_skip(profile: &ConnectionProfile) -> Option<RedisClientHandle> {
     let connected =
         tokio::time::timeout(Duration::from_secs(2), RedisClientHandle::connect(profile)).await;
@@ -54,6 +55,8 @@ pub async fn spawn_redis_server(port: u16) -> Option<std::process::Child> {
             "--save",
             "",
         ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .ok()?;
     for _ in 0..50 {

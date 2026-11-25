@@ -84,7 +84,13 @@ fn main() -> Result<()> {
         }
     }
 
-    let result = tokio::runtime::Runtime::new()?.block_on(async { app.run(&mut term).await });
+    let runtime = tokio::runtime::Runtime::new()?;
+    let result = runtime.block_on(async { app.run(&mut term).await });
+    // Never let a parked blocking task prevent the terminal from being
+    // restored. This exact hang shipped: an input thread blocked in
+    // `event::read()` made the runtime's drop wait forever, so quitting
+    // left the terminal in the alternate screen until another key arrived.
+    runtime.shutdown_timeout(std::time::Duration::from_millis(500));
 
     terminal::restore_terminal(&mut term)?;
     result

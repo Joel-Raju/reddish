@@ -258,6 +258,19 @@ every write, and the REPL refuses `FLUSHDB`, `FLUSHALL` and `KEYS *`.
   and the palette now render in the suite.
 - **A dead event channel is fatal-with-a-reason** instead of a silent
   redraw loop.
+- **Quitting no longer hangs before restoring the terminal.** The input
+  thread blocked forever in `event::read()`, and dropping the tokio
+  runtime waits for blocking tasks — so `q` set `should_quit`, `run()`
+  returned, and the process stalled *before* leaving the alternate
+  screen until another key was pressed. The input loop now polls in
+  slices and exits when the app drops its receiver, plus the runtime
+  shutdown is bounded. Found by the new pty smoke test.
+- **End-to-end pty smoke tests.** `tests/pty_smoke.rs` spawns the real
+  binary under a pseudo-terminal and writes the bytes a terminal
+  actually sends — `0x1C` for `Ctrl+\`, `0x10` for `Ctrl+P`, `?`/`q`/`Esc`
+  — asserting on the rendered screen (ANSI stripped). It covers the
+  decode → dispatch → render chain and the live scan → badge → inspect
+  flow, which no other test reaches.
 
 - **Key list rendering is windowed.** With every namespace expanded the browser
   allocated a `ListItem` — a `String` and a `Style` — for all 10,001 rows on
